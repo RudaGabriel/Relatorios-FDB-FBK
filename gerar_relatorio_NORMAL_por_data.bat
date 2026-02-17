@@ -3,7 +3,7 @@ setlocal enabledelayedexpansion
 chcp 65001 >nul
 cd /d %~dp0
 
-set "FDB=C:\Program Files (x86)\SmallSoft\Small Commerce\SMALL.FDB"
+set "FDB=%ProgramFiles(x86)%\SmallSoft\Small Commerce\SMALL.FDB"
 if not exist "%FDB%" (
   echo Nao encontrei o FDB: "%FDB%"
   exit /b 1
@@ -57,13 +57,13 @@ set "MM=!MM:~-2!"
 set "DATA=!Y!-!MM!-!DD!"
 set "DATA_BR=!DD!/!MM!/!Y!"
 
-set "OUT=C:\Users\SERVIDOR\Desktop\relatorio_!DD!-!MM!-!Y!_gerencial_por_vendedor.html"
+set "OUT=%userprofile%\desktop\relatorio_!DD!-!MM!-!Y!_gerencial_por_vendedor.html"
 
 set "RG_OUT=!OUT!"
 set "RG_ISO=!DATA!"
 set "RG_BR=!DATA_BR!"
 
-node "C:\Users\SERVIDOR\Desktop\REL\gerencial_por_vendedor_html_fix_width.js" --fdb "%FDB%" --data !DATA! --saida "!OUT!" --user SYSDBA --pass masterkey >nul 2>nul
+node gerencial_por_vendedor_html_fix_width.js --fdb "%FDB%" --data !DATA! --saida "!OUT!" --user SYSDBA --pass masterkey >nul 2>nul
 
 if exist "!OUT!" (
   powershell -NoProfile -ExecutionPolicy Bypass -Command "$p=$env:RG_OUT;$iso=$env:RG_ISO;$br=$env:RG_BR;$enc=[System.Text.UTF8Encoding]::new($false);$c=[System.IO.File]::ReadAllText($p,$enc);$c=$c.Replace($iso,$br);[System.IO.File]::WriteAllText($p,$c,$enc)" >nul 2>nul
