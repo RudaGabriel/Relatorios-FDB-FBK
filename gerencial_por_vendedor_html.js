@@ -58,6 +58,11 @@
 		const p = n => String(n).padStart(2, "0");
 		return `${p(d.getHours())}:${p(d.getMinutes())}`;
 	})();
+	const diaMesGeradaBR = (() => {
+		const d = new Date();
+		const p = n => String(n).padStart(2, "0");
+		return `${p(d.getDate())}/${p(d.getMonth() + 1)}`;
+	})();
 	let tmpCriado = "";
 	let dbPath = fdb || fbk;
 	const restaurarSeFbk = async () => {
@@ -243,7 +248,7 @@ order by PEDIDO, ITEM
 					const qtd = fmtQtd(row.QUANTIDADE);
 					const key = ped + "|" + cx;
 					if (!mp.has(key)) mp.set(key, []);
-					mp.get(key).push(qtd + "x" + desc);
+					mp.get(key).push(qtd + "x " + desc);
 				}
 				for (const x of linhas) {
 					const key = String(x.numero || "").trim() + "|" + String(x.caixa || "").trim();
@@ -251,12 +256,8 @@ order by PEDIDO, ITEM
 					if (!arr || !arr.length) continue;
 					let t = "";
 					for (let i = 0; i < arr.length; i++) {
-						const linha = "╰┈" + String(arr[i] || "");
+						const linha = "⤷ " + String(arr[i] || "");
 						const add = (t ? "\n" : "") + linha;
-						if ((t.length + add.length) > 1200) {
-							t += (t ? "\n" : "") + "╰┈…";
-							break;
-						}
 						t += add;
 					}
 					x.itens = t;
@@ -291,112 +292,779 @@ order by PEDIDO, ITEM
 			const dadosJSON = JSON.stringify(dados).replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
 			const html = String.raw`<!doctype html><html lang="pt-br"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Gerencial por vendedor - ${escHtml(dataBR)}</title>
 <style>
-:root{color-scheme:dark}
-*{box-sizing:border-box}
-html,body{height:100%;margin:0;background:#0b0f17;color:#e6eaf2;overflow:hidden}
-body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}
-a{color:inherit}
-.app{height:100%;display:grid;grid-template-rows:auto 1fr}
-.top{display:flex;gap:12px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,0))}
-.top .left{display:flex;align-items:center;justify-content:space-between;align-content:space-around;min-width:0;flex:1 1 520px;flex-wrap:wrap;height:40px}
-.titulo{font-size:16px;font-weight:750;/*letter-spacing:.2px;*/white-space:nowrap}
-.badge{display:inline-flex;max-width:100%;min-width:0;font-size:12px;opacity:.95;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.05);padding:6px 10px;border-radius:999px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+:root {
+  color-scheme: dark;
+}
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  height: 100%;
+  margin: 0;
+  background: #0b0f17;
+  color: #e6eaf2;
+  overflow: hidden;
+}
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+}
+a {
+  color: inherit;
+}
+.app {
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto 1fr;
+}
+.top {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  padding: 14px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.05),
+    rgba(255, 255, 255, 0)
+  );
+}
+.top .left {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  align-content: space-around;
+  min-width: 0;
+  flex: 1 1 520px;
+  flex-wrap: wrap;
+  height: 40px;
+}
+.titulo {
+  font-size: 16px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+.badge {
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+  font-size: 12px;
+  opacity: 0.95;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  padding: 6px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .badge:last-child {
   gap: 3px;
 }
-.top .right{display:flex;gap:10px;align-items:center;min-width:0;flex:1 1 380px;justify-content:flex-end;flex-wrap:wrap}
-.input{flex:1 1 260px;width:auto;max-width:520px;min-width:220px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.10);color:#e6eaf2;padding:10px 12px;border-radius:12px;outline:none;height:40px}
-.input:focus{border-color:rgba(120,180,255,.55);box-shadow:0 0 0 4px rgba(120,180,255,.12)}
-.btn{cursor:pointer;user-select:none;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.10);color:#e6eaf2;padding:10px 12px;border-radius:12px;height:40px;display:flex;align-items:center;justify-content:center}
-.btn:hover{background:rgba(255,255,255,.07)}
-#limpar{padding:0 12px}
-#ajuda{min-width:40px;padding:0 12px}
-.main{min-height:0;display:grid;grid-template-columns:minmax(0,320px) minmax(0,1fr)}
-.sidebar{min-height:0;min-width:0;border-right:1px solid rgba(255,255,255,.08);padding:12px;display:flex;flex-direction:column;gap:10px;background:rgba(255,255,255,.02)}
-.sb-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
-.sb-title{font-size:13px;opacity:.85;font-weight:650}
-.list{min-height:0;overflow:auto;border-radius:12px}
-.item{display:flex;gap:10px;align-items:center;justify-content:space-between;padding:10px 10px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.03);border-radius:12px;margin-bottom:8px;cursor:pointer}
-.item:hover{background:rgba(255,255,255,.05)}
-.item.sel{border-color:rgba(120,180,255,.55);box-shadow:0 0 0 3px rgba(120,180,255,.10) inset}
-.item .nome{font-weight:650;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.item .meta{display:flex;flex-direction:column;align-items:flex-end;gap:2px}
-.item .qtd{font-size:12px;opacity:.85}
-.item .tot{font-size:12px;opacity:.9}
-.content{min-height:0;min-width:0;padding:12px 12px 12px 14px}
-.tableWrap{  height: 100%;
-  min-width: 0;
-  border: 1px solid rgba(255, 255, 255, .10);
-  background: rgba(255, 255, 255, .03);
-  border-radius: 14px;
-  overflow: auto;
+.badges {
   display: flex;
-  flex-direction: column;}
-.tableTop{  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.badgeHora {
+  opacity: 0.9;
+}
+#acoes {
+  display: none;
+}
+.top .right {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+  flex: 1 1 380px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+.input {
+  flex: 1 1 260px;
+  width: auto;
+  max-width: 520px;
+  min-width: 220px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #e6eaf2;
+  padding: 10px 12px;
+  border-radius: 12px;
+  outline: none;
+  height: 40px;
+}
+.input:focus {
+  border-color: rgba(120, 180, 255, 0.55);
+  box-shadow: 0 0 0 4px rgba(120, 180, 255, 0.12);
+}
+.btn {
+  cursor: pointer;
+  user-select: none;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #e6eaf2;
+  padding: 10px 12px;
+  border-radius: 12px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.btn:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+#limpar {
+  padding: 0 12px;
+}
+#ajuda {
+  min-width: 40px;
+  padding: 0 12px;
+}
+.btnProibidos {
+  display: none;
+  padding: 0 12px;
+}
+.badgeGeradoMobile {
+  display: none;
+}
+.main {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 320px) minmax(0, 1fr);
+}
+.sidebar {
+  min-height: 0;
+  min-width: 0;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: rgba(255, 255, 255, 0.02);
+}
+.sb-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.sb-title {
+  font-size: 13px;
+  opacity: 0.85;
+  font-weight: 650;
+}
+.list {
+  min-height: 0;
+  overflow: auto;
+  border-radius: 12px;
+}
+.item {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 12px;
+  margin-bottom: 8px;
+  cursor: pointer;
+}
+.item:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+.item.sel {
+  border-color: rgba(120, 180, 255, 0.55);
+  box-shadow: 0 0 0 3px rgba(120, 180, 255, 0.1) inset;
+}
+.item .nome {
+  font-weight: 650;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.item .meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+.item .qtd {
+  font-size: 12px;
+  opacity: 0.85;
+}
+.item .tot {
+  font-size: 12px;
+  opacity: 0.9;
+}
+.content {
+  min-height: 0;
+  min-width: 0;
+  padding: 12px 12px 12px 14px;
+}
+.tableWrap {
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 14px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.tableTop {
+  display: flex;
   gap: 15px;
   padding: 10px 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, .08);
-  flex-wrap: wrap;}
-.tableTitle{  opacity: .85;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  flex-direction: column;
+}
+.tableTitle {
+  opacity: 0.85;
   font-weight: 650;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: break-spaces;}
-.count{  font-size: 12px;
-  opacity: .85;
-  white-space: nowrap;}
-.actions{  display: flex;
+  white-space: break-spaces;
+}
+.count {
+  font-size: 12px;
+  opacity: 0.85;
+  white-space: nowrap;
+}
+.actions {
+  display: flex;
   gap: 15px;
   min-width: 0;
-  flex-direction: column;}
-.btns{
-	display: flex;
-	gap: 5px;
-	min-width: 0;
-	width: calc(100% + 3%);
-	justify-content: space-between;
+  flex-direction: column;
 }
-.btns .btn{
-	font-size: 15px;
-	width: fit-content;
+.btns {
+  display: flex;
+  gap: 8px;  overflow-x: auto;
+  width: 100%;
 }
-.grid{min-height:0;min-width:0;overflow:auto}
-table{width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed}
-thead th{position:sticky;top:0;background:rgba(11,15,23,.95);backdrop-filter:blur(10px);border-bottom:1px solid rgba(255,255,255,.10);padding:12px 10px;font-size:12px;text-transform:uppercase;letter-spacing:.08em;opacity:.9;text-align:center}
-thead th:nth-child(1){width:180px}
-thead th:nth-child(2){width:120px}
-thead th:nth-child(3){width:260px}
+.btns .btn {
+  flex: 1 1 180px;
+  justify-content: center;
+  font-size: 13px;
+}
+.grid {
+  min-height: 0;
+  min-width: 0;
+}
+table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: fixed;
+  display: block;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  height: 100%;
+  --sbw: 0px;
+}
+thead {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  display: table;
+  width: calc(100% - var(--sbw, 0px));
+  table-layout: fixed;
+  transform: translateX(0);
+}
+tbody {
+  display: table;
+  width: 100%;
+  table-layout: fixed;
+}
+table::-webkit-scrollbar {
+  width: 6px;
+}
+table::-webkit-scrollbar-track {
+  background: #0f131b;
+}
+table::-webkit-scrollbar-thumb {
+  background: #0f131b;
+  border: 1px solid #fff;
+  border-radius: 25px 5px;
+}
+table::-webkit-scrollbar-thumb:hover {
+  background: #0f131bdb;
+}
+thead th {
+  position: static;
+  background: rgba(11, 15, 23, 0.95);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 12px 10px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  opacity: 0.9;
+  text-align: center;
+}
+thead th:nth-child(1),
+tbody td:nth-child(1) {
+  width: 180px;
+}
+thead th:nth-child(2),
+tbody td:nth-child(2) {
+  width: 120px;
+}
+thead th:nth-child(3),
+tbody td:nth-child(3) {
+  width: 260px;
+}
+tbody td {
+  padding: 12px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  text-align: center;
+}
+tbody td:nth-child(1),
+tbody td:nth-child(2) {
+  white-space: nowrap;
+}
+tbody td:nth-child(3),
+tbody td:nth-child(4) {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+tbody tr {
+  cursor: pointer;
+}
+tbody tr:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+}
+.pill {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.03);
+  font-size: 12px;
+  opacity: 0.95;
+}
+.ov {
+  position: fixed;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(10px);
+  padding: 18px;
+  z-index: 9998;
+}
+.ov.on {
+  display: flex;
+}
+.modal {
+  width: min(720px, 94vw);
+  max-height: 86vh;
+  overflow: auto;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.06),
+    rgba(255, 255, 255, 0.03)
+  );
+  box-shadow: 0 26px 80px rgba(0, 0, 0, 0.55);
+  padding: 14px;
+}
+.mhead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.mtitle {
+  font-weight: 800;
+  font-size: 14px;
+}
+.msub {
+  font-size: 12px;
+  opacity: 0.85;
+  margin-top: 4px;
+}
+.mbody {
+  display: grid;
+  gap: 10px;
+}
+.kv {
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.03);
+}
+.k {
+  font-size: 12px;
+  opacity: 0.8;
+}
+.v {
+  font-size: 13px;
+}
 
-tbody td{padding:12px 10px;border-bottom:1px solid rgba(255,255,255,.06);text-align:center}
-tbody td:nth-child(1),tbody td:nth-child(2){white-space:nowrap}
-tbody td:nth-child(3),tbody td:nth-child(4){white-space:normal;overflow-wrap:anywhere}
-tbody tr{cursor:pointer}
-tbody tr:hover{background:rgba(255,255,255,.04)}
-.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace}
-.pill{display:inline-flex;gap:8px;align-items:center;padding:6px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.03);font-size:12px;opacity:.95}
-.ov{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.65);backdrop-filter:blur(10px);padding:18px}
-.ov.on{display:flex}
-.modal{width:min(720px,94vw);max-height:86vh;overflow:auto;border-radius:16px;border:1px solid rgba(255,255,255,.12);background:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.03));box-shadow:0 26px 80px rgba(0,0,0,.55);padding:14px}
-.mhead{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:10px}
-.mtitle{font-weight:800;font-size:14px}
-.msub{font-size:12px;opacity:.85;margin-top:4px}
-.mbody{display:grid;gap:10px}
-.kv{display:grid;grid-template-columns:160px 1fr;gap:8px;padding:10px;border-radius:12px;border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.03)}
-.k{font-size:12px;opacity:.8}
-.v{font-size:13px}
-@media (max-width:920px){.main{grid-template-columns:1fr}.sidebar{display:none}.top .left{flex-basis:100%}.top .right{flex-basis:100%;justify-content:flex-start}.input{flex:1 1 520px;min-width:220px;max-width:none;width:100%}}
-</style></head><body>
+.vendBtn {
+  display: none;
+  gap: 8px;
+  min-width: 0;
+  padding: 0 12px;
+}
+.vendIcon {
+  font-weight: 900;
+  font-size: 14px;
+  line-height: 1;
+}
+.vendTxt {
+  min-width: 0;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 700;
+  font-size: 12px;
+  opacity: 0.92;
+}
+.cards {
+  display: none;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+}
+.cardRow {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 14px;
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+  margin-bottom: 10px;
+  cursor: pointer;
+}
+.cardRow:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+.cardHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.cardNum {
+  font-weight: 900;
+}
+.cardTotal {
+  font-weight: 900;
+  opacity: 0.95;
+  white-space: nowrap;
+}
+.cardMeta {
+  font-size: 12px;
+  opacity: 0.85;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cardPay {
+  font-size: 12px;
+  opacity: 0.9;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cardItens {
+  font-size: 12px;
+  opacity: 0.9;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+}
+.itensMini {
+  margin-top: 8px;
+  border-radius: 14px;
+  padding: 10px 10px 9px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.32);
+}
+.itensMiniHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  opacity: 0.92;
+  margin-bottom: 8px;
+}
+.itensMiniHead .sub {
+  opacity: 0.78;
+  font-weight: 750;
+}
+.itensChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-height: 160px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.itensMini.big .itensChips {
+  max-height: 240px;
+}
+.itensChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.22);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 12px;
+  line-height: 1;
+}
+.itensQtd {
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.10);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  font-weight: 900;
+}
+@media (max-width: 680px) {
+  .itensChips {
+    max-height: 150px;
+  }
+}
+
+.vendModal {
+  width: min(520px, 94vw);
+}
+#ovVend {
+  z-index: 9997;
+}
+
+.mobileBar {
+  display: none;
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+  background: rgba(11, 15, 23, 0.92);
+  backdrop-filter: blur(12px);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  gap: 10px;
+  z-index: 20;
+}
+.mobileBar .btn {
+  height: 44px;
+  font-weight: 850;
+  justify-content: center;
+}
+.mobileBar .mbMais {
+  flex: 0 0 auto;
+  min-width: 86px;
+}
+.vendQ {
+  height: 38px;
+  border-radius: 12px;
+  margin-bottom: 10px;
+}
+.acoesBody {
+  display: grid;
+  gap: 10px;
+}
+.btnAcao {
+  width: 100%;
+  height: 46px;
+  justify-content: flex-start;
+  padding: 0 14px;
+  font-weight: 750;
+}
+.ov.sheet {
+  align-items: flex-end;
+}
+.ov.sheet .modal {
+  width: min(620px, 96vw);
+  max-height: 86vh;
+}
+@media (max-width: 920px) {
+  .main {
+    grid-template-columns: 1fr;
+  }
+  .sidebar {
+    display: none;
+  }
+  .vendBtn {
+    display: flex;
+  }
+  #acoes {
+    display: inline-flex;
+  }
+  .top .left {
+    height: auto;
+    gap: 10px;
+  }
+  .top .left {
+    flex-basis: 100%;
+  }
+  .top .right {
+    flex-basis: 100%;
+    justify-content: flex-start;
+  }
+  .badges {
+    flex-wrap: nowrap;
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 2px;
+  }
+  .input {
+    flex: 1 1 520px;
+    min-width: 220px;
+    max-width: none;
+    width: 100%;
+  }
+}
+
+@media (max-width: 680px) {
+  .top {
+    padding: 12px;
+    gap: 10px;
+  }
+  .top .left {
+    justify-content: flex-start;
+  }
+  .top .right {
+    gap: 8px;
+  }
+  #acoes {
+    display: inline-flex;
+  }
+  .btnProibidos {
+    display: flex;
+  }
+  .badgeGeradoMobile {
+    display: inline-flex;
+  }
+  .badges {
+    flex: 1 1 100%;
+  }
+  .badges .badgeHora {
+    display: none;
+  }
+  .titulo {
+    font-size: 15px;
+    flex: 0 1 100%;
+    max-width: 60vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .badge {
+    font-size: 11px;
+    padding: 5px 8px;
+  }
+  .input {
+    min-width: 0;
+  }
+  .tableTop {
+    padding: 10px;
+    gap: 10px;
+  }
+  .btns {
+    display: none;
+  }
+  table {
+    display: none;
+  }
+  .cards {
+    display: block;
+    padding-bottom: 86px;
+  }
+  .mobileBar {
+    display: flex;
+  }
+  .vendQ {
+    display: none;
+  }
+  .cardHead {
+    align-items: flex-start;
+  }
+  .cardNum,
+  .cardTotal {
+    font-size: 14px;
+  }
+  .cardMeta,
+  .cardPay {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    overflow-wrap: anywhere;
+  }
+  .cardItens {
+    overflow-wrap: anywhere;
+  }
+  .ov.sheet {
+    padding: 12px;
+    align-items: center;
+  }
+  .ov.sheet .modal {
+    width: min(620px, 94vw);
+    border-radius: 18px;
+  }
+}
+@media (max-width: 420px) {
+  .vendTxt {
+    max-width: 140px;
+  }
+  .badges .badgeHora {
+    display: none;
+  }
+  .mobileBar {
+    gap: 8px;
+    padding: 10px 10px calc(10px + env(safe-area-inset-bottom));
+  }
+  .mobileBar .btn {
+    font-size: 12px;
+  }
+}
+</style>
+</head>
+<body>
 <div class="app">
 <div class="top">
 <div class="left">
+<button id="btnVend" class="btn vendBtn" type="button" title="Vendedores"><span class="vendIcon">☰</span><span id="vendTopTxt" class="vendTxt">Todos</span></button>
 <div class="titulo">Gerencial por vendedor</div>
+<div class="badge badgeHora badgeGeradoMobile">Gerado em: ${escHtml(diaMesGeradaBR)} às ${escHtml(horaGeradaBR)}</div>
+<div class="badges">
 <div class="badge">Data: ${escHtml(dataBR)}</div>
-<div class="badge">Dia〢Hora gerada: ${String(new Date().getDate()).padStart(2,"0")+"/"+String(new Date().getMonth()+1).padStart(2,"0")}―${escHtml(horaGeradaBR)}</div>
+<div class="badge badgeHora">Gerado em: ${escHtml(diaMesGeradaBR)} às ${escHtml(horaGeradaBR)}</div>
 <div class="badge">Vendas: <span id="tQtd"></span>― Total: <span id="tTot"></span></div>
+</div>
 </div>
 <div class="right">
 <input id="q" class="input" placeholder="Buscar...  |  Excluir: [termo,~contém,=igual,[proibidos]] (vírgula)  |  Valor: >100, 10-20, 12*3, 12/3, 12?  |  Múltiplos: ~  |  Soma: =151 ou =151*2" autocomplete="off">
+<button id="acoes" class="btn" type="button" title="Ações">Ações</button>
 <button id="ajuda" class="btn" type="button" title="Coringas disponíveis">?</button>
+<button id="proibidos" class="btn btnProibidos" type="button">[Proibidos]</button>
 <button id="limpar" class="btn" type="button">Limpar</button>
 </div>
 </div>
@@ -416,13 +1084,14 @@ tbody tr:hover{background:rgba(255,255,255,.04)}
 <div class="count" id="count"></div>
 <div class="btns">
 <div class="btn" id="copiarTudo">Copiar tudo</div>
+<div class="btn" id="copiarTudoItens">Copiar tudo+itens</div>
 <div class="btn" id="copiarSemDinheiro">Copiar sem dinheiro</div>
+<div class="btn" id="copiarGerencial">Copiar só gerencial</div>
 <div class="btn" id="editarProibidos">Editar proibidos</div>
-<div class="btn" id="copiarSemProibidosTudo">Copiar tudo sem proibidos</div>
-<div class="btn" id="copiarSemProibidosSemDinheiro">Copiar sem dinheiro os proibidos</div>
 </div>
 </div>
 </div>
+<div class="cards" id="cards"></div>
 <table>
 <thead><tr>
 <th>numero do gerencial</th>
@@ -444,10 +1113,55 @@ tbody tr:hover{background:rgba(255,255,255,.04)}
 <div class="mtitle" id="mTitulo"></div>
 <div class="msub" id="mSub"></div>
 </div>
+<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
+<div class="btn" id="copiarModal" style="display:none">Copiar</div>
 <div class="btn" id="fechar">Fechar</div>
+</div>
 </div>
 <div class="mbody" id="mBody"></div>
 </div>
+</div>
+<div class="ov sheet" id="ovVend" aria-hidden="true">
+<div class="modal vendModal" role="dialog" aria-modal="true">
+<div class="mhead">
+<div>
+<div class="mtitle">Vendedores</div>
+<div class="msub">Toque para filtrar.</div>
+</div>
+<div class="btn" id="vendFechar">Fechar</div>
+</div>
+<div class="mbody">
+<input id="vendQ" class="input vendQ" placeholder="Buscar vendedor..." autocomplete="off">
+<div class="list" id="listaVend"></div>
+</div>
+</div>
+</div>
+
+<div class="ov sheet" id="ovAcoes" aria-hidden="true">
+<div class="modal acoesModal" role="dialog" aria-modal="true">
+<div class="mhead">
+<div>
+<div class="mtitle">Ações</div>
+<div class="msub">Copiar e ferramentas.</div>
+</div>
+<div class="btn" id="acoesFechar">Fechar</div>
+</div>
+<div class="mbody acoesBody">
+<button class="btn btnAcao" id="aCopiarTudo" type="button">Copiar tudo</button>
+<button class="btn btnAcao" id="aCopiarTudoItens" type="button">Copiar tudo + itens</button>
+<button class="btn btnAcao" id="aCopiarSemDinheiro" type="button">Copiar sem dinheiro</button>
+<button class="btn btnAcao" id="aCopiarGerencial" type="button">Copiar só gerencial</button>
+<button class="btn btnAcao" id="aProibidos" type="button">Editar proibidos</button>
+<button class="btn btnAcao" id="aVendedores" type="button">Escolher vendedor</button>
+<button class="btn btnAcao" id="aAjuda" type="button">Ajuda / coringas</button>
+<button class="btn btnAcao" id="aLimpar" type="button">Limpar filtro</button>
+</div>
+</div>
+</div>
+<div class="mobileBar" id="mobileBar">
+<button class="btn mbBtn" id="mbCopiar" type="button">Copiar</button>
+<button class="btn mbBtn" id="mbItens" type="button">+Itens</button>
+<button class="btn mbBtn mbMais" id="mbMais" type="button">Mais</button>
 </div>
 <script id="dados" type="application/json">${dadosJSON}</script>
 <script>
@@ -463,7 +1177,11 @@ const fmt=v=>new Intl.NumberFormat("pt-BR",{style:"currency",currency:"BRL"}).fo
 const fmtCopia=v=>new Intl.NumberFormat("pt-BR",{minimumFractionDigits:2,maximumFractionDigits:2,useGrouping:false}).format(Number(v||0));
 const esc=s=>String(s??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 const LS_KEY="__cupons_proibidos__";
-const proibidosPadrao=["FARO","BIOFRESH","OPTIMUM","CIBAU","ATACAMA","FN RECEITA","GOLDEN","PIPICAT","SYNTEC","FN CAES","FN GATOS","MITZI","ND CAES","ND GATOS","GRANPLUS","PEDIGREE","WHISKAS","PREMIER","GUABI","NATURAL CAES","NATURAL GATOS","PUTZ","GRANEL","ELANCO","VET LIFE"];
+const proibidosPadrao=["FARO","BIOFRESH","OPTIMUM","CIBAU","ATACAMA","GOLDEN","PIPICAT","SYNTEC",
+"MITZI","ND CAES","ND GATOS","GRANPLUS","PEDIGREE","WHISKAS","PREMIER","GUABI","NATURAL CAES",
+"NATURAL GATOS","PUTZ","GRANEL","ELANCO","VET LIFE","VETLIFE","KONIG","SAN REMO","SANREMO",
+"FN CAE","FN CAO","FN GATO","FN VET","ORIGENS","FUNNY BUNNY","FUNNY BIRDY","SANOL","KELDOG",
+"KDOG","MAGNUS","MAGNO","GENIAL","CANISTER","NATURAL SACHE"];
 const normP=v=>String(v||"").trim().toUpperCase().replace(/\s+/g," ");
 const PROIB_FIXOS=["DESCONTO","<CANCELADO>","CANCELADO"];
 const PROIB_FIXOS_N=new Set(PROIB_FIXOS.map(normP));
@@ -497,17 +1215,122 @@ if(!s)return"";
 const linhas=s.split(/\n+/g).map(p=>String(p||"").trim()).filter(Boolean);
 const lim=[];
 for(let p of linhas){
-p=p.replace(/^╰┈/,"").trim();
-const base=normP(p.replace(/^\d+[\d,]*x\s*/i,"").trim());
+p=p.replace(/^⤷\s*/,"").replace(/^╰┈/,"").trim();
+let linha=p.replace(/^\s+/,"");
+const mm=linha.match(/^(\d+[\d,]*x)\s*(.*)$/i);
+if(mm)linha=(mm[1]+" "+(mm[2]||"")).trim();
+const base=normP(linha.replace(/^\d+[\d,]*x\s*/i,"").trim());
 if(PROIB_FIXOS_N.has(base))continue;
-lim.push("╰┈"+p.replace(/^\s+/,""));
+lim.push("⤷ "+linha);
 }
 return lim.join("\n");
+};
+const itensListaCopia=it=>{
+const t=String(limparItensVisuais(it)||"").trim();
+if(!t)return"";
+const linhas=t.split(/\n+/g).map(s=>String(s||"").replace(/^⤷\s*/,"").trim()).filter(Boolean);
+const seen=new Set();
+const out=[];
+for(let l of linhas){
+l=l.replace(/^\d+[\d,]*x\s*/i,"").trim();
+if(!l||l==="…"||l==="...")continue;
+const k=normP(l);
+if(!k||seen.has(k))continue;
+seen.add(k);
+out.push(l);
+}
+return out.join("╰─╮");
+};
+const numQtd=s=>{
+s=String(s||"").trim();
+if(!s)return 0;
+s=s.replace(/\s+/g,"").replace(/\./g,"").replace(",",".");
+const n=Number(s);
+return Number.isFinite(n)?n:0;
+};
+const fmtQtdUI=n=>{
+const v=Number(n||0);
+if(!Number.isFinite(v)||v<=0)return"1";
+const r=Math.round(v);
+if(Math.abs(v-r)<1e-9)return String(r);
+let s=v.toFixed(3);
+s=s.replace(/0+$/,"").replace(/\.$/,"");
+return s.replace(".",",");
+};
+const agruparItensUI=it=>{
+const t=String(limparItensVisuais(it)||"").trim();
+if(!t)return{total:0,unicos:0,itens:[]};
+const linhas=t.split(/\n+/g).map(s=>String(s||"").replace(/^⤷\s*/,"").trim()).filter(Boolean);
+let total=0;
+const mp=new Map();
+for(let l of linhas){
+if(!l||l==="…"||l==="...")continue;
+total++;
+let nome=l;
+let qtd=1;
+const mm=l.match(/^(\d+(?:[\.,]\d+)?)x\s*(.*)$/i);
+if(mm){
+qtd=numQtd(mm[1]);
+nome=String(mm[2]||"").trim()||nome;
+if(!qtd)qtd=1;
+}
+const k=normP(nome);
+if(!k)continue;
+if(!mp.has(k))mp.set(k,{nome:nome,qtd:0});
+mp.get(k).qtd+=qtd;
+}
+const itens=[...mp.values()].sort((a,b)=>a.nome.localeCompare(b.nome,"pt-BR",{sensitivity:"base"})).map(o=>({nome:o.nome,qtd:fmtQtdUI(o.qtd)+"x"}));
+return{total:total,unicos:itens.length,itens:itens};
+};
+const itensMiniHTML=(it,grande)=>{
+const g=agruparItensUI(it);
+if(!g.itens.length)return"";
+let chips="";
+for(const x of g.itens)chips+='<span class="itensChip"><span class="itensQtd mono">'+esc(x.qtd)+'</span>'+esc(x.nome)+'</span>';
+return'<div class="itensMini'+(grande?' big':'')+'"><div class="itensMiniHead mono"><span>Itens</span><span class="sub">'+esc(g.total+" total • "+g.unicos+" únicos")+'</span></div><div class="itensChips">'+chips+'</div></div>';
+};
+
+const linhaCopiaItens=x=>{
+const itens=itensListaCopia(x?.itens);
+const forma=limparPagamentoCopia(x?.pagamentos||"");
+const parts=forma.split("|").map(s=>normP(s)).filter(Boolean);
+const extraTab=(parts.includes("DEBITO")||parts.includes("PIX")||parts.includes("DINHEIRO"))?"\t":"";
+return String(x?.numero||"")+"\t"+fmtCopia(x?.total||0)+"\t"+forma+"\t"+extraTab+(itens||"");
 };
 const vendaTemProibido=x=>{
 if(!reProibidos)return false;
 const t=String(x?.itens||"");
 return reProibidos.test(t);
+};
+const abrirVendedores=()=>{
+const ov=qs("#ovVend");
+if(!ov)return;
+ov.classList.add("on");
+ov.setAttribute("aria-hidden","false");
+vendFiltro="";
+const q=qs("#vendQ");
+if(q){q.value="";if(!window.matchMedia("(max-width:680px)").matches)q.focus();}
+};
+const fecharVendedores=()=>{
+const ov=qs("#ovVend");
+if(!ov)return;
+ov.classList.remove("on");
+ov.setAttribute("aria-hidden","true");
+vendFiltro="";
+const q=qs("#vendQ");
+if(q)q.value="";
+};
+const abrirAcoes=()=>{
+const ov=qs("#ovAcoes");
+if(!ov)return;
+ov.classList.add("on");
+ov.setAttribute("aria-hidden","false");
+};
+const fecharAcoes=()=>{
+const ov=qs("#ovAcoes");
+if(!ov)return;
+ov.classList.remove("on");
+ov.setAttribute("aria-hidden","true");
 };
 const abrirEditorProibidos=()=>{
 qs("#ovProib")?.remove();
@@ -515,13 +1338,13 @@ const bg=document.createElement("div");
 bg.className="ov on";
 bg.id="ovProib";
 bg.setAttribute("aria-hidden","false");
-bg.innerHTML='<div class="modal" role="dialog" aria-modal="true"><div class="mhead"><div><div class="mtitle">Proibidos</div><div class="msub">Um por linha ou separado por vírgula. Salva no localStorage. </div></div><div class="btn" id="prFechar">Fechar</div></div><div class="mbody"><textarea id="prTa" spellcheck="false" style="width:100%;height:260px;resize:vertical;border-radius:14px;border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.03);color:#e6eaf2;padding:12px;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,&quot;Liberation Mono&quot;,&quot;Courier New&quot;,monospace;font-size:12px;outline:none"></textarea><div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap"><div class="btn" id="prCancelar">Cancelar</div><div class="btn" id="prSalvar">Salvar</div></div></div></div>';
+bg.innerHTML='<div class="modal" role="dialog" aria-modal="true"><div class="mhead"><div><div class="mtitle">Proibidos</div><div class="msub">Um por linha ou separado por vírgula. Salva no localStorage. </div></div><div class="btn" id="prFechar">Fechar</div></div><div class="mbody"><textarea id="prTa" spellcheck="false" style="width:100%;height:260px;resize:vertical;border-radius:14px;border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.03);color:#e6eaf2;padding:12px;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,&quot;Liberation Mono&quot;,&quot;Courier New&quot;,monospace;font-size:12px;outline:none"></textarea><div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap"><div class="btn" id="prCancelar">Restaurar padrão</div><div class="btn" id="prSalvar">Salvar</div></div></div></div>';
 document.body.appendChild(bg);
 const ta=qs("#prTa",bg);
 ta.value=valoresProibidos.join("\n");
 const fechar=()=>bg.remove();
 qs("#prFechar",bg).addEventListener("click",fechar);
-qs("#prCancelar",bg).addEventListener("click",fechar);
+qs("#prCancelar",bg).addEventListener("click",()=>{setProibidosUser(proibidosPadrao);ta.value=proibidosPadrao.join("\n");fechar();renderTabela();toast("Proibidos","Restaurado padrão.");});
 qs("#prSalvar",bg).addEventListener("click",()=>{
 const lista=String(ta.value||"").split(/\n|,/g).map(normP).filter(Boolean);
 setProibidosUser(lista);
@@ -531,7 +1354,7 @@ toast("Proibidos","Lista atualizada.");
 });
 bg.addEventListener("click",e=>{if(e.target===bg)fechar();});
 document.addEventListener("keydown",function escKey(e){if(e.key==="Escape"){document.removeEventListener("keydown",escKey);fechar();}});
-};let vendAtual="",qAtual="",qInc="",qIgn=[],qValor=false,linhaAtual=null,somaSel=null,somaKey="";
+};let vendAtual="",vendFiltro="",qAtual="",qInc="",qIgn=[],qValor=false,linhaAtual=null,somaSel=null,somaKey="";
 const copiarTexto=txt=>{
 const fallback=()=>{
 const ta=document.createElement("textarea");
@@ -554,41 +1377,45 @@ ta.remove();
 if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(txt).catch(fallback);
 else fallback();
 };
-const __toastAtivos__=new Set();
-let __toastHost__=null;
+const __ncToastMsgs=new Set();
+const showToast=message=>{
+if(!message)return;
+const msg=String(message);
+if(__ncToastMsgs.has(msg))return;
+__ncToastMsgs.add(msg);
+const dur=5000;
+if(!document.getElementById("__nc_toast_css")){
+const st=document.createElement("style");
+st.id="__nc_toast_css";
+st.textContent=".__nc_toast_box{position:fixed;top:16px;left:16px;z-index:2147483647!important;display:flex;flex-direction:column;gap:10px;max-width:50vw;width:fit-content;pointer-events:none}@media (max-width:720px){.__nc_toast_box{max-width:92vw}}.__nc_toast{pointer-events:auto;z-index:2147483647!important;border: 1px solid rgb(96 139 193 / 64%);background: linear-gradient(180deg, #0b0f17, #0f131b);box-shadow: -2px 1px 15px rgb(92 134 189);color:#e6eaf2;border-radius:14px;padding:10px 34px 16px 12px;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;font-weight:650;font-size:13px;line-height:1.35;position:relative;opacity:0;transform:translateX(-18px);transition:opacity .18s ease,transform .18s ease;overflow:hidden;white-space:normal;word-break:break-word;overflow-wrap:anywhere}.__nc_toast.__on{opacity:1;transform:translateX(0)}.__nc_toast_x{position:absolute;top:8px;right:8px;width:18px;height:18px;border-radius:9px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:#e6eaf2;font-weight:800;font-size:10px;cursor:pointer;padding:0;display:grid;place-items:center}.__nc_toast_x:hover{background:rgba(255,255,255,.10)}.__nc_toast a{color:rgba(120,180,255,.95);text-decoration:none}.__nc_toast a:hover{text-decoration:underline}.__nc_toast_bar{position:absolute;left:10px;right:10px;bottom:8px;height:3px;border-radius:999px;background:rgba(255,255,255,.10);overflow:hidden}.__nc_toast_bar i{display:block;height:100%;width:100%;background:linear-gradient(90deg,rgba(120,180,255,.85),rgba(120,180,255,.25));transform-origin:left;transform:scaleX(1);animation:__nc_toast_bar var(--dur) linear forwards}@keyframes __nc_toast_bar{to{transform:scaleX(0)}}";
+(document.head||document.documentElement).appendChild(st);
+}
+let box=document.querySelector(".__nc_toast_box");
+if(!box){
+box=document.createElement("div");
+box.className="__nc_toast_box";
+(document.body||document.documentElement).appendChild(box);
+}
+const el=document.createElement("div");
+el.className="__nc_toast";
+const html=msg.replace(/https?:\/\/[^\s]+/g,u=>'<a href="'+u+'" target="_blank" rel="noreferrer noopener">'+u+'</a>').replace(/\s*\n+\s*/g," ").replace(/\s{2,}/g," ");
+el.style.setProperty("--dur",dur+"ms");
+el.innerHTML='<div>'+html+'</div><button class="__nc_toast_x" aria-label="Fechar">✕</button><div class="__nc_toast_bar"><i></i></div>';
+const rm=()=>{
+if(!el.isConnected)return;
+el.remove();
+__ncToastMsgs.delete(msg);
+};
+el.querySelector("button").addEventListener("click",rm);
+box.appendChild(el);
+requestAnimationFrame(()=>el.classList.add("__on"));
+setTimeout(rm,dur);
+};
 const toast=(titulo,desc)=>{
 const t=String(titulo||"").trim();
 const d=String(desc||"").trim();
-const key=t+"\u0000"+d;
-if(__toastAtivos__.has(key))return;
-__toastAtivos__.add(key);
-if(!__toastHost__){
-__toastHost__=document.createElement("div");
-__toastHost__.id="toastHost";
-__toastHost__.style.cssText="position:fixed;right:16px;bottom:16px;display:grid;gap:10px;z-index:9999;pointer-events:none";
-document.body.appendChild(__toastHost__);
-}
-const el=document.createElement("div");
-el.style.cssText="pointer-events:none;min-width:260px;max-width:min(560px,92vw);padding:13px 14px;border-radius:14px;border:1px solid rgba(180,220,255,.45);background:rgba(8,12,18,.97);box-shadow:0 22px 70px rgba(0,0,0,.70),0 0 0 1px rgba(255,255,255,.07) inset;opacity:0;transform:translateY(10px);transition:opacity .18s ease, transform .18s ease";
-const tt=document.createElement("div");
-tt.style.cssText="font-weight:900;font-size:13px;margin-bottom:4px;letter-spacing:.2px";
-tt.textContent=t||"";
-const dd=document.createElement("div");
-dd.style.cssText="font-size:12px;opacity:.92";
-dd.textContent=d||"";
-el.appendChild(tt);
-el.appendChild(dd);
-__toastHost__.appendChild(el);
-requestAnimationFrame(()=>{el.style.opacity="1";el.style.transform="translateY(0)";});
-setTimeout(()=>{
-if(!el.isConnected){__toastAtivos__.delete(key);return;}
-el.style.opacity="0";
-el.style.transform="translateY(10px)";
-setTimeout(()=>{
-try{el.remove()}catch{}
-__toastAtivos__.delete(key);
-},220);
-},5000);
+const msg=t&&d?(t+" — "+d):(t||d);
+showToast(msg);
 };
 const semWS=s=>{
 let o="";
@@ -930,21 +1757,46 @@ let out="";
 for(const v of vendes)out+=montarBloco(v,map.get(v))+"\n\n";
 return out.trim();
 };
-const renderLista=()=>{
-const root=qs("#lista");
-root.innerHTML="";
-const all=document.createElement("div");
-all.className="item"+(!vendAtual?" sel":"");
-all.addEventListener("click",()=>{vendAtual="";calcSomaSel();renderTudo();});
-all.innerHTML='<div class="nome">Todos</div><div class="meta"><div class="qtd">Vendas: '+DADOS.totais.qtd+'</div><div class="tot">'+fmt(DADOS.totais.total)+'</div></div>';
-root.appendChild(all);
-for(const v of DADOS.vendedores){
-const div=document.createElement("div");
-div.className="item"+(vendAtual===v.vendedor?" sel":"");
-div.addEventListener("click",()=>{vendAtual=v.vendedor;calcSomaSel();renderTudo();});
-div.innerHTML='<div class="nome">'+v.vendedor+'</div><div class="meta"><div class="qtd">Vendas: '+v.qtd+'</div><div class="tot">'+fmt(v.total)+'</div></div>';
-root.appendChild(div);
+const montarTextoCopiaItens=(ignorarDinheiro,ignorarProibidos)=>{
+const filtradas=DADOS.vendas.filter((x,i)=>passaFiltro(x,i)).filter(x=>(!ignorarDinheiro||!temDinheiro(x))&&(!ignorarProibidos||!vendaTemProibido(x)));
+const montarBloco=(nome,arr)=>{
+let out=nome+":\n";
+for(const x of arr)out+=linhaCopiaItens(x)+"\n";
+return out.trim();
+};
+if(vendAtual)return montarBloco(vendAtual,filtradas);
+const map=new Map();
+for(const x of filtradas){
+const v=x.vendedor||"(sem vendedor)";
+if(!map.has(v))map.set(v,[]);
+map.get(v).push(x);
 }
+const vendes=[...map.keys()].sort((a,b)=>a.localeCompare(b,"pt-BR",{sensitivity:"base"}));
+let out="";
+for(const v of vendes)out+=montarBloco(v,map.get(v))+"\n\n";
+return out.trim();
+};
+
+const renderLista=()=>{
+const mk=(root,apos,filtro)=>{
+if(!root)return;
+root.innerHTML="";
+const f=String(filtro||"").trim().toLowerCase();
+const add=(nome,qtd,total,sel,click)=>{
+const div=document.createElement("div");
+div.className="item"+(sel?" sel":"");
+div.addEventListener("click",()=>{click();if(apos)apos();});
+div.innerHTML='<div class="nome">'+esc(nome)+'</div><div class="meta"><div class="qtd">Vendas: '+qtd+'</div><div class="tot">'+esc(fmt(total))+'</div></div>';
+root.appendChild(div);
+};
+add("Todos",DADOS.totais.qtd,DADOS.totais.total,!vendAtual,()=>{vendAtual="";calcSomaSel();renderTudo();});
+for(const v of DADOS.vendedores){
+if(f&&String(v.vendedor||"").toLowerCase().indexOf(f)<0)continue;
+add(v.vendedor,v.qtd,v.total,vendAtual===v.vendedor,()=>{vendAtual=v.vendedor;calcSomaSel();renderTudo();});
+}
+};
+mk(qs("#lista"),null,"");
+mk(qs("#listaVend"),fecharVendedores,vendFiltro);
 };
 const abrirModal=x=>{
 linhaAtual=x;
@@ -969,16 +1821,33 @@ body.appendChild(mk("Gerencial",String(x.numero||"")));
 body.appendChild(mk("Caixa",String(x.caixa||"")));
 body.appendChild(mk("Total",fmt(x.total||0)));
 body.appendChild(mk("Formas",String(x.pagamentos||"")));
-body.appendChild(mk("Itens",String(limparItensVisuais(x.itens)||"")));
+const itensTxt=String(limparItensVisuais(x.itens)||"").trim();
+const itensBox=document.createElement("div");
+itensBox.innerHTML=itensMiniHTML(x.itens,true);
+const kv=document.createElement("div");
+kv.className="kv";
+const kk=document.createElement("div");
+kk.className="k";
+kk.textContent="Itens";
+const vv=document.createElement("div");
+vv.className="v";
+vv.appendChild(itensBox);
+kv.appendChild(kk);
+kv.appendChild(vv);
+body.appendChild(kv);
+const b=qs("#copiarModal");if(b)b.style.display="flex";
 qs("#ov").classList.add("on");
 qs("#ov").setAttribute("aria-hidden","false");
 };
 const fecharModal=()=>{
 qs("#ov").classList.remove("on");
 qs("#ov").setAttribute("aria-hidden","true");
+const b=qs("#copiarModal");if(b)b.style.display="none";
 linhaAtual=null;
 };
 const abrirAjuda=()=>{
+linhaAtual=null;
+const b=qs("#copiarModal");if(b)b.style.display="none";
 qs("#mTitulo").textContent="Coringas disponíveis";
 qs("#mSub").textContent="Use no campo de busca para filtrar por valor e/ou excluir termos.";
 const body=qs("#mBody");
@@ -996,23 +1865,42 @@ qs("#ov").setAttribute("aria-hidden","false");
 };
 const renderTabela=()=>{
 const tb=qs("#tb");
-tb.innerHTML="";
+if(tb)tb.innerHTML="";
+const cards=qs("#cards");
+if(cards)cards.innerHTML="";
 const filtradas=DADOS.vendas.filter((x,i)=>passaFiltro(x,i));
 let soma=0;
 for(const x of filtradas)soma+=Number(x.total||0);
 const q=String(qAtual||"").trim();
 qs("#count").textContent=somaSel&&q.startsWith("=")?(filtradas.length+" vendas ― soma "+fmt(soma)+" ― alvo "+fmt(somaSel.alvo)+(somaSel.tol?(" ± "+fmt(somaSel.tol)):"")):(filtradas.length+" vendas ― "+fmt(soma));
 const frag=document.createDocumentFragment();
+const fragC=document.createDocumentFragment();
 for(const x of filtradas){
+if(tb){
 const tr=document.createElement("tr");
 tr.addEventListener("click",()=>abrirModal(x));
-const itensHtml=esc(limparItensVisuais(x.itens)||"").replace(/\n/g,"<br>");
+const itensHtml=esc(limparItensVisuais(x.itens)||"").replace(/\s*\n+\s*/g," ").replace(/\s{2,}/g," ");
 tr.innerHTML='<td class="mono">'+esc(x.numero||"")+'</td><td class="mono">'+esc(fmt(x.total||0))+'</td><td class="mono">'+esc(x.pagamentos||"")+'</td><td>'+itensHtml+'</td>';
 frag.appendChild(tr);
 }
-tb.appendChild(frag);
+if(cards){
+const c=document.createElement("div");
+c.className="cardRow";
+c.addEventListener("click",()=>abrirModal(x));
+const itensMini=itensMiniHTML(x.itens,false);
+let meta="";
+if(!vendAtual)meta=String(x.vendedor||"");
+if(x.caixa)meta+=(meta?" | ":"")+"Caixa: "+String(x.caixa||"");
+c.innerHTML='<div class="cardHead"><div class="cardNum mono">#'+esc(x.numero||"")+'</div><div class="cardTotal mono">'+esc(fmt(x.total||0))+'</div></div>'+(meta?('<div class="cardMeta mono">'+esc(meta)+'</div>'):"")+'<div class="cardPay mono">'+esc(x.pagamentos||"")+'</div>'+itensMini;
+fragC.appendChild(c);
+}
+}
+if(tb)tb.appendChild(frag);
+if(cards)cards.appendChild(fragC);
 qs("#sub").textContent=vendAtual?("Vendedor: "+vendAtual):"Todos os vendedores";
-qs("#vendSel").textContent=vendAtual||"Todos";
+const vtxt=vendAtual||"Todos";
+qs("#vendSel").textContent=vtxt;
+const vt=qs("#vendTopTxt");if(vt)vt.textContent=vtxt;
 };
 const renderTudo=()=>{renderLista();renderTabela();};
 qs("#tQtd").textContent=DADOS.totais.qtd;
@@ -1020,16 +1908,76 @@ qs("#tTot").textContent=fmt(DADOS.totais.total);
 qs("#q").addEventListener("input",e=>{qAtual=String(e.target.value||"").trim();const p=parseBusca(qAtual);qInc=p.inc;qIgn=p.ign;qValor=consultaPareceValor(qInc);calcSomaSel();renderTabela();});
 qs("#limpar").addEventListener("click",()=>{vendAtual="";qAtual="";qInc="";qIgn=[];qValor=false;qs("#q").value="";calcSomaSel();renderTudo();toast("Filtro limpo","Mostrando todos.");});
 qs("#ajuda").addEventListener("click",abrirAjuda);
+const btnPro=qs("#proibidos");if(btnPro)btnPro.addEventListener("click",()=>{const inp=qs("#q");if(!inp)return;let v=String(inp.value||"");if(v.toLowerCase().indexOf("[proibidos]")<0)v=(v+" [proibidos]").trim();inp.value=v;qAtual=v.trim();const p=parseBusca(qAtual);qInc=p.inc;qIgn=p.ign;qValor=consultaPareceValor(qInc);calcSomaSel();renderTabela();toast("Filtro","Aplicado [proibidos].");});
 qs("#copiarTudo").addEventListener("click",()=>{copiarTexto(montarTextoCopia(false,false));toast("Copiado","Conteúdo completo (com dinheiro).");});
+qs("#copiarTudoItens").addEventListener("click",()=>{copiarTexto(montarTextoCopiaItens(false,false));toast("Copiado","Conteúdo completo + itens.");});
 qs("#copiarSemDinheiro").addEventListener("click",()=>{copiarTexto(montarTextoCopia(true,false));toast("Copiado","Ignorando vendas com Dinheiro.");});
+qs("#copiarGerencial").addEventListener("click",()=>{
+const filtradas=DADOS.vendas.map((x,i)=>({x,i})).filter(o=>passaFiltro(o.x,o.i)).map(o=>o.x);
+let out="";
+if(vendAtual){
+out+=vendAtual+":\n";
+for(const x of filtradas)out+=String(x.numero||"")+"\n";
+}else{
+const map=new Map();
+for(const x of filtradas){
+const v=x.vendedor||"(sem vendedor)";
+if(!map.has(v))map.set(v,[]);
+map.get(v).push(x);
+}
+const vendes=[...map.keys()].sort((a,b)=>a.localeCompare(b,"pt-BR",{sensitivity:"base"}));
+for(const v of vendes){
+out+=v+":\n";
+for(const x of map.get(v))out+=String(x.numero||"")+"\n";
+out+="\n";
+}
+}
+copiarTexto(out.trim());
+toast("Copiado","Somente números de gerencial.");
+});
 qs("#editarProibidos").addEventListener("click",abrirEditorProibidos);
-qs("#copiarSemProibidosTudo").addEventListener("click",()=>{copiarTexto(montarTextoCopia(false,true));toast("Copiado","Conteúdo sem proibidos (com dinheiro).");});
-qs("#copiarSemProibidosSemDinheiro").addEventListener("click",()=>{copiarTexto(montarTextoCopia(true,true));toast("Copiado","Sem proibidos e ignorando Dinheiro.");});
+const PH_DESK="Buscar...  |  Excluir: [termo,~contém,=igual,[proibidos]] (vírgula)  |  Valor: >100, 10-20, 12*3, 12/3, 12?  |  Múltiplos: ~  |  Soma: =151 ou =151*2";
+const PH_MOB="Buscar... (ex: >50~CARTAO~[proibidos])";
+const ajustarPlaceholder=()=>{const q=qs("#q");if(!q)return;q.placeholder=window.matchMedia("(max-width:680px)").matches?PH_MOB:PH_DESK;};
+ajustarPlaceholder();
+window.addEventListener("resize",ajustarPlaceholder);
+const clicar=sel=>{const el=qs(sel);if(el)el.dispatchEvent(new MouseEvent("click",{bubbles:true}));};
+const acoes=qs("#acoes");if(acoes)acoes.addEventListener("click",abrirAcoes);
+const acoesFechar=qs("#acoesFechar");if(acoesFechar)acoesFechar.addEventListener("click",fecharAcoes);
+const ovA=qs("#ovAcoes");if(ovA)ovA.addEventListener("click",e=>{if(e.target===ovA)fecharAcoes();});
+const a1=qs("#aCopiarTudo");if(a1)a1.addEventListener("click",()=>{clicar("#copiarTudo");fecharAcoes();});
+const a2=qs("#aCopiarTudoItens");if(a2)a2.addEventListener("click",()=>{clicar("#copiarTudoItens");fecharAcoes();});
+const a3=qs("#aCopiarSemDinheiro");if(a3)a3.addEventListener("click",()=>{clicar("#copiarSemDinheiro");fecharAcoes();});
+const a4=qs("#aCopiarGerencial");if(a4)a4.addEventListener("click",()=>{clicar("#copiarGerencial");fecharAcoes();});
+const a5=qs("#aProibidos");if(a5)a5.addEventListener("click",()=>{clicar("#editarProibidos");fecharAcoes();});
+const a6=qs("#aVendedores");if(a6)a6.addEventListener("click",()=>{fecharAcoes();renderLista();abrirVendedores();});
+const a7=qs("#aAjuda");if(a7)a7.addEventListener("click",()=>{fecharAcoes();abrirAjuda();});
+const a8=qs("#aLimpar");if(a8)a8.addEventListener("click",()=>{clicar("#limpar");fecharAcoes();});
+const mb1=qs("#mbCopiar");if(mb1)mb1.addEventListener("click",()=>{clicar("#copiarTudo");});
+const mb2=qs("#mbItens");if(mb2)mb2.addEventListener("click",()=>{clicar("#copiarTudoItens");});
+const mb3=qs("#mbMais");if(mb3)mb3.addEventListener("click",abrirAcoes);
+const vendQ=qs("#vendQ");if(vendQ)vendQ.addEventListener("input",e=>{vendFiltro=String(e.target.value||"");renderLista();});
+const btnVend=qs("#btnVend");if(btnVend)btnVend.addEventListener("click",()=>{renderLista();abrirVendedores();});
+const vendFechar=qs("#vendFechar");if(vendFechar)vendFechar.addEventListener("click",fecharVendedores);
+const ovVend=qs("#ovVend");if(ovVend)ovVend.addEventListener("click",e=>{if(e.target===ovVend)fecharVendedores();});
+qs("#copiarModal").addEventListener("click",()=>{if(!linhaAtual)return;copiarTexto((linhaAtual.vendedor||"(sem vendedor)")+":\n"+linhaCopiaItens(linhaAtual));toast("Copiado","Linha (com itens).");});
 qs("#fechar").addEventListener("click",fecharModal);
 qs("#ov").addEventListener("click",e=>{if(e.target===qs("#ov"))fecharModal();});
-document.addEventListener("keydown",e=>{if(e.key==="Escape")fecharModal();});
+document.addEventListener("keydown",e=>{if(e.key!=="Escape")return;const ova=qs("#ovAcoes");if(ova&&ova.classList.contains("on")){fecharAcoes();return;}const ovv=qs("#ovVend");if(ovv&&ovv.classList.contains("on")){fecharVendedores();return;}fecharModal();});
 document.addEventListener("keydown",e=>{const k=String(e.key||"");const isInsert=k==="Insert";const isCapsP=(k.toLowerCase()==="p"&&e.getModifierState&&e.getModifierState("CapsLock"));if(!isInsert&&!isCapsP)return;e.preventDefault();const inp=qs("#q");if(!inp)return;let v=String(inp.value||"");if(v.toLowerCase().indexOf("[proibidos]")<0)v=(v+" [proibidos]").trim();inp.value=v;qAtual=v.trim();const p=parseBusca(qAtual);qInc=p.inc;qIgn=p.ign;qValor=consultaPareceValor(qInc);calcSomaSel();renderTabela();toast("Filtro","Aplicado [proibidos].");});
+
+const fixHead=()=>{
+const tbl=qs("table");
+if(!tbl)return;
+const thead=tbl.querySelector("thead");
+if(!thead)return;
+const sync=()=>{const sbw=tbl.offsetWidth-tbl.clientWidth;tbl.style.setProperty("--sbw",(sbw>0?sbw:0)+"px");thead.style.transform="translateX("+(-tbl.scrollLeft)+"px)";};
+tbl.addEventListener("scroll",sync,{passive:true});
+window.addEventListener("resize",sync);
+sync();
+};
 renderTudo();
+fixHead();
 </script>
 </body></html>`;
 			fs.writeFileSync(saida, html, "utf8");
