@@ -280,8 +280,15 @@ order by PEDIDO, ITEM
 			}));
 			const totalGeral = linhas.reduce((a, b) => a + (b.total || 0), 0);
 			const qtdGeral = linhas.length;
+			const srv_key=String(process.env.FDB_SRV_KEY||"").trim();
+			const srv_base_local=String(process.env.FDB_SRV_BASE_LOCAL||"").trim();
+			const srv_base_rede=String(process.env.FDB_SRV_BASE_REDE||"").trim();
 			const dados = {
 				data: dataISO,
+				gerado_ts: Date.now(),
+				srv_key,
+				srv_base_local,
+				srv_base_rede,
 				totais: {
 					qtd: qtdGeral,
 					total: totalGeral
@@ -337,7 +344,7 @@ a {
   justify-content: space-between;
   align-content: space-around;
   min-width: 0;
-  flex: 1 1 520px;
+  flex: 1 1 480px;
   flex-wrap: wrap;
   height: 40px;
 }
@@ -1061,11 +1068,12 @@ tbody tr:hover {
 </div>
 </div>
 <div class="right">
-<input id="q" class="input" placeholder="Buscar...  |  Excluir: [termo,~contém,=igual,[proibidos]] (vírgula)  |  Valor: >100, 10-20, 12*3, 12/3, 12?  |  Múltiplos: ~  |  Soma: =151 ou =151*2" autocomplete="off">
+<input id="q" class="input" placeholder="Buscar...  |  Excluir: -termo (1) ou [termo,~contém,=igual,proibidos,-proibidos] (múltiplos)  |  Valor: >100, 10-20, 12*3, 12/3, 12?  |  Múltiplos: +  |  Soma: =151 ou =151*2" autocomplete="off">
 <button id="acoes" class="btn" type="button" title="Ações">Ações</button>
 <button id="ajuda" class="btn" type="button" title="Coringas disponíveis">?</button>
 <button id="proibidos" class="btn btnProibidos" type="button">[Proibidos]</button>
 <button id="limpar" class="btn" type="button">Limpar</button>
+<button id="atualizar" class="btn" type="button" title="Gerar um novo relatório no servidor e atualizar">Atualizar</button>
 </div>
 </div>
 <div class="main">
@@ -1470,9 +1478,10 @@ if(/^\d+$/.test(sx)&&sx[0]!=="0"&&sx.length<=4)return true;
 return false;
 };
 const parseBusca=raw=>{
-const s=String(raw||"").trim();
-if(!s)return{inc:"",ign:[],proibidos:false};
-let inc=s,ign=[],proibidos=false;
+const expandAbrev=s=>s.replace(/\[1p\]/gi,"[proibidos]").replace(/\[-p\]/gi,"[-proibidos]");
+const s=expandAbrev(String(raw||"").trim());
+if(!s)return{inc:"",ign:[],proibidos:false,proibidosModo:0};
+let inc=s,ign=[],proibidos=false,proibidosModo=0;let temColchetes=false;
 const rx=/\[([^\]]*)\]/g;
 let mm;
 const pushTerm=term=>{
@@ -1481,7 +1490,7 @@ if(!t)return;
 t=t.replace(/^"+|"+$/g,"");
 if(!t)return;
 const n=normP(t);
-if(n==="PROIBIDOS"){proibidos=true;return;}
+if(n==="PROIBIDOS"){proibidos=true;proibidosModo=1;return;}if(n==="-PROIBIDOS"){proibidos=false;proibidosModo=2;return;}
 let modo="inc";
 if(t[0]==="~"){modo="cont";t=t.slice(1).trim();}
 else if(t[0]==="="){modo="eq";t=t.slice(1).trim();}
@@ -1490,17 +1499,18 @@ if(!t)return;
 ign.push({modo,t});
 };
 while((mm=rx.exec(s))){
+temColchetes=true;
 const inner=String(mm[1]||"");
 for(const part of inner.split(","))pushTerm(part);
 }
-if(s.toLowerCase().indexOf("[proibidos]")>=0)proibidos=true;
-if(ign.length||proibidos)inc=inc.replace(/\[[^\]]*\]/g," ").trim();
+const sl=s.toLowerCase();if(sl.indexOf("[-proibidos]")>=0){proibidos=false;proibidosModo=2;}else if(sl.indexOf("[proibidos]")>=0){proibidos=true;proibidosModo=1;}
+if(temColchetes||proibidosModo)inc=inc.replace(/\[[^\]]*\]/g," ").trim();
 const m=inc.match(/^(.*)\((.*)\)\s*$/);
 if(m){
 inc=String(m[1]||"").trim();
 for(const part of String(m[2]||"").split(","))pushTerm(part);
 }
-return{inc:inc.trim(),ign,proibidos};
+return{inc:inc.trim(),ign,proibidos,proibidosModo};
 };
 const isDig=ch=>ch>="0"&&ch<="9";
 const matchInicioFull=(pat,full)=>{
@@ -1582,7 +1592,7 @@ const tStr=fmtCopia(total);
 const full=tStr;
 const inteiro=full.split(",")[0]||full;
 if(temCoringa){
-const partes=sx.split("~").map(p=>p.trim()).filter(Boolean);
+const partes=sx.split("+").map(p=>p.trim()).filter(Boolean);
 for(const p of partes){
 if(p.indexOf("*")>=0){
 if(matchInicioFull(p,full))return true;
@@ -1660,11 +1670,12 @@ const raw=String(qAtual||"").trim();
 if(!raw)return true;
 const p=parseBusca(raw);
 const q=String(p.inc||"").trim();
-if(p.proibidos&&vendaTemProibido(x))return false;
+const pm=p.proibidosModo||0;if(pm===1&&vendaTemProibido(x))return false;if(pm===2&&!vendaTemProibido(x))return false;
+let hayN="",toks=null;
 const ign=p.ign||[];
 if(ign.length){
-const hayN=normP((x.vendedor||"")+" "+(x.pagamentos||"")+" "+(x.itens||"")+" "+(x.caixa||"")+" "+(x.numero||"")+" "+String(x.total||""));
-const toks=hayN.split(" ").filter(Boolean);
+hayN=normP((x.vendedor||"")+" "+(x.pagamentos||"")+" "+(x.itens||"")+" "+(x.caixa||"")+" "+(x.numero||"")+" "+String(x.total||""));
+toks=hayN.split(" ").filter(Boolean);
 for(const o of ign){
 const term=normP(o?.t||"");
 if(!term)continue;
@@ -1680,12 +1691,49 @@ if(toks.includes(term))return false;
 }
 }
 if(!q)return true;
-if(q.startsWith("="))return !!(somaSel&&somaSel.sel&&somaSel.sel.has(i));
-const parts=q.split("~").map(v=>String(v||"").trim()).filter(Boolean);
+if(q.startsWith("="))return !!(somaSel&&somaSel.sel&&somaSel.sel.has(i));const parts=q.split("+").map(v=>String(v||"").trim()).filter(Boolean);
+const incParts=[],excParts=[];
+for(const part of parts){
+if(part[0]==="-"&&part.length>1){excParts.push(part.slice(1).trim());}
+else{
+let splitIdx=-1;
+for(let ci=1;ci<part.length;ci++){if(part[ci]==="-"&&!/\d/.test(part[ci+1]||"")){splitIdx=ci;break;}}
+if(splitIdx>0){const base=part.slice(0,splitIdx).trim();const rest=part.slice(splitIdx+1);if(base)incParts.push(base);for(const ex of rest.split("-").map(s=>s.trim()).filter(Boolean))excParts.push(ex);}
+else incParts.push(part);
+}
+}
 const camposTxt=((x.vendedor||"")+" "+(x.pagamentos||"")+" "+(x.itens||"")+" "+(x.caixa||"")+" "+(x.numero||"")).toLowerCase();
 const totalNum=Number(x.total||0);
-if(parts.length>1){
-for(const part of parts){
+if(excParts.length){
+if(!toks){hayN=normP((x.vendedor||"")+" "+(x.pagamentos||"")+" "+(x.itens||"")+" "+(x.caixa||"")+" "+(x.numero||"")+" "+String(x.total||""));toks=hayN.split(" ").filter(Boolean);}
+for(const ex of excParts){
+let et=String(ex||"").trim();
+if(!et)continue;
+let modo="tok";
+if(et[0]==="~"){modo="cont";et=et.slice(1).trim();}
+else if(et[0]==="="){modo="eq";et=et.slice(1).trim();}
+if(!et)continue;
+if(consultaPareceValor(et)){
+const ok=valorOk(et,totalNum);
+if(ok===true)return false;
+}else{
+const term=normP(et);
+if(!term)continue;
+if(modo==="eq"){
+if(hayN===term)return false;
+if(toks.includes(term))return false;
+if(normP(x.vendedor||"")===term||normP(x.pagamentos||"")===term||normP(x.caixa||"")===term||normP(x.numero||"")===term||normP(String(x.total||""))===term||normP(String(x.itens||""))===term)return false;
+}else if(modo==="cont"){
+if(hayN.indexOf(term)>=0)return false;
+}else{
+if(toks.includes(term))return false;
+}
+}
+}
+}
+if(!incParts.length)return true;
+if(incParts.length>1){
+for(const part of incParts){
 const ptxt=String(part||"").trim();
 if(!ptxt)continue;
 if(consultaPareceValor(ptxt)){
@@ -1698,9 +1746,11 @@ if(camposTxt.indexOf(ql)<0)return false;
 }
 return true;
 }
-const ql=q.toLowerCase();
+const q1=String(incParts[0]||"").trim();
+if(!q1)return true;
+const ql=q1.toLowerCase();
 if((x.vendedor||"").toLowerCase().indexOf(ql)>=0||(x.pagamentos||"").toLowerCase().indexOf(ql)>=0||(x.itens||"").toLowerCase().indexOf(ql)>=0||(x.caixa||"").toLowerCase().indexOf(ql)>=0||(!qValor&&(x.numero||"").toLowerCase().indexOf(ql)>=0))return true;
-const ok=valorOk(q,totalNum);
+const ok=valorOk(q1,totalNum);
 return ok===true;
 };
 const norm=s=>{
@@ -1853,13 +1903,16 @@ qs("#mSub").textContent="Use no campo de busca para filtrar por valor e/ou exclu
 const body=qs("#mBody");
 body.innerHTML="";
 const add=(k,v)=>{const d=document.createElement("div");d.className="kv";d.innerHTML='<div class="k">'+k+'</div><div class="v">'+v+'</div>';body.appendChild(d);};
-add("[a,~b,=c]","exclusão: a=inclui (token), ~b=contém (substring), =c=igual 100%. Use [proibidos] para excluir pela lista de proibidos.");
+add("[proibidos] ou [1p]","Use a tecla Insert ou Capslock + P para adicionar [proibidos] ao buscar e aplicar o filtro para ocultar vendas com itens proibidos");
+add("[-proibidos] ou [-p]","Use a tecla Delete para adicionar [-proibidos] ao buscar e aplicar o filtro para mostrar vendas com itens proibidos");
+add("[a,~b,=c]","exclusão: a=inclui (token), ~b=contém (substring), =c=igual 100%. Use [proibidos] para ocultar vendas com itens proibidos. Use [-proibidos] para mostrar vendas com itens proibidos, multiplas exclusões separadas por vírgula.");
+add("> ou >=","> valores maiores que, >= valores maiores que ou igual, exclusao use - (menos) (ex: >100-pix-credito-debito)");
+add("< ou <=","< valores menores que, <= valores menores que ou igual, exclusao use - (menos) (ex: <150-granel-gerencia-cartao)");
 add("*","1+ dígitos e/ou vírgula (pode atravessar a vírgula) — casa do começo do valor");
 add("/","1+ dígitos (somente antes da vírgula) — procura dentro da parte inteira");
 add("?","exatamente 1 dígito (parte inteira) — procura dentro da parte inteira");
-add("=151","combinação aproximada para somar até 151");
-add("=151*2","combinação aproximada para somar até 151 ± 2");
-add("~","múltiplos filtros (ex: >50~CARTAO~[richard])");
+add("=151 ou =151*num","combinação aproximada para somar até 151, combinação aproximada para somar até 151 ± adicional opcional");
+add("+","múltiplos filtros (ex: >50+CARTAO+-VENDEDOR) use sempre + para multiplas pesquisas");
 qs("#ov").classList.add("on");
 qs("#ov").setAttribute("aria-hidden","false");
 };
@@ -1936,8 +1989,8 @@ copiarTexto(out.trim());
 toast("Copiado","Somente números de gerencial.");
 });
 qs("#editarProibidos").addEventListener("click",abrirEditorProibidos);
-const PH_DESK="Buscar...  |  Excluir: [termo,~contém,=igual,[proibidos]] (vírgula)  |  Valor: >100, 10-20, 12*3, 12/3, 12?  |  Múltiplos: ~  |  Soma: =151 ou =151*2";
-const PH_MOB="Buscar... (ex: >50~CARTAO~[proibidos])";
+const PH_DESK="Buscar...  |  Excluir: -termo (1) ou [termo,~contém,=igual,proibidos,-proibidos] (múltiplos)  |  Valor: >100, 10-20, 12*3, 12/3, 12?  |  Múltiplos: +  |  Soma: =151 ou =151*2";
+const PH_MOB="Buscar... (ex: >50+CARTAO+-richard+[-proibidos])";
 const ajustarPlaceholder=()=>{const q=qs("#q");if(!q)return;q.placeholder=window.matchMedia("(max-width:680px)").matches?PH_MOB:PH_DESK;};
 ajustarPlaceholder();
 window.addEventListener("resize",ajustarPlaceholder);
@@ -1964,7 +2017,7 @@ qs("#copiarModal").addEventListener("click",()=>{if(!linhaAtual)return;copiarTex
 qs("#fechar").addEventListener("click",fecharModal);
 qs("#ov").addEventListener("click",e=>{if(e.target===qs("#ov"))fecharModal();});
 document.addEventListener("keydown",e=>{if(e.key!=="Escape")return;const ova=qs("#ovAcoes");if(ova&&ova.classList.contains("on")){fecharAcoes();return;}const ovv=qs("#ovVend");if(ovv&&ovv.classList.contains("on")){fecharVendedores();return;}fecharModal();});
-document.addEventListener("keydown",e=>{const k=String(e.key||"");const isInsert=k==="Insert";const isCapsP=(k.toLowerCase()==="p"&&e.getModifierState&&e.getModifierState("CapsLock"));if(!isInsert&&!isCapsP)return;e.preventDefault();const inp=qs("#q");if(!inp)return;let v=String(inp.value||"");if(v.toLowerCase().indexOf("[proibidos]")<0)v=(v+" [proibidos]").trim();inp.value=v;qAtual=v.trim();const p=parseBusca(qAtual);qInc=p.inc;qIgn=p.ign;qValor=consultaPareceValor(qInc);calcSomaSel();renderTabela();toast("Filtro","Aplicado [proibidos].");});
+document.addEventListener("keydown",e=>{const k=String(e.key||"");const isInsert=k==="Insert";const isCapsP=(k.toLowerCase()==="p"&&e.getModifierState&&e.getModifierState("CapsLock"));const isDelete=k==="Delete";if(!isInsert&&!isCapsP&&!isDelete)return;e.preventDefault();const inp=qs("#q");if(!inp)return;let v=String(inp.value||"");if(isDelete){if(v.toLowerCase().indexOf("[-proibidos]")<0)v=(v+" [-proibidos]").trim();inp.value=v;qAtual=v.trim();const p=parseBusca(qAtual);qInc=p.inc;qIgn=p.ign;qValor=consultaPareceValor(qInc);calcSomaSel();renderTabela();toast("Filtro","Aplicado [-proibidos].");}else{if(v.toLowerCase().indexOf("[proibidos]")<0)v=(v+" [proibidos]").trim();inp.value=v;qAtual=v.trim();const p=parseBusca(qAtual);qInc=p.inc;qIgn=p.ign;qValor=consultaPareceValor(qInc);calcSomaSel();renderTabela();toast("Filtro","Aplicado [proibidos].");}});
 
 const fixHead=()=>{
 const tbl=qs("table");
@@ -1978,6 +2031,7 @@ sync();
 };
 renderTudo();
 fixHead();
+const autoRefresh=(()=>{const MS5=5*60*1000,MS1=1000,MSMAX=2*60*1000;let tm=0;const base=(()=>{if(location.protocol==="http:"||location.protocol==="https:")return"";const l=String(DADOS&&DADOS.srv_base_local||"").trim();const r=String(DADOS&&DADOS.srv_base_rede||"").trim();return r||l||"";})();const key=String(DADOS&&DADOS.srv_key||"").trim();const api=p=>base+p;const fechar=()=>{const ov=document.getElementById("ovRefresh");if(ov)ov.remove();};const recarregar=()=>{if(location.protocol==="file:"){location.reload();return;}const u=new URL(location.href);u.hash="";u.searchParams.set("r",Date.now());location.replace(u.toString());};const status=()=>fetch(api("/__status"),{cache:"no-store"}).then(r=>r.json());const esperar=(ate,okPrev)=>new Promise(res=>{const tick=()=>{status().then(st=>{const ok=Number(st&&st.last_ok||0);if(st&&!st.running&&(okPrev?ok>okPrev:true))return res(st);if(Date.now()>=ate)return res(st||null);setTimeout(tick,MS1);}).catch(()=>{if(Date.now()>=ate)res(null);else setTimeout(tick,MS1);});};tick();});const gerar=()=>{if(!key)return Promise.resolve({ok:false,motivo:"sem_key"});return status().then(st0=>{const okPrev=Number(st0&&st0.last_ok||0);return fetch(api("/__gerar"),{method:"POST",headers:{"x-key":key}}).then(r=>r.json().catch(()=>({})).then(j=>({st:r.status,j,okPrev}))).then(o=>{if(o.st===401)return{ok:false,motivo:"unauth"};return esperar(Date.now()+MSMAX,o.okPrev).then(st=>({ok:true,st:st||o.j}));});});};const gerarEAtualizar=()=>{fechar();if((location.protocol==="http:"||location.protocol==="https:")||base){toast("Gerando","Gerando um novo relatório no servidor...");gerar().then(r=>{if(!r||r.ok===false){toast("Atualização","Não consegui gerar no servidor. Recarregando...");recarregar();return;}toast("Atualização","Relatório atualizado.");recarregar();});return;}recarregar();};const agendar=ms=>{clearTimeout(tm);tm=setTimeout(perguntar,ms);};const adiar=()=>{fechar();toast("Atualização","Adiada. Vou lembrar de novo em 5 minutos.");agendar(MS5);};const perguntar=()=>{if(document.hidden){agendar(MS5);return;}if(document.getElementById("ovRefresh"))return;const bg=document.createElement("div");bg.className="ov on";bg.id="ovRefresh";bg.setAttribute("aria-hidden","false");bg.innerHTML='<div class="modal" role="dialog" aria-modal="true"><div class="mhead"><div><div class="mtitle">Atualizar relatório?</div><div class="msub">A página pode gerar e atualizar a cada 30 minutos. Se você adiar, vou perguntar de novo a cada 5 minutos.</div></div><div class="btn" id="rfFechar">Fechar</div></div><div class="mbody"><div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:nowrap"><div class="btn" id="rfAdiar">Adiar 5 min</div><div class="btn" id="rfAgora">Gerar e atualizar</div></div></div></div>';document.body.appendChild(bg);const onEsc=e=>{if(e.key!=="Escape")return;document.removeEventListener("keydown",onEsc);adiar();};document.addEventListener("keydown",onEsc);bg.addEventListener("click",e=>{if(e.target===bg){document.removeEventListener("keydown",onEsc);adiar();}});qs("#rfFechar").addEventListener("click",()=>{document.removeEventListener("keydown",onEsc);adiar();});qs("#rfAdiar").addEventListener("click",()=>{document.removeEventListener("keydown",onEsc);adiar();});qs("#rfAgora").addEventListener("click",()=>{document.removeEventListener("keydown",onEsc);gerarEAtualizar();});};const alinhar=()=>{const d=new Date();const m=d.getMinutes(),s=d.getSeconds(),ms=d.getMilliseconds();let falt=((m<30)?(30-m):(60-m))*60*1000 - s*1000 - ms;if(falt<1000)falt=1000;agendar(falt);};const btn=qs("#atualizar");if(btn)btn.addEventListener("click",gerarEAtualizar);alinhar();return{agendar,gerarEAtualizar};})();
 </script>
 </body></html>`;
 			fs.writeFileSync(saida, html, "utf8");
