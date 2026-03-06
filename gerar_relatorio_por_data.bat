@@ -62,7 +62,7 @@ if not defined ANO_PADRAO (
 )
 
 set "DATAIN="
-set /p DATAIN=Digite a data (DD/MM ou DD/MM/AAAA) [ano padrao=%ANO_PADRAO%]: 
+set /p DATAIN=Digite a data (D/M, DD/MM ou DD/MM/AAAA) (ano opcional) [ano padrao=%ANO_PADRAO%]: 
 if "%DATAIN%"=="" (
   echo Data vazia.
   exit /b 1
