@@ -523,10 +523,6 @@ span#tQtd,span#tQtdGer,span#tQtdNfce {margin: 0 3px;}
   margin: 7px 0;
 }
 .sbResumo {
-	display: none !important;
-	width: 0;
-	height: 0;
-	opacity: 0;
   /*margin-top: 10px;*/
   padding-top: 6px;
   border-top: 1px solid rgba(255, 255, 255, 0.08);
