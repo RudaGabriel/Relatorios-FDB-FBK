@@ -95,7 +95,7 @@ if not "%Y:~4,1%"=="" goto invalida
 set "DATA=%Y%-%M%-%D%"
 set "DATA_ARQ=%D%-%M%-%Y%"
 
-set "OUT=%userprofile%\desktop\(FDB-DATA)_relatorio_%DATA_ARQ%_gerencial_por_vendedor.html"
+set "OUT=%userprofile%\desktop\(FDB-DATA)_relatorio_%DATA_ARQ%.html"
 
 echo FDB: "%FDB%"
 echo Script: "%SCRIPT%"

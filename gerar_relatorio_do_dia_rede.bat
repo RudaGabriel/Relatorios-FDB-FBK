@@ -93,7 +93,7 @@ if errorlevel 1 (
 if exist "%PROIB_BAK%" powershell -NoProfile -ExecutionPolicy Bypass -Command "$p='%PROIB%';$b='%PROIB_BAK%';$a=@();if(Test-Path $b){$a+=Get-Content -LiteralPath $b -Encoding UTF8};$c=@();if(Test-Path $p){$c+=Get-Content -LiteralPath $p -Encoding UTF8};$seen=@{};$out=@();foreach($l in ($a+$c)){$n=([string]$l).Trim().ToUpper();$n=$n -replace '\s+',' ';if($n -and -not $seen.ContainsKey($n)){$seen[$n]=$true;$out+=$n}};Set-Content -LiteralPath $p -Value $out -Encoding UTF8" >nul 2>&1
 del /q "%PROIB_BAK%" >nul 2>&1
 for /f %%t in ('powershell -NoProfile -Command "Get-Date -Format HH-mm"') do set "HHMM=%%t"
-copy /y "%OUT%" "%HIST%\(FDB-DIA)_relatorio_%DATA_ARQ%_%HHMM%_gerencial_por_vendedor.html" >nul 2>&1
+copy /y "%OUT%" "%HIST%\(FDB-DIA)_relatorio_%DATA_ARQ%_%HHMM%.html" >nul 2>&1
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$d=(Get-Date).Date; Get-ChildItem -LiteralPath '%HIST%' -File -Filter '*.html' -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime.Date -ne $d } | Remove-Item -Force -ErrorAction SilentlyContinue" >nul 2>&1
 for /f "tokens=5" %%P in ('netstat -ano ^| findstr /r /c:":%PORTA% .*LISTENING"') do taskkill /PID %%P /F >nul 2>&1
 powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and ($_.CommandLine -like '*_srv_loop.cmd*' -or $_.CommandLine -like '*_start_server.cmd*') } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }" >nul 2>&1

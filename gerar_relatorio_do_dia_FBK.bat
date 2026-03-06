@@ -14,7 +14,7 @@ set "GBAK="
 set "SCRIPT="
 set "NODE="
 set "NEED_REFRESH=0"
-set "OUT=%userprofile%\desktop\(FBK-DIA)_relatorio_%DATA_ARQ%_gerencial_por_vendedor.html"
+set "OUT=%userprofile%\desktop\(FBK-DIA)_relatorio_%DATA_ARQ%.html"
 
 call :FIND_NODE
 if not defined NODE goto NO_NODE

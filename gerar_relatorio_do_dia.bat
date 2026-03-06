@@ -59,7 +59,7 @@ if not defined SCRIPT (
 for /f "tokens=1-3 delims=-" %%a in ("%DATA%") do (set "YYYY=%%a" & set "MM=%%b" & set "DD=%%c")
 set "DATA_BR=%DD%/%MM%/%YYYY%"
 set "DATA_ARQ=%DD%-%MM%-%YYYY%"
-set "OUT=%userprofile%\desktop\(FDB-DIA)_relatorio_%DATA_ARQ%_gerencial_por_vendedor.html"
+set "OUT=%userprofile%\desktop\(FDB-DIA)_relatorio_%DATA_ARQ%.html"
 
 cd /d "%~dp0"
 echo FDB: "%FDB%"
