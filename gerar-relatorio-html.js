@@ -147,6 +147,19 @@
 			const campoSituacao = camposNfce.has("SITUACAO") ? "cast(n.SITUACAO as varchar(1))" : "''";
 			const campoEmissao = camposNfce.has("EMISSAO") ? "cast(n.EMISSAO as varchar(1))" : "''";
 
+			// ---------------- A MÁGICA DA HORA ----------------
+			// Procura qualquer coluna que tenha "HORA" no nome dentro da tabela
+			let colHoraReal = Array.from(camposNfce).find(c => c.includes("HORA") || c === "HR");
+			let exprHora = "''";
+			if (colHoraReal) {
+			    exprHora = `cast(n.${colHoraReal} as varchar(8))`;
+			} else {
+			    // Se não tiver coluna de hora, tenta extrair da própria coluna DATA
+			    exprHora = `substring(cast(n.data as varchar(24)) from 12 for 5)`;
+			}
+			const campoHora = exprHora;
+			// --------------------------------------------------
+
 			// 1. Puxa NFCE (A base das vendas, filtrando as canceladas)
 			const nfceSql = `
 			select
@@ -157,7 +170,8 @@
 			  ${campoVendedorNfce} as VENDEDOR_NFCE,
 			  ${campoCancelado} as CANC,
 			  ${campoSituacao} as SIT,
-			  ${campoEmissao} as EMI
+			  ${campoEmissao} as EMI,
+			  ${campoHora} as HORA
 			  ${colsSelect}
 			from nfce n
 			where n.data between cast(? as date) and cast(? as date)
@@ -230,6 +244,7 @@
 					modelo: Number(n.MODELO || 65),
 					numero: primaryId,
 					caixa: caixa,
+					hora: String(n.HORA || "").trim(),
 					total_nfce: totalNum,
 					total_pag: 0,
 					formas: []
@@ -284,6 +299,7 @@
 
 			const camposAlt = await camposTabela("ALTERACA");
 			const campoVendAlt = camposAlt.has("VENDEDOR") ? "cast(VENDEDOR as varchar(60))" : "cast(null as varchar(60))";
+			const campoHoraAlt = camposAlt.has("HORA") ? "cast(HORA as varchar(8))" : "cast('' as varchar(8))";
 
 			const fmtQtd = v => {
 				const n = Number(v || 0);
@@ -297,7 +313,7 @@
 			};
 
 			const rrAlt = await query(db, `
-			select DATA, cast(PEDIDO as varchar(30)) as PED, cast(CAIXA as varchar(10)) as CX, DESCRICAO, QUANTIDADE, ${campoVendAlt} as VENDEDOR_ALT
+			select DATA, cast(PEDIDO as varchar(30)) as PED, cast(CAIXA as varchar(10)) as CX, DESCRICAO, QUANTIDADE, ${campoVendAlt} as VENDEDOR_ALT, ${campoHoraAlt} as HORA_ALT
 			from ALTERACA
 			where DATA between cast(? as date) and cast(? as date)
 			order by DATA, PEDIDO, ITEM
@@ -305,6 +321,7 @@
 
 			const altMap = new Map();
 			const vendAltMap = new Map();
+			const horaAltMap = new Map();
 
 			if (!rrAlt.e && rrAlt.rows && rrAlt.rows.length) {
 				for (const row of rrAlt.rows) {
@@ -316,6 +333,9 @@
 
 					const vAlt = String(row.VENDEDOR_ALT || "").trim();
 					if (vAlt && vAlt !== "?" && !vendAltMap.has(primaryKey)) vendAltMap.set(primaryKey, vAlt);
+
+					const hAlt = String(row.HORA_ALT || "").trim();
+					if (hAlt && !horaAltMap.has(primaryKey)) horaAltMap.set(primaryKey, hAlt);
 
 					const desc = String(row.DESCRICAO || "").trim();
 					if (!desc) continue;
@@ -349,6 +369,8 @@
 					}
 				}
 
+				let finalHora = v.hora || horaAltMap.get(key) || "";
+
 				linhas.push({
 					_dtKey: v._dtKey,
 					vendedor: finalVendedor,
@@ -356,6 +378,7 @@
 					tipo: v.modelo === 65 ? "nfc-e" : "gerencial",
 					numero: numeroDisplay,
 					caixa: v.caixa,
+					hora: finalHora,
 					total: finalTotal,
 					pagamentos: finalPags,
 					itens: tItens
@@ -671,12 +694,19 @@ tbody tr:hover td { border-bottom-color: transparent; color: var(--text-main); }
 tbody tr:hover td:first-child { border-top-left-radius: var(--radius-md); border-bottom-left-radius: var(--radius-md); }
 tbody tr:hover td:last-child { border-top-right-radius: var(--radius-md); border-bottom-right-radius: var(--radius-md); }
 thead th:nth-child(1), tbody td:nth-child(1) { width: auto; font-weight: 600; text-align: center; }
-thead th:nth-child(2), tbody td:nth-child(2) { width: auto; text-align: center; }
-thead th:nth-child(3), tbody td:nth-child(3) { width: auto; color: var(--text-muted); text-align: center; }
-thead th:nth-child(4), tbody td:nth-child(4) { width: auto; font-weight: 700; color: var(--text-main); text-align: center; }
-thead th:nth-child(5), tbody td:nth-child(5) { width: auto; text-align: center; }
+thead th:nth-child(2), tbody td:nth-child(2) { width: 90px; text-align: center; }
+thead th:nth-child(3), tbody td:nth-child(3) { width: 90px; color: var(--text-muted); text-align: center; }
+thead th:nth-child(4), tbody td:nth-child(4) { width: 70px; text-align: center; }
+thead th:nth-child(5), tbody td:nth-child(5) { width: auto; font-weight: 700; color: var(--text-main); text-align: center; }
+thead th:nth-child(6), tbody td:nth-child(6) { width: auto; text-align: center; }
+thead tr {
+  user-select: none;
+}
 tr th:first-child {
   transform: translateX(7px);
+}
+tr th:nth-child(2) {
+  transform: translateX(3px);
 }
 
 /* Chips */
@@ -799,14 +829,17 @@ tbody tr:hover .tdItemChip { border-color: var(--text-muted); color: var(--text-
 </div>
 <div class="cards" id="cards"></div>
 <table>
-<thead><tr>
-<th>vendedor</th>
-<th>tipo</th>
-<th>número</th>
-<th>total</th>
-<th>forma de pagamento</th>
-<th>itens</th>
-</tr></thead>
+<thead>
+<tr>
+	<th>vendedor</th>
+	<th>tipo</th>
+	<th>número</th>
+	<th>hora</th>
+	<th>total</th>
+	<th>forma de pagamento</th>
+	<th>itens</th>
+</tr>
+</thead>
 <tbody id="tb"></tbody>
 </table>
 </div>
@@ -1416,8 +1449,6 @@ const montarTextoCopia=(ignorarDinheiro,ignorarProibidos)=>{
     const montarBloco=(nome,arr)=>{
         let out=nome+":\n";
         for(const x of arr)out+=String(x.numero||"")+"\t"+fmtCopia(x.total||0)+"\t"+limparPagamentoCopia(x.pagamentos||"")+"\n";
-        const r=resumo(arr.filter(x=>!ignorarDinheiro||!temDinheiro(x)));
-        if(r)out+="\n"+r+"\n";
         return out.trim();
     };
     if(vendAtual)return montarBloco(vendAtual,filtradas);
@@ -1479,12 +1510,14 @@ const renderTabela=()=>{
     for(const x of filtradas){
         if(tb){
             const itensInfo=itensTdHTML(x.itens);
-            htmlTb += '<tr data-idx="'+x._idx+'"><td>'+esc(x.vendedor||"")+'</td><td>'+esc(x.tipo==="nfc-e"?"NFC-e":"Gerencial")+'</td><td class="mono">'+esc(x.numero||"")+'</td><td class="mono">'+esc(fmt(x.total||0))+'</td><td class="mono">'+esc(x.pagamentos||"")+'</td><td>'+itensInfo.html+'</td></tr>';
+            let horaFormatada = x.hora ? String(x.hora).substring(0, 5) : "";
+            htmlTb += '<tr data-idx="'+x._idx+'"><td>'+esc(x.vendedor||"")+'</td><td>'+esc(x.tipo==="nfc-e"?"NFC-e":"Gerencial")+'</td><td class="mono">'+esc(x.numero||"")+'</td><td class="mono">'+esc(horaFormatada)+'</td><td class="mono">'+esc(fmt(x.total||0))+'</td><td class="mono">'+esc(x.pagamentos||"")+'</td><td>'+itensInfo.html+'</td></tr>';
         }
         if(cards){
             const itensMini=itensMiniHTML(x.itens,false);
             let meta=""; if(!vendAtual)meta=String(x.vendedor||"");
             meta+=(meta?" | ":"")+(x.tipo==="nfc-e"?"NFC-e":"Gerencial");
+            if(x.hora)meta+=(meta?" | ":"")+"Hora: "+String(x.hora||"").substring(0, 5);
             if(x.caixa)meta+=(meta?" | ":"")+"Caixa: "+String(x.caixa||"");
             htmlCards += '<div class="cardRow" data-idx="'+x._idx+'"><div class="cardHead"><div class="cardNum mono">#'+esc(x.numero||"")+'</div><div class="cardTotal mono">'+esc(fmt(x.total||0))+'</div></div>'+(meta?('<div class="cardMeta mono">'+esc(meta)+'</div>'):"")+'<div class="cardPay mono">'+esc(x.pagamentos||"")+'</div>'+itensMini+'</div>';
         }
