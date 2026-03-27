@@ -52,10 +52,20 @@
 		stdout: String(stdout || ""),
 		stderr: String(stderr || "")
 	})));
-	const query = (db, sql, params) => new Promise(r => db.query(sql, params || [], (e, rows) => r({
-		e,
-		rows: rows || []
-	})));
+	const decoder = new TextDecoder("windows-1252");
+	const query = (db, sql, params) => new Promise(r => db.query(sql, params || [], (e, rows) => {
+		if (rows) {
+			for (let i = 0; i < rows.length; i++) {
+				for (const key in rows[i]) {
+					// Se o dado for um Buffer (bytes puros), nós traduzimos para texto com acentos!
+					if (Buffer.isBuffer(rows[i][key])) {
+						rows[i][key] = decoder.decode(rows[i][key]);
+					}
+				}
+			}
+		}
+		r({ e, rows: rows || [] });
+	}));
 	
 	const parseBR = (iso, raw) => {
 		let m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -386,10 +396,18 @@
 			}
 			
 			linhas.sort((a, b) => {
+				const hA = String(a.hora || "");
+				const hB = String(b.hora || "");
+				
+				// 1. Ordenação principal: Horário em ordem decrescente (mais recente primeiro)
+				if (hA > hB) return -1; 
+				if (hA < hB) return 1;
+				
+				// 2. Critérios de desempate (caso duas vendas tenham o exato mesmo minuto)
 				const vA = a.vendedor.toLowerCase(), vB = b.vendedor.toLowerCase();
-				if (vA < vB) return -1; if (vA > vB) return 1;
-				if (a.modelo < b.modelo) return -1; if (a.modelo > b.modelo) return 1;
-				if (a.numero < b.numero) return -1; if (a.numero > b.numero) return 1;
+				if (vA < vB) return -1; if (vA > vB) return 1; // Agrupa por vendedor
+				if (a.modelo < b.modelo) return -1; if (a.modelo > b.modelo) return 1; // Agrupa por modelo
+				if (a.numero > b.numero) return -1; if (a.numero < b.numero) return 1; // Maior número primeiro
 				return 0;
 			});
 
@@ -550,10 +568,10 @@ html, body { height: 100%; background: var(--bg-app); color: var(--text-main); f
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 7px;
+  padding: 5px;
   background: transparent;
   border-radius: var(--radius-md);
-  margin-bottom: 4px;
+  margin-bottom: 5px;
   cursor: pointer;
   border: 1px solid transparent;
   transition: var(--transition);
@@ -567,7 +585,7 @@ html, body { height: 100%; background: var(--bg-app); color: var(--text-main); f
 .item .tot { font-size: 13px; font-weight: 600; color: var(--text-main); font-family: 'JetBrains Mono', monospace; }
 
 /* Total por Vendedor (Resumo) */
-.sbResumo { display: flex; flex-direction: column; flex: 1 1 50%; min-height: 0; border-top: 1px solid var(--border); padding-top: 20px; }
+.sbResumo { display: flex; flex-direction: column; flex: 0 100 50%; min-height: 0; border-top: 1px solid var(--border); padding-top: 20px; }
 .sbResumoBody {
   overflow-y: auto;
   flex: 1 1 auto;
@@ -697,10 +715,16 @@ thead th:nth-child(1), tbody td:nth-child(1) { width: auto; font-weight: 600; te
 thead th:nth-child(2), tbody td:nth-child(2) { width: 90px; text-align: center; }
 thead th:nth-child(3), tbody td:nth-child(3) { width: 90px; color: var(--text-muted); text-align: center; }
 thead th:nth-child(4), tbody td:nth-child(4) { width: 70px; text-align: center; }
-thead th:nth-child(5), tbody td:nth-child(5) { width: auto; font-weight: 700; color: var(--text-main); text-align: center; }
+thead th:nth-child(5), tbody td:nth-child(5) { width: 145px; font-weight: 700; color: var(--text-main); text-align: center; }
 thead th:nth-child(6), tbody td:nth-child(6) { width: auto; text-align: center; }
 thead tr {
   user-select: none;
+}
+thead th:nth-child(4) {
+    padding: 0 22px;
+}
+thead th:nth-child(5) {
+    padding: 0 55px;
 }
 tr th:first-child {
   transform: translateX(7px);
@@ -1007,15 +1031,61 @@ const abrirConflitoProibidos=(diff,onMerge,onKeep)=>{
     bg.className="ov on";
     bg.id="ovProibMerge";
     bg.setAttribute("aria-hidden","false");
-    bg.innerHTML='<div class="modal" role="dialog" aria-modal="true"><div class="mhead"><div><div class="mtitle">Alterações nos proibidos</div><div class="msub">Foram encontradas diferenças entre esta máquina e o servidor.</div></div><div class="btn" id="pmFechar">Fechar</div></div><div class="mbody"><div style="display:grid;gap:10px"><div style="border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:10px;background:rgba(255,255,255,.03)"><div style="font-weight:700;margin-bottom:6px">Só nesta máquina ('+diff.soLocal.length+')</div><div style="max-height:160px;overflow:auto;white-space:pre-wrap;font-size:12px">'+esc(diff.soLocal.length?diff.soLocal.join(NL):"-")+'</div></div><div style="border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:10px;background:rgba(255,255,255,.03)"><div style="font-weight:700;margin-bottom:6px">Só no servidor ('+diff.soSrv.length+')</div><div style="max-height:160px;overflow:auto;white-space:pre-wrap;font-size:12px">'+esc(diff.soSrv.length?diff.soSrv.join(NL):"-")+'</div></div></div><div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;margin-top:14px"><div class="btn" id="pmManter">Deixar como está</div><div class="btn" id="pmMesclar">Dar merge</div></div></div></div>';
+    bg.innerHTML='<div class="modal" role="dialog" aria-modal="true"><div class="mhead"><div><div class="mtitle">Alterações nos proibidos</div><div class="msub">Foram encontradas diferenças entre esta máquina e o servidor.</div></div><div class="btn" id="pmFechar">Fechar</div></div><div class="mbody"><div style="display:grid;gap:10px"><div style="border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:10px;background:rgba(255,255,255,.03)"><div style="font-weight:700;margin-bottom:6px">Só nesta máquina ('+diff.soLocal.length+')</div><div style="max-height:160px;overflow:auto;white-space:pre-wrap;font-size:12px">'+esc(diff.soLocal.length?diff.soLocal.join(NL):"-")+'</div></div><div style="border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:10px;background:rgba(255,255,255,.03)"><div style="font-weight:700;margin-bottom:6px">Só no servidor ('+diff.soSrv.length+')</div><div style="max-height:160px;overflow:auto;white-space:pre-wrap;font-size:12px">'+esc(diff.soSrv.length?diff.soSrv.join(NL):"-")+'</div></div></div><div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;margin-top:14px"><div class="btn" id="pmIgnorarSempre" style="border-color:#ef4444;color:#ef4444">Não mostrar novamente para este item</div><div class="btn" id="pmManter">Deixar como está</div><div class="btn" id="pmMesclar">Dar merge</div></div></div></div>';
     document.body.appendChild(bg);
+    
     const manter=()=>{bg.remove();onKeep&&onKeep();};
     const mesclar=()=>{bg.remove();onMerge&&onMerge();};
+    const ignorarSempre=()=>{
+        bg.remove();
+        const list = String(localStorage.getItem("__cpi_perm__")||"").split("||").filter(Boolean);
+        if(!list.includes(diff.ass)) list.push(diff.ass);
+        localStorage.setItem("__cpi_perm__", list.join("||"));
+        toast("Proibidos", "Ocultado permanentemente para esta diferença.");
+        proibSyncPend=0;
+    };
+    
     qs("#pmFechar",bg).addEventListener("click",manter);
     qs("#pmManter",bg).addEventListener("click",manter);
+    qs("#pmIgnorarSempre",bg).addEventListener("click",ignorarSempre);
     qs("#pmMesclar",bg).addEventListener("click",mesclar);
     bg.addEventListener("click",e=>{if(e.target===bg)manter();});
 };
+
+function syncProibidos(push){
+    if(location.protocol!=="http:"&&location.protocol!=="https:")return;
+    if(proibSyncPend)return;
+    proibSyncPend=1;
+    const local=lerProibidos();
+    fetch("/__proibidos",{cache:"no-store"}).then(r=>r&&r.ok?r.json():{ok:false,lista:[]},()=>({ok:false,lista:[]})).then(j=>{
+        const srv=parseProib(j&&j.lista);
+        const diff=fazerDiffProib(local,srv);
+        if(!diff.soLocal.length&&!diff.soSrv.length){ limparProibIgn(); proibSyncPend=0; return; }
+        
+        // Verifica se foi ignorado permanentemente
+        const ignPerm = String(localStorage.getItem("__cpi_perm__")||"").split("||");
+        if(ignPerm.includes(diff.ass)) { proibSyncPend=0; return; }
+        
+        const ign=lerProibIgn();
+        if(ign&&ign.ass===diff.ass){ avisarProibIgnorado(diff); proibSyncPend=0; return; }
+        if(jaAlertouProibHoje()){ proibSyncPend=0; return; }
+        marcarAlertaProibHoje();
+        abrirConflitoProibidos(diff,()=>{
+            limparProibIgn();
+            setProibidosUser(diff.merged,true);
+            postarProibidos(diff.merged).then(srv2=>{
+                const diff2=fazerDiffProib(diff.merged,srv2);
+                if(diff2.soLocal.length||diff2.soSrv.length)setProibidosUser(diff2.merged,true);
+                proibSyncPend=0;
+            });
+        },()=>{
+            salvarProibIgn(diff);
+            marcarAlertaIgnHoje(diff.ass);
+            toast("Proibidos","Alterações ignoradas.");
+            proibSyncPend=0;
+        });
+    },()=>{proibSyncPend=0;});
+}
 const avisarProibIgnorado=diff=>{
     if(!diff||!diff.ass||jaAlertouProibHoje())return;
     marcarAlertaProibHoje();
@@ -1836,7 +1906,9 @@ const fixHead=()=>{
 renderTudo();
 fixHead();
 
-const LS_KEY_REFRESH_AUTO_HOJE="__relatorio_auto_gerar_hoje__";const LS_KEY_REFRESH_ALERTA_DIA="__relatorio_alerta_dia__";
+const LS_KEY_REFRESH_AUTO_HOJE="__relatorio_auto_gerar_hoje__";
+const LS_KEY_REFRESH_ALERTA_DIA="__relatorio_alerta_dia__";
+
 const autoUpdater = (() => {
     // Verifica se é um relatório de período (ex: 01/03 a 10/03)
     const isPeriodo = String(DADOS?.data || "").includes(" a ");
@@ -1849,9 +1921,14 @@ const autoUpdater = (() => {
     let currQtd = DADOS.totais ? (DADOS.totais.qtd || 0) : 0;
     let currTotal = DADOS.totais ? (DADOS.totais.total || 0) : 0;
     let lastReload = Date.now();
+    let lastOkMemo = 0; // Guarda a versão do servidor para evitar loop falso
     
-    // TEMPO ALTERADO: 10 segundos
-    const MS_CHECK = 10 * 1000; 
+    // ========================================================================
+    // TEMPO DE CHECAGEM AUTOMÁTICA
+    // ========================================================================
+    // -> Para testar a cada 5 segundos, altere para: const MS_CHECK = 5 * 1000;
+    // -> Para voltar para 10 segundos, use: const MS_CHECK = 10 * 1000;
+    const MS_CHECK = 5 * 1000; 
     const MS_FORCE = 30 * 60 * 1000; 
 
     const recarregar = () => {
@@ -1867,39 +1944,56 @@ const autoUpdater = (() => {
             return;
         }
         
-        if(!silencioso) toast("Gerando", "Solicitando novo relatório no servidor...");
-        
         try {
-            // Se clicou em atualizar, não passamos data. O servidor entende que é "hoje".
-            await fetch(api("/__gerar"), { method: "POST", headers: { "x-key": key } });
-            
-            let isRunning = true;
-            while(isRunning) {
-                await new Promise(r => setTimeout(r, 1000));
-                const st = await fetch(api("/__status"), {cache: "no-store"}).then(r=>r.json());
-                isRunning = st.running;
-            }
-            
             if(!silencioso) {
+                // Usuário clicou em Atualizar manualmente
+                toast("Gerando", "Solicitando novo relatório no servidor...");
+                await fetch(api("/__gerar"), { method: "POST", headers: { "x-key": key } });
+                
+                let isRunning = true;
+                while(isRunning) {
+                    await new Promise(r => setTimeout(r, 1000));
+                    const st = await fetch(api("/__status"), {cache: "no-store"}).then(r=>r.json());
+                    isRunning = st.running;
+                }
                 toast("Sucesso", "Novo relatório gerado, atualizando...");
                 setTimeout(recarregar, 800);
                 return;
-            }
-
-            const urlBusca = api("/relatorio_atual.html?t=" + Date.now());
-            const res = await fetch(urlBusca, {cache: "no-store"});
-            const html = await res.text();
-            const match = html.match(/<script id="dados" type="application\/json">([\s\S]*?)<\/script>/i);
-            
-            if(match && match[1]) {
-                const newDados = JSON.parse(match[1]);
-                const newQtd = newDados.totais ? (newDados.totais.qtd || 0) : 0;
-                const newTotal = newDados.totais ? (newDados.totais.total || 0) : 0;
+            } else {
+                // Modo silencioso: Solicita uma nova geração no background
+                fetch(api("/__gerar"), { method: "POST", headers: { "x-key": key } }).catch(()=>{});
                 
-                if(newQtd !== currQtd || newTotal !== currTotal) {
-                    toast("Atualização", "Nova venda detectada! Atualizando painel...");
-                    setTimeout(recarregar, 2000);
-                    return;
+                // Checa o status
+                const st = await fetch(api("/__status"), {cache: "no-store"}).then(r=>r.json());
+                
+                if (st && st.last_ok) {
+                    // Se for a primeira vez rodando, apenas memoriza o tempo
+                    if (lastOkMemo === 0) {
+                        lastOkMemo = st.last_ok;
+                    } 
+                    // Se o servidor tiver um arquivo de fato mais novo...
+                    else if (st.last_ok !== lastOkMemo) {
+                        lastOkMemo = st.last_ok;
+                        
+                        // Baixa o HTML silenciosamente para VER SE OS TOTAIS MUDARAM
+                        const urlBusca = api("/relatorio_atual.html?t=" + Date.now());
+                        const res = await fetch(urlBusca, {cache: "no-store"});
+                        const html = await res.text();
+                        const match = html.match(/<script id="dados" type="application\/json">([\s\S]*?)<\/script>/i);
+                        
+                        if(match && match[1]) {
+                            const newDados = JSON.parse(match[1]);
+                            const newQtd = newDados.totais ? (newDados.totais.qtd || 0) : 0;
+                            const newTotal = newDados.totais ? (newDados.totais.total || 0) : 0;
+                            
+                            // Compara estritamente os valores. Acaba com o falso positivo!
+                            if(newQtd !== currQtd || newTotal !== currTotal) {
+                                toast("Atualização", "Nova venda detectada! Atualizando painel...");
+                                setTimeout(recarregar, 2000);
+                                return;
+                            }
+                        }
+                    }
                 }
             }
         } catch(e) {
@@ -1911,7 +2005,7 @@ const autoUpdater = (() => {
         }
     };
 
-    // LOOP PROTEGIDO: O robô de 10s só roda se NÃO for um relatório de período
+    // LOOP PROTEGIDO: O robô roda se NÃO for um relatório de período
     if (!isPeriodo) {
         const iniciarLoop = () => {
             setTimeout(async () => {
@@ -1924,7 +2018,6 @@ const autoUpdater = (() => {
         iniciarLoop();
     }
 
-    // O botão Atualizar fica sempre livre para o usuário clicar e voltar pro dia atual
     const btn = qs("#atualizar");
     if(btn) btn.addEventListener("click", () => gerarEAtualizar(false));
 

@@ -1,0 +1,1 @@
+gerar_relatorio_do_dia_rede.bat --instalar

@@ -1,0 +1,1 @@
+node atualizar_b64.js

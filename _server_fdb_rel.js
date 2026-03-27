@@ -83,7 +83,20 @@ const okJson=(res,obj,code=200,extra)=>{res.writeHead(code,Object.assign({"Conte
 const bad=(res,code,msg)=>{res.writeHead(code,{"Content-Type":"text/plain; charset=utf-8","Cache-Control":"no-store"});res.end(String(msg||code));};
 const cors=()=>({"Access-Control-Allow-Origin":"*","Access-Control-Allow-Headers":"x-key,x-data-inicio,x-data-fim,content-type","Access-Control-Allow-Methods":"GET,POST,OPTIONS","Access-Control-Max-Age":"600"});
 const serveFile=(res,fp)=>{fs.stat(fp,(e,s)=>{if(e||!s.isFile())return bad(res,404,"404");const ext=path.extname(fp).toLowerCase();res.writeHead(200,{"Content-Type":types[ext]||"application/octet-stream","Cache-Control":"no-store"});fs.createReadStream(fp).pipe(res);});};
-const cleanHist=d=>{ensureDir(hist);const mid=new Date(d.getFullYear(),d.getMonth(),d.getDate()).getTime();fs.readdir(hist,(e,list)=>{if(e||!Array.isArray(list)||!list.length)return;for(const name of list){if(!name||!/\.html$/i.test(name))continue;const fp=path.join(hist,name);fs.stat(fp,(e2,s)=>{if(e2||!s||!s.isFile())return;const mt=Number(s.mtimeMs||0);if(mt&&mt<mid)fs.unlink(fp,()=>{});});}});};
+const cleanHist = d => {
+    ensureDir(hist);
+    fs.readdir(hist, (e, list) => {
+        if (e || !Array.isArray(list)) return;
+        const files = list.filter(n => /\.html$/i.test(n)).map(n => {
+            const fp = path.join(hist, n);
+            try { return { fp, mt: fs.statSync(fp).mtimeMs || 0 }; } catch { return { fp, mt: 0 }; }
+        }).sort((a, b) => b.mt - a.mt);
+        
+        for (let i = 3; i < files.length; i++) {
+            try { fs.unlinkSync(files[i].fp); } catch {}
+        }
+    });
+};
 const scheduleIn=ms=>{if(st.tm)clearTimeout(st.tm);if(ms<1000)ms=1000;st.next_run=Date.now()+ms;st.tm=setTimeout(()=>{gerar("auto").then(()=>scheduleIn(MS15));},ms);};
 const initSchedule=()=>{let ms=MS15;try{if(fs.existsSync(atual)){const m=fs.statSync(atual).mtimeMs;const next=m+MS15;const now=Date.now();if(next>now+1000)ms=next-now;}}catch{}scheduleIn(ms);};
 const gerar=(motivo,meta)=>{
