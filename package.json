@@ -1,0 +1,12 @@
+{
+  "name": "relatorios-smallsoft-offline",
+  "private": true,
+  "description": "Relatórios SmallSoft Offline: painel de vendas e consulta de estoque do Small Commerce lendo uma cópia offline do banco Firebird",
+  "author": "Ruda Gabriel",
+  "scripts": {
+    "test": "node --test test/relatorio.test.js test/offline.test.js test/estoque.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

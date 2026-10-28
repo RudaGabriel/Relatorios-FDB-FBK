@@ -1,114 +1,207 @@
 @echo off
 setlocal enabledelayedexpansion
-chcp 65001 >nul
 cd /d "%~dp0"
+chcp 65001 >nul 2>&1
 
-set "BUSCA_COMPLETA=1"
-set "FDB="
-set "SCRIPT="
+:: =========================================================
+::  Relatorio por Data Especifica                    v1.5.0
+::  Autor: Ruda Gabriel
+::  - Verifica / instala Node.js automaticamente
+::  - Verifica / instala modulo node-firebird automaticamente
+::  - Inicia servidor se necessario
+::  - Abre relatorio no navegador
+::
+::  (Historico completo das versoes: CHANGELOG.md no repositorio.)
+::  CHANGELOG 1.5.0 - 2026-10-05 16:24 - Ano padrao obtido via PowerShell:
+::   "wmic" foi removido do Windows 11 24H2+, e sem ele o ano ficava com
+::   lixo (nao vazio), passando pelo "if not defined". Ano com 2 digitos
+::   (ex: 01/03/26) agora vira 2026, e o ano tambem e' validado (2000-2099)
+::   antes de montar a URL. Mantem CRLF - edite com editor que preserve CRLF.
 
-for %%P in (
-  "%ProgramFiles(x86)%\SmallSoft\Small Commerce\SMALL.FDB"
-  "%ProgramFiles%\SmallSoft\Small Commerce\SMALL.FDB"
-  "%ProgramData%\SmallSoft\Small Commerce\SMALL.FDB"
-) do if not defined FDB if exist "%%~fP" set "FDB=%%~fP"
+call :verificar_node
+if %errorlevel% neq 0 exit /b 1
 
-if not defined FDB for /f "delims=" %%F in ('where /r "%ProgramFiles(x86)%" SMALL.FDB 2^>nul') do if not defined FDB set "FDB=%%F"
-if not defined FDB for /f "delims=" %%F in ('where /r "%ProgramFiles%" SMALL.FDB 2^>nul') do if not defined FDB set "FDB=%%F"
+call :verificar_modulos
+if %errorlevel% neq 0 exit /b 1
 
-if not defined FDB if "%BUSCA_COMPLETA%"=="1" (
-  for /f "delims=" %%R in ('powershell -NoProfile -Command "(Get-PSDrive -PSProvider FileSystem | Select-Object -ExpandProperty Root)"') do (
-    if not defined FDB for /f "delims=" %%F in ('where /r "%%R" SMALL.FDB 2^>nul') do if not defined FDB set "FDB=%%F"
-  )
-)
+call :ler_config
 
-if not defined FDB (
-  echo Nao encontrei o SMALL.FDB automaticamente.
-  exit /b 1
-)
-
-for %%P in (
-  "%~dp0gerar-relatorio-html.js"
-  "%~dp0\gerar-relatorio-html.js"
-  "%userprofile%\downloads\gerar-relatorio-html.js"
-  "%userprofile%\desktop\gerar-relatorio-html.js"
-  "%userprofile%\documents\gerar-relatorio-html.js"
-) do if not defined SCRIPT if exist "%%~fP" set "SCRIPT=%%~fP"
-
-if not defined SCRIPT for /f "delims=" %%F in ('where /r "%~dp0" gerar-relatorio-html.js 2^>nul') do if not defined SCRIPT set "SCRIPT=%%F"
-if not defined SCRIPT for /f "delims=" %%F in ('where /r "%userprofile%\desktop" gerar-relatorio-html.js 2^>nul') do if not defined SCRIPT set "SCRIPT=%%F"
-if not defined SCRIPT for /f "delims=" %%F in ('where /r "%userprofile%\documents" gerar-relatorio-html.js 2^>nul') do if not defined SCRIPT set "SCRIPT=%%F"
-if not defined SCRIPT for /f "delims=" %%F in ('where /r "%userprofile%\downloads" gerar-relatorio-html.js 2^>nul') do if not defined SCRIPT set "SCRIPT=%%F"
-if not defined SCRIPT for /f "delims=" %%F in ('where /r "%userprofile%" gerar-relatorio-html.js 2^>nul') do if not defined SCRIPT set "SCRIPT=%%F"
-if not defined SCRIPT for /f "delims=" %%F in ('where /r "%homedrive%" gerar-relatorio-html.js 2^>nul') do if not defined SCRIPT set "SCRIPT=%%F"
-
-if not defined SCRIPT (
-  for /f "delims=" %%R in ('powershell -NoProfile -Command "(Get-PSDrive -PSProvider FileSystem | Select-Object -ExpandProperty Root)"') do (
-    if not defined SCRIPT for /f "delims=" %%F in ('where /r "%%R" gerar-relatorio-html.js 2^>nul') do if not defined SCRIPT set "SCRIPT=%%F"
-  )
-)
-
-if not defined SCRIPT (
-  echo Nao encontrei o gerar-relatorio-html.js automaticamente.
-  echo Procurei na pasta do .bat, Desktop, Documentos, perfil do usuario e em todas as unidades.
-  exit /b 1
-)
-
-for /f "tokens=2 delims==" %%a in ('wmic os get LocalDateTime /value ^| find "="') do set "LDT=%%a"
-set "ANO_PADRAO=!LDT:~0,4!"
-if not defined ANO_PADRAO (
-  echo Nao consegui obter o ano atual.
-  exit /b 1
-)
+:: Ano padrao
+set "ANO_PADRAO="
+for /f "usebackq delims=" %%a in (`powershell -NoProfile -Command "(Get-Date).Year" 2^>nul`) do set "ANO_PADRAO=%%a"
+if not defined ANO_PADRAO set "ANO_PADRAO=%DATE:~-4%"
 
 set "DATAIN="
-set /p DATAIN=Digite a data (D/M, DD/MM ou DD/MM/AAAA) (ano opcional) [ano padrao=%ANO_PADRAO%]: 
-if "%DATAIN%"=="" (
-  echo Data vazia.
-  exit /b 1
+set /p DATAIN=Data (D/M ou DD/MM) [ano=%ANO_PADRAO%]: 
+if "!DATAIN!"=="" exit /b 1
+
+set "DATAIN=!DATAIN: =!"
+set "DATAIN=!DATAIN:-=/!"
+
+for /f "tokens=1-3 delims=/" %%a in ("!DATAIN!") do (
+    set "D=%%a"
+    set "M=%%b"
+    set "Y=%%c"
 )
+if not defined D goto :invalida
+if not defined M goto :invalida
+if not defined Y set "Y=!ANO_PADRAO!"
+if "!Y:~2,1!"=="" set "Y=20!Y!"
 
-set "DATAIN=%DATAIN: =%"
-set "DATAIN=%DATAIN:-=/%"
+:: VALIDACAO FIX: garante que D e M sao numericos e estao numa faixa de
+:: calendario plausivel ANTES de montar a URL - sem isso, um erro de
+:: digitacao so' era percebido bem mais tarde, quando o processo Node.js
+:: filho rejeitava a data com uma pagina de erro generica.
+powershell -NoProfile -Command "$d=0;$m=0;$y=0;if([int]::TryParse('!D!',[ref]$d) -and [int]::TryParse('!M!',[ref]$m) -and [int]::TryParse('!Y!',[ref]$y) -and $d -ge 1 -and $d -le 31 -and $m -ge 1 -and $m -le 12 -and $y -ge 2000 -and $y -le 2099){exit 0}else{exit 1}" >nul 2>&1
+if %errorlevel% neq 0 goto :invalida
 
-for /f "tokens=1-3 delims=/" %%a in ("%DATAIN%") do (
-  set "D=%%a"
-  set "M=%%b"
-  set "Y=%%c"
-)
+if "!D:~1,1!"=="" set "D=0!D!"
+if "!M:~1,1!"=="" set "M=0!M!"
 
-if not defined D goto invalida
-if not defined M goto invalida
-if not defined Y set "Y=%ANO_PADRAO%"
+set "ISO=!Y!-!M!-!D!"
+echo.
+echo  Data: !D!/!M!/!Y!
 
-echo %D%| findstr /r "^[0-9][0-9]*$" >nul || goto invalida
-echo %M%| findstr /r "^[0-9][0-9]*$" >nul || goto invalida
-echo %Y%| findstr /r "^[0-9][0-9]*$" >nul || goto invalida
+:: Garante que o servidor esta rodando
+call :iniciar_servidor
 
-if "%D:~1,1%"=="" set "D=0%D%"
-if "%M:~1,1%"=="" set "M=0%M%"
-
-if not "%D:~2,1%"=="" goto invalida
-if not "%M:~2,1%"=="" goto invalida
-if not "%Y:~4,1%"=="" goto invalida
-
-set "DATA=%Y%-%M%-%D%"
-set "DATA_ARQ=%D%-%M%-%Y%"
-
-set "OUT=%userprofile%\desktop\(FDB-DATA)_relatorio_%DATA_ARQ%.html"
-
-echo FDB: "%FDB%"
-echo Script: "%SCRIPT%"
-node "%SCRIPT%" --fdb "%FDB%" --data "%DATA%" --saida "%OUT%" --user SYSDBA --pass masterkey
-
-if not exist "%OUT%" (
-  echo Nao foi gerado: "%OUT%"
-  exit /b 1
-)
-
-start "" "%OUT%"
+:: Abre URL com & de forma segura via PowerShell
+set "_TMPURL=%TEMP%\_rel_url_%RANDOM%.txt"
+set "_ISO=!ISO!"
+powershell -NoProfile -Command "$d='!_ISO!'; Set-Content -Path '!_TMPURL!' -Value ('http://localhost:!PORTA!/periodo?i='+$d+'&f='+$d) -Encoding UTF8"
+powershell -NoProfile -Command "$u=(Get-Content '!_TMPURL!' -Encoding UTF8 | Select-Object -First 1).Trim(); Start-Process $u"
+del "!_TMPURL!" >nul 2>&1
 exit /b 0
 
 :invalida
-echo Data invalida. Use DD/MM ou DD/MM/AAAA.
+echo  Data invalida. Use DD/MM ou DD/MM/AAAA.
+pause
 exit /b 1
+
+:: -------------------------------------------------------
+:: Le a porta configurada em config.json (campo "porta").
+:: Le porta e nome do app/loja de config.json (campos "porta" e "appName").
+:: Fallback silencioso para 7735 / "Relatorios SmallSoft Offline". Uma unica chamada
+:: powershell busca os dois valores. !APP_TITULO! (expansao adiada) no
+:: "title" abaixo evita risco de injecao caso o nome da loja contenha
+:: caractere especial de cmd.exe (& | < > ^) - ver comentario completo em
+:: gerar_relatorio_do_dia.bat.
+:: -------------------------------------------------------
+:ler_config
+:: ROBUSTEZ FIX: a versao anterior buscava porta+nome numa unica chamada
+:: powershell (dois valores numa linha so', separados por "|"). Voltado
+:: para duas chamadas simples e separadas, no mesmo formato ja comprovado
+:: usado no restante do arquivo - reduz risco por simplicidade.
+set "PORTA=7735"
+for /f "usebackq delims=" %%P in (`powershell -NoProfile -Command "try{$p=(Get-Content '%~dp0config.json' -Raw -Encoding UTF8 | ConvertFrom-Json).porta; if($p -gt 0){[int]$p}else{7735}}catch{7735}" 2^>nul`) do set "PORTA=%%P"
+set "APP_TITULO=Relatorios SmallSoft Offline"
+for /f "usebackq delims=" %%N in (`powershell -NoProfile -Command "try{$n=(Get-Content '%~dp0config.json' -Raw -Encoding UTF8 | ConvertFrom-Json).appName; if($n){$n}else{'Relatorios SmallSoft Offline'}}catch{'Relatorios SmallSoft Offline'}" 2^>nul`) do set "APP_TITULO=%%N"
+title !APP_TITULO! - Relatorio por Data
+exit /b 0
+
+:: -------------------------------------------------------
+:iniciar_servidor
+powershell -NoProfile -Command ^
+    "try{$t=New-Object Net.Sockets.TcpClient;$ok=$t.ConnectAsync('127.0.0.1',!PORTA!).Wait(1500);$t.Close();if($ok){exit 0}else{exit 1}}catch{exit 1}" >nul 2>&1
+if %errorlevel% equ 0 exit /b 0
+
+:: PRECISAO FIX (v1.4.0): verifica launcher.vbs ANTES de chamar - ver
+:: comentario completo em gerar_relatorio_do_dia.bat. Sem isso, o .bat
+:: esperava 30s por um servidor que nunca subiria, sem pista do motivo.
+if not exist "%~dp0launcher.vbs" (
+    echo.
+    echo ERRO: launcher.vbs nao encontrado em:
+    echo   %~dp0
+    echo.
+    echo Esse arquivo e necessario para iniciar o servidor.
+    echo Verifique se a pasta do sistema esta completa.
+    echo.
+    pause
+    exit /b 1
+)
+echo  Iniciando servidor de relatorios...
+start "" wscript.exe "%~dp0launcher.vbs"
+
+set "_t=0"
+:_loop_ini
+set /a "_t+=1"
+if %_t% gtr 30 exit /b 0
+powershell -NoProfile -Command ^
+    "try{$t=New-Object Net.Sockets.TcpClient;$ok=$t.ConnectAsync('127.0.0.1',!PORTA!).Wait(1500);$t.Close();if($ok){exit 0}else{exit 1}}catch{exit 1}" >nul 2>&1
+if %errorlevel% equ 0 exit /b 0
+timeout /t 2 /nobreak >nul
+goto :_loop_ini
+
+:: -------------------------------------------------------
+:: Verifica se node-firebird esta instalado.
+:: Se nao estiver, instala via npm.
+:: -------------------------------------------------------
+:verificar_modulos
+node -e "require('node-firebird')" >nul 2>&1
+if %errorlevel% equ 0 exit /b 0
+
+echo.
+echo  Modulo node-firebird nao encontrado. Instalando...
+echo.
+pushd "%~dp0"
+
+call npm install node-firebird --prefer-offline >nul 2>&1
+if %errorlevel% equ 0 goto :_mod_validar
+
+call npm install node-firebird
+if %errorlevel% neq 0 (
+    echo.
+    echo  ERRO: Falha ao instalar node-firebird.
+    echo  Execute node-firebird.bat como Administrador.
+    echo.
+    popd
+    pause
+    exit /b 1
+)
+
+:_mod_validar
+popd
+node -e "require('node-firebird')" >nul 2>&1
+if %errorlevel% neq 0 (
+    echo.
+    echo  ERRO: node-firebird instalado mas nao reconhecido nesta sessao.
+    echo  Feche e reabra o terminal e tente novamente.
+    echo.
+    pause
+    exit /b 1
+)
+echo  [OK] node-firebird pronto.
+exit /b 0
+
+:: -------------------------------------------------------
+:verificar_node
+where node >nul 2>&1
+if %errorlevel% equ 0 exit /b 0
+
+echo.
+echo  Node.js nao encontrado. Instalando...
+echo.
+powershell -NoProfile -ExecutionPolicy Bypass -NonInteractive ^
+    -File "%~dp0_instalar-node.ps1"
+if %errorlevel% neq 0 (
+    echo.
+    echo  ERRO: Falha na instalacao do Node.js.
+    echo  Instale manualmente em: https://nodejs.org/en/download
+    echo.
+    pause
+    exit /b 1
+)
+for /f "usebackq tokens=*" %%P in (
+    `powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable('Path','Machine')"`) do (
+    set "PATH=%%P;%PATH%"
+)
+where node >nul 2>&1
+if %errorlevel% neq 0 (
+    echo.
+    echo  ERRO: Node.js instalado mas nao encontrado no PATH.
+    echo  Feche e reabra o terminal e tente novamente.
+    echo.
+    pause
+    exit /b 1
+)
+exit /b 0

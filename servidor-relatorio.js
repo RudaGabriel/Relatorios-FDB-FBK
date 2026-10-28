@@ -1,0 +1,6892 @@
+"use strict";
+
+/**
+ * servidor-relatorio.js — Relatórios SmallSoft Offline
+ * @version 3.0.0
+ * @author Ruda Gabriel
+ * @description Servidor HTTP + Firebird de relatórios com SSE, fast-poll e
+ *              geração em subprocesso. SOMENTE LEITURA no banco.
+ *              Lê uma CÓPIA OFFLINE do banco (offline-copia.js), mantida
+ *              atualizada sozinha: o relatório continua abrindo com o banco
+ *              principal em atualização, manutenção ou fora do ar.
+ * @changelog
+ *   (Histórico completo das versões: CHANGELOG.md no repositório.)
+ *   3.0.0 - 2026-10-28 - Relatórios SmallSoft Offline: cópia offline do banco
+ *     (gbak somente leitura → cópia local read_only), modos copia/hibrido/desligado,
+ *     /api/offline*, selo "Offline" na tela, importação de .fbk, porta padrão 7735.
+ *   2.22.0 - 2026-10-28 22:00 - Recarga desligada: a venda nova entra sem recarregar a página.
+ *     - Chama window.__atualizarSemRecarregar (gerador 3.26.0+); o aviso "Há vendas novas"
+ *       fica só para quando a troca falhar. Selo do canto: "ao vivo".
+ */
+
+
+// Versão deste arquivo — mantida em sincronia manual com @version no header.
+// Registrada na linha de início do log para que se saiba, ao investigar
+// qualquer ocorrência, qual versão do servidor estava no ar naquele momento
+// (o gerar-relatorio-html.js já faz o mesmo via SCRIPT_VERSION).
+const SERVER_VERSION = "3.0.0";
+
+// ===== Logger Global seguro — flush debounced 300ms =====
+const _fs = require('fs');
+const _util = require('util');
+const _path = require('path');
+const LOG_PATH = _path.join(__dirname, 'relatorio.log');
+
+// ORDEM FIX: padDois é usado dentro de logToFile(). Antes estava declarado ~90
+// linhas abaixo; como `var` é içado sem valor, qualquer log emitido durante o
+// carregamento do módulo caía no catch silencioso de logToFile e era perdido.
+// Declarado aqui, no topo absoluto, o logger passa a funcionar desde a linha 1.
+var padDois = function(n) { return String(n).padStart(2, "0"); };
+// "[DD-MM-AAAA] [HH:MM:SS] [CATEGORIA] " — data e hora do MESMO instante.
+var _prefixoLog = function(d, cat) {
+    return "[" + padDois(d.getDate()) + "-" + padDois(d.getMonth()+1) + "-" + d.getFullYear() + "] [" +
+           padDois(d.getHours()) + ":" + padDois(d.getMinutes()) + ":" + padDois(d.getSeconds()) + "] [" + cat + "] ";
+};
+
+// Gravação atômica: escreve num arquivo temporário e renomeia por cima.
+// rename() é atômico no mesmo volume, então uma queda de energia ou kill no meio
+// da escrita nunca deixa config.json / hora-fixada-cache.json truncados.
+// Retorna true em sucesso, false em falha (nunca lança).
+var _gravarArquivoAtomico = function(destino, conteudo) {
+    var tmp = destino + ".tmp" + process.pid;
+    try {
+        _fs.writeFileSync(tmp, conteudo, "utf8");
+        _fs.renameSync(tmp, destino);
+        return true;
+    } catch(e) {
+        // Fallback: se o rename falhar (antivírus segurando o handle no Windows,
+        // volume diferente, etc.), tenta a escrita direta antes de desistir.
+        try { _fs.writeFileSync(destino, conteudo, "utf8"); return true; } catch(_) {}
+        try { if (_fs.existsSync(tmp)) _fs.unlinkSync(tmp); } catch(_) {}
+        return false;
+    }
+};
+
+// MAX_LOG_LINES é sobrescrito depois que config.json é carregado (ver abaixo)
+var MAX_LOG_LINES = 1000;
+// Faixas válidas (v2.15.5). Sem teto, um pollInterval enorme passava de
+// 2^31-1 ms no setInterval — o Node troca por 1 ms e o pollStatus rodaria sem
+// pausa — e um maxLogLines enorme fazia o log crescer sem limite na memória e
+// no disco (a rotação nunca chegava).
+var POLL_INTERVAL_MIN = 100, POLL_INTERVAL_MAX = 60000;
+var MAX_LOG_LINES_MIN = 100, MAX_LOG_LINES_MAX = 100000;
+var _MAX_PERIODOS_SIMULTANEOS = 3;
+var _LOG_ERRO_MAX_MIN = 30, _logErroJanela = 0, _logErroQtd = 0, _logErroDescartados = 0;
+var _naFaixa = function(v, min, max) { var n = parseInt(v, 10); return (n >= min && n <= max) ? n : null; };
+let _logBuffer = [];       // histórico recente em memória — usado como fallback de leitura, não é mais a fonte de gravação
+let _logPendentes = [];    // linhas ainda não gravadas em disco desde o último flush
+let _logFlushTimer = null;
+// Conta linhas ACRESCENTADAS desde a última rotação (ao contrário de
+// _logBuffer, que fica sempre travado em MAX_LOG_LINES e por isso nunca
+// serviria como sinal de "já é hora de rotacionar" — bug encontrado durante
+// os próprios testes desta revisão).
+let _logLinhasDesdeRotacao = 0;
+// Carrega linhas existentes no buffer ao iniciar (só leitura, não afeta o arquivo)
+try {
+    const _existing = _fs.readFileSync(LOG_PATH, "utf8");
+    _logBuffer = _existing.split("\n").filter(l => l.trim()).slice(-MAX_LOG_LINES);
+} catch(e) {}
+
+// CONCORRÊNCIA FIX (pedido do usuário: consolidar tray.log em relatorio.log):
+// iniciar-tray.ps1 (processo PowerShell independente) também grava neste
+// mesmo arquivo. A versão anterior deste logger REESCREVIA O ARQUIVO INTEIRO
+// a cada flush (writeFileSync com todo o _logBuffer em memória) — qualquer
+// linha que outro processo tivesse acabado de acrescentar seria APAGADA no
+// próximo flush do Node, porque o buffer em memória do Node não sabia que
+// ela existia. Agora _flushLog só ACRESCENTA (appendFileSync) as linhas
+// novas desde o último flush — nunca sobrescreve o arquivo inteiro em uso
+// normal, então dois processos gravando no mesmo arquivo é seguro (cada
+// appendFileSync é uma operação atômica no nível do SO para escritas deste
+// tamanho). A rotação (manter só as últimas MAX_LOG_LINES) roda raramente
+// (só quando já foram acrescentadas MAX_LOG_LINES linhas novas desde a
+// última rotação) e sempre relê o arquivo do disco na hora — nunca a partir
+// de _logBuffer, que não conhece as linhas que outros processos gravaram —
+// usando gravação atômica (tmp + rename) para minimizar a janela de colisão
+// quando de fato acontece.
+function _rotacionarLogSeNecessario() {
+    try {
+        if (_logLinhasDesdeRotacao < MAX_LOG_LINES) return; // ainda longe do limite, nao vale o custo de reler o arquivo
+        const _atual = _fs.readFileSync(LOG_PATH, "utf8");
+        const _linhas = _atual.split("\n").filter(l => l.trim()).slice(-MAX_LOG_LINES);
+        if (_gravarArquivoAtomico(LOG_PATH, _linhas.join("\n") + "\n")) {
+            _logBuffer = _linhas;
+            _logLinhasDesdeRotacao = 0;
+        }
+    } catch(e) {}
+}
+function _flushLog() {
+    if (!_logPendentes.length) return;
+    try {
+        _fs.appendFileSync(LOG_PATH, _logPendentes.join("\n") + "\n");
+        _logLinhasDesdeRotacao += _logPendentes.length;
+        _logPendentes = [];
+    } catch(e) {
+        // Disco cheio/arquivo travado de forma persistente: sem este teto a fila
+        // cresceria sem limite em memória durante dias. Mantém só as mais recentes.
+        if (_logPendentes.length > MAX_LOG_LINES) _logPendentes.splice(0, _logPendentes.length - MAX_LOG_LINES);
+    }
+    _rotacionarLogSeNecessario();
+}
+function logToFile(...args) {
+    try {
+        const msg = args.map(a => typeof a === "string" ? a : _util.inspect(a)).join(" ");
+        // logTs já entrega "[DATA] [HORA] [CATEGORIA] msg" (data e hora do MESMO
+        // instante — antes a data era tirada aqui, e uma linha na virada da
+        // meia-noite saía com o dia seguinte e 23:59:59).
+        // Linha que não veio de logTs (console.error/warn, exceção não tratada):
+        // ganha data, horário e categoria aqui, no mesmo formato (v2.15.4).
+        let corpo = msg;
+        if (!/^\[\d\d-\d\d-\d{4}\] \[\d\d:\d\d:\d\d\] \[[A-Z]+\] /.test(corpo)) {
+            corpo = corpo.replace(/^ERROR:\s*/, "ERRO: ").replace(/^WARN:\s*/, "AVISO: ")
+                         .replace(/^\[(UNCAUGHT EXCEPTION|UNHANDLED REJECTION)\]\s*/, "ERRO não tratado: ");
+            corpo = _prefixoLog(new Date(), "SISTEMA") + corpo;
+        }
+        // v2.15.5: mensagem com várias linhas (stack de erro) — cada linha física
+        // leva o mesmo cabeçalho + "    | ", para nenhuma ficar sem data/categoria.
+        const _cabCat = (corpo.match(/^\[[^\]]+\] \[[^\]]+\] \[[A-Z]+\] /) || [""])[0];
+        String(corpo).split(/\r?\n/).forEach(function(l, i) {
+            if (i > 0 && !l.trim()) return;
+            // Continuação que já veio marcada ("    | ...", ex. /api/log-error) não é marcada de novo.
+            const linha = i === 0 ? l : _cabCat + "    | " + l.replace(/^\s*\|\s?/, "");
+            _logBuffer.push(linha);
+            _logPendentes.push(linha);
+        });
+        // PERF FIX: splice remove os excedentes in-place.
+        if (_logBuffer.length > MAX_LOG_LINES) _logBuffer.splice(0, _logBuffer.length - MAX_LOG_LINES);
+        clearTimeout(_logFlushTimer);
+        _logFlushTimer = setTimeout(_flushLog, 300);
+    } catch(e) {}
+}
+
+const origLog = console.log, origError = console.error, origWarn = console.warn, origInfo = console.info;
+console.log = function(...args) { logToFile(...args); origLog.apply(console, args); };
+console.error = function(...args) { logToFile('ERROR:', ...args); origError.apply(console, args); };
+console.warn = function(...args) { logToFile('WARN:', ...args); origWarn.apply(console, args); };
+console.info = function(...args) { logToFile(...args); origInfo.apply(console, args); };
+
+process.on("uncaughtException", function (err) {
+    logToFile("[UNCAUGHT EXCEPTION]", err && (err.stack || err));
+    origError("[UNCAUGHT EXCEPTION]", err && (err.stack || err));
+    clearTimeout(_logFlushTimer); _flushLog();
+});
+process.on("unhandledRejection", function (reason) {
+    logToFile("[UNHANDLED REJECTION]", reason && (reason.stack || reason));
+    origError("[UNHANDLED REJECTION]", reason && (reason.stack || reason));
+    clearTimeout(_logFlushTimer); _flushLog();
+});
+process.on("exit", function() { clearTimeout(_logFlushTimer); _flushLog(); });
+
+var http        = require("http");
+var net         = require("net");
+var childProc   = require("child_process"); // usado em spawn, taskkill e _matarTodosFilhos
+var spawn       = childProc.spawn;
+var path        = require("path");
+var fs          = require("fs");
+var os          = require("os");
+var TextDecoder = require("util").TextDecoder;
+
+// Decoder de texto lido como bytes (CHARACTER SET OCTETS) — constante de módulo.
+// UTF-8 válido é usado como está; senão Windows-1252 (colunas sem charset do
+// SmallSoft); Node sem ICU completo cai em latin1 (mesmos acentos).
+var _decUtf8Estrito = (function(){ try { return new TextDecoder("utf-8", { fatal: true }); } catch(_) { return null; } })();
+var _decWin1252Base = (function(){ try { return new TextDecoder("windows-1252"); } catch(_) { return null; } })();
+var _win1252Decoder = {
+    decode: function(buf) {
+        if (_decUtf8Estrito) { try { return _decUtf8Estrito.decode(buf); } catch(_) { /* não é UTF-8 */ } }
+        if (_decWin1252Base) { try { return _decWin1252Base.decode(buf); } catch(_) { /* segue */ } }
+        return Buffer.from(buf).toString("latin1");
+    }
+};
+
+// Formatador de quantidade — constante de módulo: converte número para string BR sem recriar a cada request.
+var _fmtQuantidade = function(v) {
+    var n = Number(v || 0);
+    if (!Number.isFinite(n)) return "0";
+    var r = Math.round(n);
+    if (Math.abs(n - r) < 1e-9) return String(r);
+    return String(n).replace(".", ",");
+};
+
+// ===== SOMENTE LEITURA (v2.14.0) ============================================
+// O sistema NUNCA escreve no banco do Small Commerce. Duas travas, em toda
+// conexão aberta por este processo (bloco idêntico no servidor e no gerador):
+//  1. Comando: só passa SQL que começa com SELECT ou WITH; qualquer outro
+//     (UPDATE, INSERT, DELETE, EXECUTE, ALTER...) é recusado ANTES de chegar
+//     ao Firebird.
+//  2. Transação: toda consulta roda numa transação SOMENTE LEITURA (isc_tpb_read),
+//     READ COMMITTED com rec_version e sem espera — o próprio Firebird recusa
+//     qualquer escrita (inclusive por procedure chamada num SELECT) e a leitura
+//     nunca fica esperando transação aberta do caixa.
+// Vale SÓ para as conexões abertas por este projeto: é uma opção da transação
+// que o próprio projeto inicia — o banco, os PDVs e as conexões deles não são
+// afetados e continuam gravando normalmente (testado num Firebird 3). O banco
+// NÃO é colocado em modo somente leitura.
+// O padrão do node-firebird (db.query) abria transação de ESCRITA, com ESPERA e
+// "no_rec_version": com o caixa no meio de uma gravação, a leitura ficava
+// TRAVADA até ele confirmar (medido: ~3 s). Atenção aos nomes do driver:
+// ISOLATION_READ_COMMITTED = read_committed + NO_rec_version (dá conflito);
+// o certo é read_committed (15) + rec_version (17), escrito aqui por número.
+var _somenteLeitura = function(FB) {
+    if (!FB || FB.__somenteLeitura) return FB;
+    // Versão do driver: pelo package.json do módulo e, se o pacote bloquear
+    // esse caminho (campo "exports" em versões futuras), lendo o arquivo do disco.
+    var maior = NaN;
+    try { maior = parseInt(String(require("node-firebird/package.json").version).split(".")[0], 10); } catch (_) {}
+    if (!(maior >= 0)) {
+        try {
+            var _fsV = require("fs"), _pV = require("path"), _dV = _pV.dirname(require.resolve("node-firebird"));
+            for (var _iV = 0; _iV < 6 && !(maior >= 0); _iV++) {
+                try {
+                    var _pkV = JSON.parse(_fsV.readFileSync(_pV.join(_dV, "package.json"), "utf8"));
+                    if (_pkV && _pkV.name === "node-firebird") maior = parseInt(String(_pkV.version).split(".")[0], 10);
+                } catch (_) {}
+                _dV = _pV.dirname(_dV);
+            }
+        } catch (_) {}
+    }
+    // node-firebird 1.x aceita objeto de opções; versões antigas só a lista de isolamento.
+    var ISO_REC_VERSION = [15, 17]; // isc_tpb_read_committed + isc_tpb_rec_version
+    // Lista só no 0.x CONFIRMADO. No 1.x uma lista vira transação de ESCRITA com
+    // espera (readOnly:false, wait:true) — por isso versão desconhecida usa o objeto.
+    var TX = maior === 0 ? ISO_REC_VERSION : { isolation: ISO_REC_VERSION, readOnly: true, wait: false };
+    var SQL_LEITURA = /^\s*(?:(?:--[^\n]*\n|\/\*[\s\S]*?\*\/)\s*)*(select|with)\b/i;
+    var recusar = function(sql, cb) {
+        var cmd = String(sql || "").trim().split(/\s+/)[0] || "(vazio)";
+        var e = new Error("Bloqueado: o sistema é somente leitura — comando " + cmd.toUpperCase() + " não é enviado ao banco.");
+        if (typeof cb === "function") setImmediate(function() { cb(e); });
+        return e;
+    };
+    var blindarTx = function(tx) {
+        ["query", "execute"].forEach(function(m) {
+            var orig = tx[m];
+            if (typeof orig !== "function") return;
+            tx[m] = function(sql, params, cb) {
+                if (!SQL_LEITURA.test(String(sql || ""))) return recusar(sql, typeof params === "function" ? params : cb);
+                // Repassa TODOS os argumentos: query() chama execute() com um 4º
+                // (opções como asObject) que não pode se perder.
+                return orig.apply(tx, arguments);
+            };
+        });
+        return tx;
+    };
+    var blindarDb = function(db) {
+        if (!db || db.__somenteLeitura) return db;
+        db.__somenteLeitura = true;
+        // Vai direto na conexão: Database.transaction chama this.startTransaction,
+        // que é substituído aqui — chamar o original de Database entraria em laço.
+        var conn = db.connection;
+        db.transaction = db.startTransaction = function(_opcoesIgnoradas, cb) {
+            if (typeof _opcoesIgnoradas === "function") cb = _opcoesIgnoradas;
+            conn.startTransaction(TX, function(err, tx) { cb(err, tx ? blindarTx(tx) : tx); });
+            return db;
+        };
+        db.query = db.execute = function(sql, params, cb) {
+            if (typeof params === "function") { cb = params; params = []; }
+            if (!SQL_LEITURA.test(String(sql || ""))) return recusar(sql, cb);
+            db.transaction(null, function(errTx, tx) {
+                if (errTx) { if (cb) cb(errTx); return; }
+                tx.query(sql, params || [], function(e, rows) {
+                    // Leitura pura: rollback encerra a transação sem custo de commit.
+                    try { tx.rollback(function() {}); } catch (_) {}
+                    if (cb) cb(e || null, rows);
+                });
+            });
+            return db;
+        };
+        return db;
+    };
+    var api = Object.create(FB);
+    api.__somenteLeitura = true;
+    api.attach = function(opts, cb) {
+        return FB.attach(opts, function(err, db) { cb(err, db ? blindarDb(db) : db); });
+    };
+    return api;
+};
+// ===========================================================================
+var Firebird = null;
+try { Firebird = _somenteLeitura(require("node-firebird")); } catch(e) {}
+
+// ---------------------------------------------------------------------------
+// Utilitarios
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// CATEGORIAS DO LOG (v2.15.4)
+// ---------------------------------------------------------------------------
+// Toda linha do relatorio.log leva, logo depois do horário, a categoria entre
+// colchetes — para achar e filtrar rápido (ex.: procurar "[VENDAS]"):
+//   [DD-MM-AAAA] [HH:MM:SS] [VENDAS] FastPoll: Gerencial: vendas 30 → 31 ...
+// Categorias (as mesmas em todos os arquivos que gravam no log):
+//   VENDAS     venda nova/alterada/cancelada detectada, hora corrigida, reconciliação
+//   FASTPOLL   detecção rápida: modo, ritmo das consultas, virada de dia
+//   BANCO      conexão com o Firebird, FDB, índices, verificação de reserva
+//   GERADOR    geração do relatório (processo filho, HTML)
+//   SERVIDOR   início/parada/reinício do servidor, processos
+//   API        chamadas de outros computadores (api.ps1 etc.)
+//   NAVEGADOR  erros enviados pela tela do relatório
+//   CONFIG     configurações, proibidos, favicon
+//   REDE       IP da máquina
+//   DEBUG      detalhes (só com "logDebug": true no config.json)
+//   SISTEMA    o que não se encaixa acima
+//   TRAY / INSTALL / REMOVER  gravadas pelo ícone da bandeja e pelos .bat
+// A categoria vem do 2º argumento de logTs ou, sem ele, do início da
+// mensagem (tabela abaixo). Etiquetas antigas no começo da mensagem
+// ("[BROWSER-ERROR]", "[FDB Manual]", "[DEBUG]"...) viram a categoria.
+var _LOG_TAGS = [
+    // [etiqueta antiga no início da msg, categoria, texto que a substitui]
+    [/^\[DEBUG\]\s*/,                          "DEBUG",     ""],
+    [/^\[BROWSER-ERROR\]\s*\[API-CLIENTE\]\s*/, "API",       ""],
+    [/^\[BROWSER-ERROR\]\s*/,                  "NAVEGADOR", "Erro na tela: "],
+    [/^\[filho stderr\]\s*/,                   "GERADOR",   "Erro do gerador: "],
+    [/^\[FDB Manual\]\s*/,                     "BANCO",     "FDB manual: "]
+];
+// Ordem importa: a 1ª regra que casar decide.
+var _LOG_REGRAS = [
+    [/→ regerando|^Dados alterados|^Hora corrigida|^(AVISO )?RECONCILIACAO|^Dados atualizados durante/, "VENDAS"],
+    [/^===|Servidor pronto\.$| \| https?:\/\//,                                     "SERVIDOR"],
+    [/^Fast-?[Pp]oll|^FastPoll|^pollStatus/,                                        "FASTPOLL"],
+    [/^API: /,                                                                      "API"],
+    [/^(FDB|Banco|Arquivo (local|FDB))|credenciais/,                                "BANCO"],
+    [/[Cc]onfigura|^Janela de correção|[Ff]avicon|proibidos|config\.json/,           "CONFIG"],
+    [/maquinaIP/,                                                                   "REDE"],
+    [/servidor HTTP|^Servidor |taskkill|^Matando|_matarProcessoFilho/,              "SERVIDOR"],
+    [/[Bb]anco|FDB|Firebird|[Íí]ndices|^Poll: |^Verificando|^Escaneando|^Hosts com porta|credenciais|^Máximo de tentativas|^Timeout|itens-detalhe/, "BANCO"],
+    [/spawn|[Gg]era|HTML|<\/head>|<\/body>|proc\.close|agendarRegen|[Pp]eriodo|^Script /, "GERADOR"]
+];
+var _categoriaLog = function(msg, cat) {
+    var m = String(msg == null ? "" : msg);
+    for (var i = 0; i < _LOG_TAGS.length; i++) {
+        if (_LOG_TAGS[i][0].test(m)) {
+            m = _LOG_TAGS[i][2] + m.replace(_LOG_TAGS[i][0], "");
+            if (!cat) cat = _LOG_TAGS[i][1];
+            break;
+        }
+    }
+    if (!cat) {
+        for (var j = 0; j < _LOG_REGRAS.length; j++) {
+            if (_LOG_REGRAS[j][0].test(m)) { cat = _LOG_REGRAS[j][1]; break; }
+        }
+    }
+    return { cat: cat || "SISTEMA", msg: m };
+};
+var logTs = function(msg, categoria) {
+    var c = _categoriaLog(msg, categoria);
+    console.log(_prefixoLog(new Date(), c.cat) + c.msg);
+};
+
+// ---------------------------------------------------------------------------
+// NÍVEIS DE LOG (v2.7.3 — "log só com relevâncias do sistema")
+// ---------------------------------------------------------------------------
+// logTs()    → sempre registra. Reservado para o que importa operacionalmente:
+//              início/parada do servidor, estado do banco, erros e avisos,
+//              mudanças de configuração, correções de horário, eventos do tray.
+// logDebug() → só registra quando "logDebug": true está no config.json.
+//              Para ruído de rotina que se repete a cada venda/geração/aba e
+//              que, no volume de uma loja em movimento, empurra a informação
+//              útil para fora do arquivo pela rotação: cronometragem de
+//              queries, "Atualizando DD/MM", caminho do HTML gerado, sincronia
+//              de fuso de cada aba, gerações supersedidas pelo fast-poll.
+// Padrão desligado de propósito: quem abre o relatorio.log quer ver o que
+// aconteceu de relevante, não o batimento cardíaco normal do sistema. Para
+// investigar um problema específico, basta ligar logDebug no config.json.
+var LOG_DEBUG = false; // sobrescrito ao carregar config.json (ver abaixo)
+var logDebug = function(msg) { if (LOG_DEBUG) logTs("[DEBUG] " + msg); };
+var hoje = function() {
+    var d=new Date();
+    return d.getFullYear()+"-"+padDois(d.getMonth()+1)+"-"+padDois(d.getDate());
+};
+var isoParaBR = function(iso) {
+    var m=String(iso||"").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    return m ? (m[3]+"/"+m[2]+"/"+m[1]) : String(iso||"");
+};
+var escH = function(s) {
+    return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;")
+        .replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+};
+
+// JSON seguro para embutir dentro de <script>: JSON.stringify sozinho não
+// escapa "</script>" — um valor salvo pelo usuário com esse texto (ex: um
+// termo de "proibidos") fecharia o bloco e executaria HTML/JS arbitrário.
+// U+2028/U+2029 são válidos em JSON mas quebram literais em JS antigo.
+var _jsonParaScript = function(v) {
+    return JSON.stringify(v === undefined ? null : v)
+        .replace(/</g, "\\u003c")
+        .replace(/\u2028/g, "\\u2028")
+        .replace(/\u2029/g, "\\u2029");
+};
+
+// Data ISO que existe de fato no calendário (rejeita 2026-02-30, 2026-13-01).
+var _ehDataISOValida = function(iso) {
+    var m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) return false;
+    var a = +m[1], me = +m[2], d = +m[3];
+    var dt = new Date(Date.UTC(a, me - 1, d));
+    return dt.getUTCFullYear() === a && dt.getUTCMonth() === me - 1 && dt.getUTCDate() === d;
+};
+
+// Limites de tamanho das listas configuráveis — evitam que um POST da rede
+// grave um config.json gigante (que o gerador lê a cada geração).
+var MAX_PROIBIDOS        = 500;
+var MAX_TAM_PROIBIDO     = 200;
+var MAX_TECLAS           = 60;
+var MAX_TAM_CAMPO_TECLA  = 300;
+
+// Fonte única de validação de "proibidos" (antes /api/proibidos validava e
+// /api/config aceitava qualquer array, inclusive [1, {}, null]).
+var _sanitizarProibidos = function(lista) {
+    if (!Array.isArray(lista)) return [];
+    var vistos = Object.create(null), saida = [];
+    for (var i = 0; i < lista.length && saida.length < MAX_PROIBIDOS; i++) {
+        if (typeof lista[i] !== "string") continue;
+        var s = lista[i].replace(/[\x00-\x1F\x7F]/g, " ").trim().slice(0, MAX_TAM_PROIBIDO);
+        if (!s || vistos[s]) continue;
+        vistos[s] = true;
+        saida.push(s);
+    }
+    return saida;
+};
+
+// Teclas de atalho: aceita { tecla, comando, acao } (como o modal do relatório
+// envia) e normaliza para strings com tamanho limitado. Exige tecla e ao menos
+// um entre comando/acao — mesma regra usada pelo gerador ao ler config.json.
+var _sanitizarTeclas = function(lista) {
+    if (!Array.isArray(lista)) return [];
+    var saida = [];
+    for (var i = 0; i < lista.length && saida.length < MAX_TECLAS; i++) {
+        var t = lista[i];
+        if (!t || typeof t !== "object") continue;
+        var tecla   = typeof t.tecla   === "string" ? t.tecla.trim().slice(0, 40) : "";
+        var comando = typeof t.comando === "string" ? t.comando.slice(0, MAX_TAM_CAMPO_TECLA) : "";
+        var acao    = typeof t.acao    === "string" ? t.acao.trim().slice(0, 60) : "";
+        if (!tecla || (!comando && !acao)) continue;
+        saida.push({ tecla: tecla, comando: comando, acao: acao });
+    }
+    return saida;
+};
+
+// Texto vindo da rede antes de ir para o relatorio.log: remove caracteres de
+// controle (inclusive \r e \n) — sem isso, um POST em /api/log-error podia
+// forjar linhas inteiras do log ("[05-10-2026] [10:00:00] Reinicialização...").
+var _textoSeguroLog = function(s, max) {
+    return String(s == null ? "" : s).replace(/[\x00-\x1F\x7F]+/g, " ").trim().slice(0, max || 500);
+};
+
+// NOTA: padDois foi movido para o topo do arquivo (acima do logger) na v2.4.1 —
+// logToFile() depende dele e era chamado antes desta linha ser executada.
+
+// ---------------------------------------------------------------------------
+// Argumentos CLI
+// ---------------------------------------------------------------------------
+var args=process.argv.slice(2);
+var pegar=function(k){
+    var i=args.indexOf(k);
+    return (i>=0&&i+1<args.length)?String(args[i+1]||"").trim():"";
+};
+var PORT   = parseInt(pegar("--porta")||"7735",10);
+// Credenciais do Firebird — resolvidas após carregar config.json (ver
+// "Resolução de credenciais" abaixo). Ordem: --user/--pass > variável de
+// ambiente RELATORIO_FB_USER/RELATORIO_FB_PASS (usada pelo tray) > config.json
+// (fbUser/fbPass) > padrão de fábrica SYSDBA/masterkey.
+var USER   = pegar("--user");
+var PASS   = pegar("--pass");
+var SCRIPT = path.join(__dirname,"gerar-relatorio-html.js");
+var FAVICON= path.join(__dirname,"favicon.png");
+var CONFIG = path.join(__dirname,"config.json");
+var NO_BROWSER    = args.includes("--no-browser");
+var TMP_DIR       = os.tmpdir();
+
+// ─── Constantes globais — eliminam magic numbers espalhados no código ────────
+var FIREBIRD_PORT          = 3050;          // porta padrão do Firebird
+var FB_CHARSET             = "UTF8";        // charset padrão do Firebird
+var MAX_TENTATIVAS_SPAWN   = 5;             // máximo de retentativas de gerarEmBackground
+var _SCAN_CONCORRENCIA_MAX = 40;            // máximo de sockets simultâneos no scan de rede
+var _FAVICON_CACHE         = null;          // buffer em memória do favicon (evita readFileSync a cada request)
+var _FAVICON_CACHE_MTIME   = 0;            // mtime do favicon na última leitura — invalida cache se o arquivo mudar
+var TIMEOUT_SSE_HEARTBEAT_MS = 15000;       // ping SSE a cada 15s — mantém proxies/load balancers de conexão aberta
+var INTERVALO_SYNC_HORA_MS   = 30000;       // cliente resincroniza hora/fuso com o servidor a cada 30s
+var POLL_WATCHDOG_MS         = 12000;       // watchdog do pollStatus — libera _pollBusy se travar por mais que este tempo
+var POLL_RETRY_MULTIPLIER    = 5;           // intervalo de retry após falha = POLL_INTERVAL × POLL_RETRY_MULTIPLIER
+var HORA_FIXADA_CACHE = path.join(__dirname, "hora-fixada-cache.json");
+
+// SEGURANÇA FIX (auditoria v2.5.0): sem esta validação, o campo "favicon" de
+// /api/config aceitava QUALQUER caminho de arquivo — inclusive caminhos UNC
+// (\\host\share\arquivo) — e esse valor era depois lido via fs.readFileSync e
+// servido em /favicon.ico. Isso permitia LEITURA ARBITRÁRIA DE ARQUIVO LOCAL
+// (qualquer arquivo legível pelo processo Node, servido como se fosse a
+// imagem do favicon), e no caso de UNC, forçava o Windows a autenticar via
+// SMB contra um host controlado por quem enviou o caminho — vetor de
+// vazamento de hash NTLM. O upload real (/api/upload-favicon, que valida
+// bytes mágicos PNG/ICO/JPEG e sempre grava dentro de __dirname) continua
+// sendo o caminho recomendado para trocar o ícone; este validador restringe
+// o campo de texto livre a arquivos que já estejam DENTRO da pasta do
+// próprio app — cobre o caso legítimo de referenciar um arquivo colocado
+// manualmente ali, sem abrir a porta para ler qualquer arquivo do sistema
+// ou forçar autenticação de rede.
+var _faviconCaminhoSeguro = function(caminhoBruto) {
+    var s = String(caminhoBruto == null ? "" : caminhoBruto).trim();
+    if (!s) return { ok: true, valor: "" }; // vazio = usa favicon.png padrão
+    if (/^\\\\|^\/\//.test(s)) return { ok: false, motivo: "caminhos de rede (UNC) não são permitidos" };
+    var raizApp = path.resolve(__dirname);
+    var resolvido;
+    try { resolvido = path.resolve(raizApp, s); } catch(_e) { return { ok: false, motivo: "caminho inválido" }; }
+    if (resolvido !== raizApp && resolvido.indexOf(raizApp + path.sep) !== 0) {
+        return { ok: false, motivo: "o arquivo precisa estar dentro da pasta do sistema (" + raizApp + ")" };
+    }
+    return { ok: true, valor: resolvido };
+};
+
+// ---------------------------------------------------------------------------
+// Config persistente
+// ---------------------------------------------------------------------------
+var loadConfig = function() {
+    var raw = "";
+    try {
+        raw = fs.readFileSync(CONFIG, "utf8").replace(/^\uFEFF/, "");
+    } catch(e) {
+        // Loga apenas se o arquivo já existir — ausência no 1º boot é esperada.
+        try { if (fs.existsSync(CONFIG)) logToFile("WARN loadConfig: falha ao ler config.json — usando padrões. Erro: " + e.message); } catch(_) {}
+        return {};
+    }
+    // BUG FIX: a regex de "remove zero à esquerda" (para tolerar JSON inválido
+    // do tipo "porta": 07734, que JSON.parse rejeita) era aplicada SEMPRE, no
+    // texto bruto INTEIRO, antes até de tentar o parse normal — isso corrompe
+    // qualquer valor de STRING que contenha um padrão ":0" em qualquer lugar
+    // (ex: um campo futuro "hora":"08:00" viraria "08: 0"), mesmo quando o
+    // JSON já era 100% válido. Agora só é usada como reparo de ÚLTIMO RECURSO,
+    // quando o parse direto falha — a grande maioria dos carregamentos nunca
+    // toca nessa regex e nunca corre esse risco.
+    try {
+        return JSON.parse(raw);
+    } catch (eOriginal) {
+        try {
+            var reparado = raw.replace(/:\s*0+(\d+)/g, ": $1");
+            var obj = JSON.parse(reparado);
+            logToFile("WARN loadConfig: config.json tinha número(s) com zero à esquerda inválido para JSON — reparado automaticamente nesta leitura. Corrija o arquivo manualmente para evitar depender deste reparo.");
+            return obj;
+        } catch (eReparo) {
+            try { if (fs.existsSync(CONFIG)) logToFile("WARN loadConfig: config.json inválido mesmo após tentativa de reparo — usando padrões. Erro: " + eOriginal.message); } catch(_) {}
+            return {};
+        }
+    }
+};
+// DRY FIX: saveConfig e updateConfigKey compartilhavam ~90% da lógica.
+// _writeConfigMerge(patch, contexto) lê → valida JSON → merge → grava.
+var _writeConfigMerge = function(patch, contexto) {
+    try {
+        var rawAtual = "";
+        try { rawAtual = fs.readFileSync(CONFIG, "utf8").replace(/^\uFEFF/, "").trim(); } catch(e) {}
+        var base = {};
+        if (rawAtual) {
+            try { base = JSON.parse(rawAtual); }
+            catch(e) {
+                logToFile("WARN " + contexto + ": JSON inválido em config.json — gravação abortada. Erro: " + e.message);
+                return false;
+            }
+        }
+        if (typeof base !== "object" || Array.isArray(base)) base = {};
+        var merged = Object.assign({}, base, patch);
+        if (Object.keys(merged).length === 0) {
+            logToFile("WARN " + contexto + ": merge resultou em objeto vazio — gravação abortada.");
+            return false;
+        }
+        // INTEGRIDADE FIX: writeFileSync direto podia deixar config.json truncado
+        // se o processo caísse no meio da escrita — e um config.json corrompido
+        // faz o servidor perder appName, fbHost, proibidos e maquinaIP de uma vez.
+        if (!_gravarArquivoAtomico(CONFIG, JSON.stringify(merged, null, 2))) {
+            logToFile("WARN " + contexto + ": falha ao gravar config.json.");
+            return false;
+        }
+        return true;
+    } catch(e) { logToFile("WARN " + contexto + ": " + e.message); return false; }
+};
+
+var saveConfig = function(obj) {
+    return _writeConfigMerge(obj, "saveConfig");
+};
+
+var updateConfigKey = function(key, value) {
+    var patch = {};
+    patch[key] = value;
+    return _writeConfigMerge(patch, "updateConfigKey(" + key + ")");
+};
+
+// _config é a única leitura de config.json no boot — elimina o segundo loadConfig()
+// que estava em cfg=loadConfig() na linha 267. Ambas as variáveis eram idênticas;
+// manter duas causava inconsistência se o arquivo mudasse entre as duas leituras.
+var _config       = loadConfig();
+// Alias de compatibilidade — mantido para não alterar referências espalhadas no arquivo.
+var appCfg        = _config;
+var APP_NAME      = (appCfg.appName&&appCfg.appName.trim()) ? appCfg.appName.trim() : "Relatorios SmallSoft Offline";
+// BUG FIX (v2.5.0): FAVICON nunca era inicializado a partir de config.json no
+// boot — só era atualizado em memória pelas rotas /api/config e
+// /api/upload-favicon durante a sessão. Resultado: um favicon customizado
+// salvo pelo usuário "sumia" (voltava ao padrão) toda vez que o servidor
+// reiniciava, mesmo com o caminho certinho salvo em config.json — o campo
+// parecia configurado (a tela de configurações mostrava o valor salvo), mas
+// o ícone servido de fato revertia silenciosamente. Revalidado aqui com o
+// mesmo validador de caminho seguro usado em /api/config, por segurança
+// (config.json pode ter sido editado manualmente por alguém com acesso ao
+// disco).
+(function() {
+    var _favBoot = _faviconCaminhoSeguro(appCfg.favicon);
+    if (_favBoot.ok && _favBoot.valor) FAVICON = _favBoot.valor;
+})();
+var POLL_INTERVAL = _naFaixa(appCfg.pollInterval, POLL_INTERVAL_MIN, POLL_INTERVAL_MAX) || 100; // 100 ms a 60 s
+// pollStatus (reserva do fast-poll + correções de horário): 5× o intervalo do
+// navegador, nunca abaixo de 1 s (v2.13.0: era 2 s). Cada ciclo abre uma
+// conexão nova com o Firebird, por isso não acompanha o fast-poll.
+var _intervaloPollStatus = function() { return Math.max(POLL_INTERVAL * POLL_RETRY_MULTIPLIER, 1000); };
+// CONTRATO FIX: padrão unificado com gerar-relatorio-html.js (ambos usam 5000ms agora).
+var TOAST_DURATION = (appCfg.toastDuration && parseInt(appCfg.toastDuration,10)>=500)
+    ? parseInt(appCfg.toastDuration,10) : 5000; // ms — duração padrão do toast de notificação
+// spawnTimeoutMs configurável via config.json.
+// Padrão: 10 s. Mínimo: 5 s. Máximo: 120 s (clamp ampliado — comporta bancos remotos lentos).
+// O clamp anterior (10 s) ignorava silenciosamente valores maiores definidos pelo usuário.
+// TIMEOUT FIX (contrato servidor↔filho): o filho precisa de no mínimo 90s para
+// conectar ao Firebird e rodar as queries de 1 dia (_tGlobal mínimo = 90000ms).
+// O default anterior de 10s causava kill imediato + 5 tentativas = erro permanente.
+// Novo default: 120s. Para períodos históricos maiores o usuário deve configurar
+// spawnTimeoutMs no config.json (max aceito: 600s para meses inteiros).
+var _cfgTms = appCfg.spawnTimeoutMs ? parseInt(appCfg.spawnTimeoutMs, 10) : 120000;
+var SPAWN_TIMEOUT_CFG = Math.min(Math.max(isNaN(_cfgTms) ? 120000 : _cfgTms, 30000), 600000);
+
+LOG_DEBUG = (appCfg.logDebug === true || String(appCfg.logDebug).toLowerCase() === "true");
+if (_naFaixa(appCfg.maxLogLines, MAX_LOG_LINES_MIN, MAX_LOG_LINES_MAX)) {
+    MAX_LOG_LINES = _naFaixa(appCfg.maxLogLines, MAX_LOG_LINES_MIN, MAX_LOG_LINES_MAX);
+}
+if (_logBuffer.length > MAX_LOG_LINES) _logBuffer.splice(0, _logBuffer.length - MAX_LOG_LINES); // in-place
+// v2.15.5: poda já ao ligar. O contador de linhas começa em 0 a cada boot, e
+// um arquivo que já estava acima do limite (ou cresceu com as linhas da
+// bandeja/instalador, que não passam por este contador) só era podado depois
+// de mais MAX_LOG_LINES linhas deste processo.
+try { _logLinhasDesdeRotacao = MAX_LOG_LINES; _rotacionarLogSeNecessario(); } catch (_) {}
+
+if (appCfg.porta&&appCfg.porta>0) PORT = parseInt(appCfg.porta,10);
+if (!(PORT > 0 && PORT < 65536)) PORT = 7735; // porta inválida no config/CLI → padrão em vez de listen() lançar
+
+// Resolução de credenciais. BUG FIX (v2.9.0): fbUser/fbPass existiam no
+// config.json (e o tray já os lia), mas este arquivo nunca os consultava —
+// sem --user/--pass o servidor sempre caía em SYSDBA/masterkey.
+USER = USER || String(process.env.RELATORIO_FB_USER || "").trim() || String(appCfg.fbUser || "").trim() || "SYSDBA";
+PASS = PASS || String(process.env.RELATORIO_FB_PASS || "")         || String(appCfg.fbPass || "")         || "masterkey";
+
+// Ambiente repassado a cada processo filho. SEGURANÇA (v2.9.0): a senha ia
+// como argumento "--pass" — visível para qualquer usuário da máquina na lista
+// de processos (Gerenciador de Tarefas/wmic). Variável de ambiente só é
+// legível pelo próprio usuário/administrador.
+var _ENV_FILHO = Object.assign({}, process.env, { RELATORIO_FB_USER: USER, RELATORIO_FB_PASS: PASS });
+// Aviso de credencial de fábrica: uma vez por boot (o tray, quando é ele quem
+// inicia o servidor, já registra o mesmo aviso — não duplica nesse caso).
+if (USER.toUpperCase() === "SYSDBA" && PASS === "masterkey" && !process.env.RELATORIO_FB_PASS) {
+    // setImmediate: depois da linha "=== Servidor iniciado ===", que deve ser a
+    // primeira do boot no log.
+    setImmediate(function() {
+        logTs("AVISO: usando credenciais padrão do Firebird (SYSDBA/masterkey). Defina fbUser/fbPass no config.json se o banco usa senha própria.");
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Auto-deteccao do caminho FDB
+// ---------------------------------------------------------------------------
+var _fdbCandidatos=function(){
+    var pf86=process.env["ProgramFiles(x86)"]||"C:\\Program Files (x86)";
+    var pf  =process.env["ProgramFiles"]      ||"C:\\Program Files";
+    var pd  =process.env["ProgramData"]       ||"C:\\ProgramData";
+    return [
+        pf86+"\\SmallSoft\\Small Commerce\\SMALL.FDB",
+        pf  +"\\SmallSoft\\Small Commerce\\SMALL.FDB",
+        pd  +"\\SmallSoft\\Small Commerce\\SMALL.FDB",
+        "C:\\SmallSoft\\Small Commerce\\SMALL.FDB",
+        "C:\\Dados\\SMALL.FDB",
+        "C:\\SmallCommerce\\SMALL.FDB",
+    ];
+};
+
+var detectFdbLocal=function(){
+    var cands=_fdbCandidatos();
+    for(var i=0;i<cands.length;i++){
+        try{
+            if(fs.existsSync(cands[i])){
+                logTs("FDB local encontrado: "+cands[i]);
+                return cands[i];
+            }
+        }catch(e){ logTs("WARN detectFdbLocal: "+e.message); }
+    }
+    return null;
+};
+
+var detectFdbPath=function(){
+    var local=detectFdbLocal();
+    if(local)return local;
+    var pf86=process.env["ProgramFiles(x86)"]||"C:\\Program Files (x86)";
+    return pf86+"\\SmallSoft\\Small Commerce\\SMALL.FDB";
+};
+
+var parseFdb=function(fdb){
+    var m=String(fdb||"").match(/^([0-9.]+|[a-zA-Z0-9_-]+):([a-zA-Z]:\\.*|\/.*)/);
+    if(m)return{host:m[1],dbPath:m[2]};
+    return{host:"127.0.0.1",dbPath:fdb};
+};
+
+// ── ACESSO DE QUALQUER LUGAR — TAILSCALE (v2.20.0) ─────────────────────────
+// Tailscale cria uma rede privada e criptografada entre a máquina da loja e o
+// celular (cada um com o app, na mesma conta), sem abrir porta no roteador e sem
+// expor nada à internet. Cada aparelho ganha um IP fixo na faixa 100.64.0.0/10
+// (IPv6 fd7a:115c:a1e0::/48). Esses endereços valem como "rede local" — só
+// aparelhos autorizados na conta entram nessa rede.
+var _ehIPTailscale = function(ip) {
+    var s = String(ip || "").replace(/^::ffff:/, "");
+    return /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}$/.test(s) || /^fd7a:115c:a1e0:/i.test(s);
+};
+// IPv4 do Tailscale nesta máquina (null se não estiver instalado/conectado).
+var _ipTailscale = function() {
+    try {
+        var ifs = os.networkInterfaces(), achado = null;
+        Object.keys(ifs).some(function(k) {
+            return (ifs[k] || []).some(function(a) {
+                var v4 = a && (a.family === "IPv4" || a.family === 4);
+                if (v4 && !a.internal && _ehIPTailscale(a.address)) { achado = a.address; return true; }
+                return false;
+            });
+        });
+        return achado;
+    } catch (e) { return null; }
+};
+// Cache de 30 s (consultado a cada pedido vindo da faixa do Tailscale).
+var _tsCache = { ip: null, ts: 0 };
+var _ipTailscaleCache = function() {
+    var agora = Date.now();
+    if (agora - _tsCache.ts > 30000) { _tsCache = { ip: _ipTailscale(), ts: agora }; }
+    return _tsCache.ip;
+};
+// Pedido que chegou por um túnel/proxy rodando NESTA máquina (cloudflared, ngrok,
+// proxy reverso): o IP de origem é 127.0.0.1, mas quem pediu está na internet.
+// Nunca é tratado como o computador do servidor nem como rede local.
+var _viaProxy = function(req) {
+    var h = (req && req.headers) || {};
+    return !!(h["x-forwarded-for"] || h["forwarded"] || h["cf-connecting-ip"] || h["x-real-ip"] || h["true-client-ip"] || h["x-forwarded-host"]);
+};
+
+// detectLocalIP melhorada: ignora adapters virtuais/VPN, usa score por sub-rede
+// e aceita fbHostHint para priorizar o IP na mesma /24 do banco.
+var detectLocalIP = function(fbHostHint) {
+    var ifaces = os.networkInterfaces();
+    var SKIP_NAMES = ["vmware","virtualbox","vbox","hyper-v","loopback","pseudo","isatap",
+                      "teredo","tunnel","vpn","tap","tun","wsl","docker","radio","bluetooth",
+                      "6to4","vethernet","tailscale","zerotier"];
+    function isSkip(name) {
+        var nl = String(name||"").toLowerCase();
+        return SKIP_NAMES.some(function(s){ return nl.indexOf(s) >= 0; });
+    }
+    // Prefixo /24 do host do banco — aumenta score de IPs na mesma sub-rede
+    var subnetPrefix = null;
+    if (fbHostHint && /^\d{1,3}\.\d{1,3}\.\d{1,3}\./.test(fbHostHint)) {
+        subnetPrefix = fbHostHint.split(".").slice(0,3).join(".") + ".";
+    }
+    var candidates = [];
+    for (var n in ifaces) {
+        if (isSkip(n)) continue;
+        var list = ifaces[n];
+        for (var i = 0; i < list.length; i++) {
+            var a = list[i];
+            var isV4 = (a.family === "IPv4" || a.family === 4);
+            if (!isV4 || a.internal || a.address === "127.0.0.1") continue;
+            if (_ehIPTailscale(a.address)) continue;   // rede do Tailscale nunca é o "IP da loja"
+            var score = 0;
+            if (subnetPrefix && a.address.indexOf(subnetPrefix) === 0) score += 100;
+            if (/^192\.168\./.test(a.address))                          score += 10;
+            else if (/^10\./.test(a.address))                           score += 5;
+            else if (/^172\.(1[6-9]|2\d|3[01])\./.test(a.address))     score += 4;
+            candidates.push({addr: a.address, score: score});
+        }
+    }
+    if (!candidates.length) return null;
+    candidates.sort(function(a,b){ return b.score - a.score; });
+    return candidates[0].addr;
+};
+
+// cfg reusa _config — sem segundo readFileSync; fdbArg lê do processo.
+var cfg      = _config;
+var fdbArg   = pegar("--fdb");
+
+// ---------------------------------------------------------------------------
+// logProtegido — evita duplicar linhas fixas no log ao reiniciar no mesmo dia.
+// Definido antes da detecção de FDB para que "=== Servidor iniciado ===" seja
+// sempre a primeira linha protegida gravada no arquivo de log.
+// Zera automaticamente à meia-noite.
+// ---------------------------------------------------------------------------
+var _logProtSet = new Set();
+var _logProtDia = (function() {
+    var d = new Date();
+    return padDois(d.getDate()) + "-" + padDois(d.getMonth()+1) + "-" + d.getFullYear();
+})();
+try {
+    var _logFullRaw = _fs.readFileSync(LOG_PATH, "utf8").split("\n");
+    _logFullRaw.forEach(function(linha) {
+        if (linha.indexOf("[" + _logProtDia) === 0) {
+            // [data] [hora] [CATEGORIA] mensagem — a categoria (v2.15.4) é opcional
+            // para continuar lendo as linhas gravadas por versões anteriores.
+            var m = linha.match(/^\[[^\]]+\]\s*\[[^\]]+\]\s*(?:\[[A-Z]+\]\s*)?(.+)$/);
+            if (m) _logProtSet.add(m[1].trim());
+        }
+    });
+} catch(e) {
+    _logBuffer.forEach(function(linha) {
+        if (linha.indexOf("[" + _logProtDia) === 0) {
+            var m = linha.match(/^\[[^\]]+\]\s*\[[^\]]+\]\s*(?:\[[A-Z]+\]\s*)?(.+)$/);
+            if (m) _logProtSet.add(m[1].trim());
+        }
+    });
+}
+(function _agendarResetLogProt() {
+    var agora  = new Date();
+    var amanha = new Date(agora.getFullYear(), agora.getMonth(), agora.getDate() + 1, 0, 0, 3);
+    setTimeout(function() {
+        _logProtSet.clear();
+        _queryLogsHoje = false;
+        // Dia novo começa vazio: não há linha de base a registrar — todo
+        // documento que aparecer a partir daqui é "primeira visão".
+        _resetarBaselineCorrecoes(true);
+        _statusChangeTs = 0; // reseta a meia-noite — evita reloads espúrios no dia seguinte
+        // Limpa entradas antigas do hora-fixada-cache (dias anteriores ao atual)
+        try {
+            var _dhHoje = hoje();
+            Object.keys(_horaFixadaCache).forEach(function(k) {
+                var kDate = k.split("|")[0];
+                if (kDate && kDate < _dhHoje) delete _horaFixadaCache[k];
+            });
+            _salvarHoraFixadaCache();
+        } catch(_hfc) {}
+        _logProtDia = (function() {
+            var d = new Date();
+            return padDois(d.getDate()) + "-" + padDois(d.getMonth()+1) + "-" + d.getFullYear();
+        })();
+        _agendarResetLogProt();
+    }, amanha.getTime() - agora.getTime());
+})();
+function logProtegido(msg) {
+    if (_logProtSet.has(msg)) return;
+    _logProtSet.add(msg);
+    logTs(msg);
+}
+
+// Flag: linhas de progresso do filho (>>, OK:) só aparecem na 1ª geração do dia.
+// Resetado à meia-noite junto com _logProtSet (ver _agendarResetLogProt acima).
+var _queryLogsHoje = false;
+
+// ---------------------------------------------------------------------------
+// SVG Icons (Lucide-style, stroke="currentColor") — substituem todos os emojis.
+// Usados em botões HTML, spans decorativos e innerHTML de elementos de status.
+// ---------------------------------------------------------------------------
+
+// Pasta aberta — botões "Procurar" (14 × 14)
+var SVG_FOLDER =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"' +
+    ' fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"' +
+    ' style="display:inline;vertical-align:-2px;margin-right:5px">' +
+    '<path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5' +
+    'H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/>' +
+    '</svg>';
+
+// Banco de dados — ícone decorativo grande (48 × 48)
+var SVG_DATABASE =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24"' +
+    ' fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">' +
+    '<ellipse cx="12" cy="5" rx="9" ry="3"/>' +
+    '<path d="M3 5v14a9 3 0 0 0 18 0V5"/>' +
+    '<path d="M3 12a9 3 0 0 0 18 0"/>' +
+    '</svg>';
+
+// Timer / stopwatch — status "encerrando processo" (13 × 13, para innerHTML)
+var SVG_TIMER =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24"' +
+    ' fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"' +
+    ' style="display:inline;vertical-align:-2px;margin-right:4px">' +
+    '<line x1="10" x2="14" y1="2" y2="2"/><line x1="12" x2="15" y1="2" y2="5"/>' +
+    '<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2"/>' +
+    '</svg>';
+
+// Seta anti-horária — status "tentativa N/M" (13 × 13, para innerHTML)
+var SVG_RETRY =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24"' +
+    ' fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"' +
+    ' style="display:inline;vertical-align:-2px;margin-right:4px">' +
+    '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>' +
+    '<path d="M3 3v5h5"/>' +
+    '</svg>';
+
+// Triângulo de aviso — status "sem resposta" (13 × 13, para innerHTML)
+var SVG_WARN =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24"' +
+    ' fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"' +
+    ' style="display:inline;vertical-align:-2px;margin-right:4px">' +
+    '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/>' +
+    '<line x1="12" x2="12" y1="9" y2="13"/><line x1="12" x2="12.01" y1="17" y2="17"/>' +
+    '</svg>';
+
+
+var _descreverMudanca = function(qtAntes, qtDepois, totAntes, totDepois) {
+    var partes = [];
+    if (qtAntes !== qtDepois) {
+        // agora mostra qtDepois primeiro, depois o sinal, depois qtAntes
+        partes.push("vendas " + qtDepois + (qtDepois > qtAntes ? " > " : " < ") + qtAntes);
+    }
+    if (Math.abs(totDepois - totAntes) > 0.005) {
+        // mesmo padrão: valor depois, sinal, valor antes
+        partes.push("total R$" + totDepois.toFixed(2) + (totDepois > totAntes ? " > " : " < ") + "R$" + (totAntes||0).toFixed(2));
+    }
+    return partes.length ? partes.join(" | ") : "sem diferença detectável";
+};
+
+// Compara estado anterior × atual por tipo (G = gerencial, NFC = NFC-e, NF = NF-e).
+// Emite ">" quando o valor subiu e "<" quando caiu — detectado via POLL_INTERVAL.
+// Retorna {mudou:bool, descricao:string}.
+var _descreverMudancaTipo = function(ant, atu) {
+    var partes = [];
+    var tipos = [
+        {chave:"g",   rotulo:"Ger"},
+        {chave:"nfc", rotulo:"NFC-e"},
+        {chave:"nf",  rotulo:"NF-e"}
+    ];
+    tipos.forEach(function(t) {
+        var a = ant[t.chave], b = atu[t.chave];
+        if (!a || a.qt < 0) return;
+        if (a.qt !== b.qt) {
+            // Agora valor novo primeiro, sinal de comparação, valor antigo
+            partes.push(t.rotulo+" vendas "+b.qt+(b.qt > a.qt ? " > " : " < ")+a.qt);
+        }
+        if (Math.abs(b.tot - a.tot) > 0.005) {
+            partes.push(t.rotulo+" total R$"+b.tot.toFixed(2)+(b.tot > a.tot ? " > " : " < ")+"R$"+a.tot.toFixed(2));
+        }
+    });
+    return {mudou: partes.length > 0, descricao: partes.join(" | ")};
+};
+
+// Lê a versão do gerar-relatorio-html.js a partir do @version no cabeçalho dele.
+// Os dois arquivos são atualizados juntos com frequência, e uma combinação
+// incompatível já causou sintomas confusos antes (ex: marcador "CANCELADA"
+// aparecendo na coluna de hora quando só o servidor havia sido trocado).
+// Registrar as duas versões lado a lado na abertura do log torna esse tipo de
+// desencontro imediato de identificar.
+// Lê o arquivo em vez de usar require(): o gerador é um script executável que
+// abre conexão com o banco ao ser carregado, não um módulo. Só o topo é lido.
+var _versaoGerador = function() {
+    try {
+        var _cab = fs.readFileSync(path.join(__dirname, "gerar-relatorio-html.js"), "utf8").slice(0, 600);
+        var _m = _cab.match(/@version\s+([0-9]+\.[0-9]+\.[0-9]+)/);
+        // Prefixo "v" só quando há versão real, para não sair "vausente".
+        return _m ? "v" + _m[1] : "(versao nao identificada)";
+    } catch (e) {
+        return "(arquivo ausente)";
+    }
+};
+
+// Primeira linha protegida — deve aparecer antes de qualquer outro log de inicialização.
+(function() {
+    var _marcaDia = "=== Servidor iniciado " + isoParaBR(hoje()) + " === Servidor v" +
+                    SERVER_VERSION + " | Gerador " + _versaoGerador();
+    if (!_logProtSet.has(_marcaDia)) {
+        _logProtSet.add(_marcaDia);
+        logTs(_marcaDia);
+        clearTimeout(_logFlushTimer); _flushLog();
+    }
+})();
+
+var FDB_PATH, FDB_HOST;
+if (fdbArg) {
+    // BUG FIX: parseFdb era chamado duas vezes para o mesmo argumento.
+    // Agora guarda o resultado uma única vez.
+    var _fdbParsed = parseFdb(fdbArg);
+    FDB_PATH = _fdbParsed.dbPath;
+    FDB_HOST = _fdbParsed.host;
+    logTs("FDB via argumento CLI: "+FDB_HOST+":"+FDB_PATH);
+} else {
+    var _fdbLocal = detectFdbLocal();
+    if (_fdbLocal) {
+        FDB_PATH = _fdbLocal;
+        FDB_HOST = "127.0.0.1";
+        logTs("FDB local detectado → conectando em 127.0.0.1");
+    } else {
+        // BUG FIX (v2.6.8 — configurações): "fdbPath" era GRAVADO no
+        // config.json por aplicarNovoFdb() (seletor de banco / rota
+        // /api/salvar-fdb) mas NUNCA era lido de volta no boot — a única
+        // função consultada aqui, detectFdbPath(), procura caminhos locais
+        // conhecidos e, não achando, devolve um caminho padrão fixo. Efeito
+        // prático: o usuário selecionava o .fdb pelo seletor, o servidor
+        // confirmava e salvava, e no reinício seguinte a escolha era
+        // silenciosamente descartada, voltando ao caminho padrão. Como neste
+        // ramo já sabemos que detectFdbLocal() falhou (é a condição do else),
+        // detectFdbPath() só pode devolver o padrão fixo — então preferir o
+        // valor salvo pelo usuário é estritamente melhor e não muda nenhum
+        // outro cenário.
+        var _fdbCfg = (cfg.fdbPath && String(cfg.fdbPath).trim()) ? String(cfg.fdbPath).trim() : null;
+        if (_fdbCfg) {
+            FDB_PATH = _fdbCfg;
+            logTs("FDB do config.json (fdbPath salvo pelo usuário): " + FDB_PATH);
+        } else {
+            FDB_PATH = detectFdbPath();
+        }
+        FDB_HOST = (cfg.fbHost && String(cfg.fbHost).trim()) ? String(cfg.fbHost).trim() : "127.0.0.1";
+        logTs("FDB não encontrado localmente → tentando host de rede: "+FDB_HOST);
+    }
+}
+var FDB = FDB_HOST+":"+FDB_PATH;
+
+// ---------------------------------------------------------------------------
+// CÓPIA OFFLINE (v3.0.0 — Relatórios SmallSoft Offline)
+// FONTE_* = banco principal do Small Commerce; FDB_* = o que o relatório lê
+// (a cópia offline, ou o próprio banco principal enquanto não há cópia / no
+// modo híbrido com o banco no ar). Ver offline-copia.js.
+// ---------------------------------------------------------------------------
+var FONTE_HOST = FDB_HOST, FONTE_PATH = FDB_PATH;
+var _offline = null;
+var _offlineCfg = function(c) {
+    c = c || {};
+    var modo = String(c.offlineModo || "copia").toLowerCase();
+    if (["copia", "hibrido", "desligado"].indexOf(modo) < 0) modo = "copia";
+    return {
+        modo: modo,
+        intervaloMinMs: (_naFaixa(c.offlineIntervaloMin, 1, 1440) || 5) * 60000,
+        verificarMs:    (_naFaixa(c.offlineVerificarSeg, 5, 3600) || 20) * 1000,
+        maxIdadeMs:     (_naFaixa(c.offlineMaxIdadeMin, 5, 10080) || 180) * 60000,
+        timeoutMs:      (_naFaixa(c.offlineTimeoutMin, 1, 360) || 30) * 60000
+    };
+};
+// Banco principal atual: enquanto o relatório NÃO está lendo uma cópia, o que
+// ele lê é o banco principal (inclusive quando o usuário escolhe outro banco
+// ou o scan de rede o encontra em outro IP) — então acompanha FDB_*.
+var _fonteAtual = function() {
+    if (!_offline || !_offline.ehCopia(FDB_PATH)) { FONTE_HOST = FDB_HOST; FONTE_PATH = FDB_PATH; }
+    return { host: FONTE_HOST, path: FONTE_PATH };
+};
+(function _iniciarCopiaOffline() {
+    var mod = null;
+    try { mod = require("./offline-copia.js"); }
+    catch (e) { logTs("Cópia offline indisponível: offline-copia.js não carregou (" + e.message + "). O relatório lê o banco principal direto.", "OFFLINE"); return; }
+    try {
+        var oc = _offlineCfg(cfg);
+        var pasta = String(cfg.offlinePasta || "").trim() || mod.pastaPadrao(APP_NAME);
+        var gbakCfg = String(cfg.gbakPath || "").trim();
+        var gbak = oc.modo === "desligado" ? "" : mod.localizarGbak(gbakCfg, function(m) { logTs(m, "OFFLINE"); });
+        _offline = mod.criarCopiaOffline({
+            appName: APP_NAME, pasta: pasta, gbak: gbak, user: USER, pass: PASS, porta: FIREBIRD_PORT, charset: FB_CHARSET,
+            modo: oc.modo, intervaloMinMs: oc.intervaloMinMs, verificarMs: oc.verificarMs, maxIdadeMs: oc.maxIdadeMs, timeoutMs: oc.timeoutMs,
+            manterFbk: cfg.offlineManterFbk !== false,
+            Firebird: Firebird,
+            fonte: _fonteAtual,
+            assinatura: function(h, p, cb) { _assinaturaFonte(h, p, cb); },
+            aoTrocar: function(h, p, info) { _trocarLeitura(h, p, info); },
+            log: function(m) { logTs(m, "OFFLINE"); },
+            logDebug: function(m) { logDebug(m); }
+        });
+        var ini = _offline.copiaInicial();
+        if (ini) {
+            FONTE_HOST = FDB_HOST; FONTE_PATH = FDB_PATH;
+            FDB_HOST = ini.host; FDB_PATH = ini.path; FDB = FDB_HOST + ":" + FDB_PATH;
+            logTs("Lendo a cópia offline (dados de " + new Date(ini.dadosDe).toLocaleString("pt-BR") + "): " + FDB_PATH + " | banco principal: " + FONTE_HOST + ":" + FONTE_PATH, "OFFLINE");
+        }
+    } catch (e2) {
+        _offline = null;
+        logTs("ERRO ao preparar a cópia offline: " + (e2 && e2.stack || e2) + " — o relatório lê o banco principal direto.", "OFFLINE");
+    }
+})();
+
+// ---------------------------------------------------------------------------
+// CONSULTA DE ESTOQUE (v3.0.0) — todos os itens da tabela ESTOQUE, lidos do
+// que o relatório está lendo (de preferência a cópia offline). Ver estoque-offline.js.
+// ---------------------------------------------------------------------------
+var _estoque = null;
+try {
+    _estoque = require("./estoque-offline.js").criarEstoque({
+        Firebird: Firebird,
+        alvo: function() { return { host: FDB_HOST, path: FDB_PATH, porta: FIREBIRD_PORT, user: USER, pass: PASS, charset: FB_CHARSET }; },
+        decodificar: function(b) { return _win1252Decoder.decode(b); },
+        ehCopia: function() { return !!(_offline && _offline.lendoCopia()); },
+        log: function(m) { logTs(m, "ESTOQUE"); }
+    });
+} catch (eEst) { logTs("Consulta de estoque indisponível: " + eEst.message, "ESTOQUE"); }
+var _ESTOQUE_HTML = path.join(__dirname, "estoque.html");
+
+var _maquinaIPCfg    = (cfg.maquinaIP && String(cfg.maquinaIP).trim()) ? String(cfg.maquinaIP).trim() : null;
+var _maquinaIPDetect = detectLocalIP(FDB_HOST);
+var _maquinaIP       = _maquinaIPDetect || _maquinaIPCfg || null;
+var BIND_ADDR        = _maquinaIP ? "0.0.0.0" : "127.0.0.1";
+
+// ---------------------------------------------------------------------------
+// Limite de tamanho para corpos de requisições POST — protege contra DoS.
+// ---------------------------------------------------------------------------
+var MAX_BODY_BYTES = 512 * 1024; // 512 KB — suficiente para todos os payloads esperados
+
+// Lê o corpo de uma requisição com limite de tamanho.
+// Chama cb(null, bodyString) em sucesso ou cb(err) se exceder o limite.
+var lerBodySeguro = function(req, cb) {
+    var chunks = [], totalBytes = 0, _cbCalled = false;
+    var _done = function(err, val) {
+        if (_cbCalled) return; // previne double-callback: req.destroy → cb(err) + req.on("error")
+        _cbCalled = true;
+        cb(err, val);
+    };
+    req.on("data", function(chunk) {
+        if (_cbCalled) return; // descarta chunks após limite excedido
+        totalBytes += chunk.length;
+        if (totalBytes > MAX_BODY_BYTES) {
+            try { req.destroy(); } catch(_) {}
+            _done(new Error("Payload muito grande (máx " + MAX_BODY_BYTES + " bytes)."));
+            return;
+        }
+        chunks.push(chunk);
+    });
+    req.on("end",   function()  { _done(null, Buffer.concat(chunks).toString("utf8")); });
+    req.on("error", function(e) { _done(e); });
+};
+
+// maquinaIP detectado sempre sobrescreve config.json — garante que mudanças
+// de rede (DHCP, troca de adapter) sejam sempre refletidas no próximo boot.
+if (_maquinaIPDetect) {
+    try { updateConfigKey("maquinaIP", _maquinaIPDetect); } catch(e) {}
+    logTs("maquinaIP detectado e salvo: " + _maquinaIPDetect +
+          (_maquinaIPCfg && _maquinaIPCfg !== _maquinaIPDetect ? " (substituiu: " + _maquinaIPCfg + ")" : ""));
+} else if (_maquinaIPCfg) {
+    logTs("maquinaIP não detectado — usando config como fallback: " + _maquinaIPCfg);
+} else {
+    logTs("AVISO: maquinaIP não detectado e não configurado — acesso externo desabilitado");
+}
+
+// ---------------------------------------------------------------------------
+// Estado global
+// ---------------------------------------------------------------------------
+var cache       = Object.create(null);
+
+// Fila de notificações de correção de horário — consumida pelo browser via /api/status.
+// O servidor empurra mensagens aqui; o poll do browser exibe como toast.
+//
+// BUG FIX (auditoria v2.5.0 — ESTADO COMPARTILHADO): antes, a leitura em
+// /api/status fazia splice(0) — um "consume-once" GLOBAL. Em lojas com mais
+// de uma tela/aba abertas ao mesmo tempo (cenário comum, é o próprio motivo
+// de existir um relatório em rede), a primeira aba cujo poll chegasse ao
+// servidor esvaziava a fila inteira; todas as outras telas conectadas
+// simplesmente NUNCA viam o toast de "hora corrigida", sem nenhum erro ou
+// indício de que a notificação existiu. Agora cada entrada carrega um
+// timestamp (ts) e /api/status devolve (sem remover) tudo que for mais
+// recente que _CORRECOES_JANELA_MS — toda tela conectada dentro dessa
+// janela recebe a notificação pelo menos uma vez. Entradas mais antigas que
+// _CORRECOES_TTL_MS são podadas no próprio push, então o array nunca cresce
+// sem limite (também protegido pelo teto de 50 itens já existente).
+var _correcoesPendentes  = [];
+// PRECISÃO FIX (v2.6.5): a janela era fixa em 3000ms, mas POLL_INTERVAL é
+// configurável pelo usuário e só valida um mínimo de 100ms — nada impede
+// alguém de configurar 5000ms na tela de configurações. Nesse caso a
+// notificação expiraria ANTES do próximo poll do browser e o toast seria
+// perdido de vez, silenciosamente (a versão original, com splice(0)
+// consume-once, nunca perdia — só entregava a uma única aba). Agora a
+// janela acompanha o POLL_INTERVAL real: no mínimo 3s, e sempre pelo menos
+// 3 ciclos de poll, garantindo que toda aba conectada tenha chance de ver.
+var _CORRECOES_JANELA_MS = Math.max(3000, POLL_INTERVAL * 3);
+// TTL sempre com folga sobre a janela — entradas só são descartadas bem
+// depois de já terem sido entregues a todas as abas.
+var _CORRECOES_TTL_MS    = _CORRECOES_JANELA_MS + 5000;
+// Contador monotônico — usado pelo cliente para deduplicar (ver _poll no HTML).
+// Não usar apenas 'ts' (Date.now()) para isso: duas correções diferentes (ex:
+// nfce e pagament) podem ser empurradas no mesmo milissegundo dentro do mesmo
+// ciclo de pollStatus, e nesse caso ts sozinho não distingue uma da outra.
+var _correcoesSeq = 0;
+// semReload: o aviso só informa (o HTML que chegou junto já está atualizado e
+// o navegador já foi avisado por SSE) — evita uma segunda recarga.
+var _pushCorrecao = function(msg, cor, semReload) {
+    var agora = Date.now();
+    // Poda oportunista de entradas velhas — evita que o array cresça para sempre
+    // em uma sessão de dias sem nunca reiniciar o servidor.
+    _correcoesPendentes = _correcoesPendentes.filter(function(c) { return (agora - c.ts) < _CORRECOES_TTL_MS; });
+    if (_correcoesPendentes.length < 50) {
+        _correcoesPendentes.push({ msg: msg, cor: cor, reload: !semReload, ts: agora, seq: ++_correcoesSeq });
+    }
+};
+
+// Evict de entradas antigas do cache — mantém no máximo MAX_CACHE_ENTRIES períodos.
+// Entradas de hoje e entradas ainda gerando nunca são removidas.
+var MAX_CACHE_ENTRIES = 30;
+var _evictarCacheAntigo = function() {
+    try {
+        var dh = hoje();
+        var chaves = Object.keys(cache).filter(function(k) {
+            return k !== dh && !(cache[k] && cache[k].gerando);
+        });
+        if (chaves.length <= MAX_CACHE_ENTRIES) return;
+        // Remove as mais antigas (ordem lexicográfica funciona para chaves ISO e "ISO|ISO")
+        chaves.sort();
+        var remover = chaves.slice(0, chaves.length - MAX_CACHE_ENTRIES);
+        remover.forEach(function(k) { delete cache[k]; });
+    } catch(e) {}
+};
+
+// qt/total = totais combinados (compat. com SSE e arScript)
+// g / nfc / nf = por tipo — usados pelo poll para detectar > e < por tipo
+var statusAtual = {
+    qt:-1, total:-1, ts:0,
+    g:   {qt:-1, tot:-1},  // gerencial  (modelo=99)
+    nfc: {qt:-1, tot:-1},  // NFC-e      (modelo=65)
+    nf:  {qt:-1, tot:-1}   // NF-e       (modelo=55)
+};
+// Timestamp da última mudança detectada (fast-poll ou pollStatus).
+// Incluído em /api/status como "changeTs" para o browser comparar com
+// _loadTs (quando a página foi carregada). Se changeTs > _loadTs → há
+// dados mais novos → reload. Resolve o caso em que _q===d.qt porque o
+// HTML já estava atualizado quando o browser carregou a página.
+var _statusChangeTs = 0;
+var dbStatus    = {ok:false,ip:FDB_HOST,erro:null,scanCompleto:false,scanning:false};
+
+// ---------------------------------------------------------------------------
+// Hora-fixada cache — persiste correções de horário entre execuções.
+// Escrito por este arquivo (gerencial) e por gerar-relatorio-html.js (nfc-e,
+// nf-e e gerencial). Chave: "YYYY-MM-DD|numero". Valor: {tipo, hora}.
+//
+// FORMATO FIX (ajuste solicitado — ordenação + bug de gerenciais ignorados):
+//   1) BUG CONCRETO ENCONTRADO: o valor era antes uma STRING solta ("OK" ou
+//      "HH:MM"/"HH:MM:SS"), sem informação de tipo. Este arquivo gravava a
+//      marca de "dentro da tolerância" como "ok" (minúsculo), mas
+//      gerar-relatorio-html.js comparava com "OK" (maiúsculo, ===). Toda
+//      venda gerencial marcada aqui como tolerável era lida do outro lado
+//      como se "ok" fosse a PRÓPRIA HORA (a comparação falhava, caindo no
+//      branch seguinte, que atribui o valor do cache direto a finalHora) —
+//      corrompendo a hora exibida e, na prática, fazendo a venda nunca mais
+//      ser reavaliada corretamente. HORA_CACHE_OK agora é uma constante
+//      única usada nas duas pontas, e a comparação passou a ser
+//      case-insensitive como defesa adicional (ver _normalizarEntradaHoraCache).
+//   2) Sem informação de tipo não era possível ordenar o arquivo por
+//      categoria. _ordenarHoraCache() (chamada sempre antes de salvar)
+//      reordena as chaves: nfc-e primeiro, depois nf-e, depois gerencial —
+//      ascendente por hora dentro de cada grupo. Como JSON.stringify
+//      preserva a ordem de inserção das chaves do objeto, o arquivo em disco
+//      reflete sempre essa ordem, independentemente da ordem em que as
+//      correções foram descobertas ao longo do dia (poll não garante ordem).
+//   3) Valores de hora agora são sempre gravados como "HH:MM" (sem
+//      segundos) — antes este arquivo gravava "HH:MM:SS" enquanto
+//      gerar-relatorio-html.js gravava "HH:MM", uma inconsistência de
+//      formato entre vendas do mesmo horário.
+// Compatibilidade: entradas antigas (string solta, de antes desta versão)
+// continuam sendo lidas corretamente por _normalizarEntradaHoraCache — não é
+// necessário migrar o arquivo manualmente, ele se reescreve sozinho no novo
+// formato à medida que cada entrada é reprocessada.
+// ---------------------------------------------------------------------------
+var HORA_CACHE_OK = "OK";
+
+// Aceita tanto o formato antigo (string solta) quanto o novo ({tipo,hora}) —
+// nunca lança, entrada inesperada vira tipo "desconhecido" em vez de
+// derrubar o poll. "OK" é sempre normalizado para a grafia exata de
+// HORA_CACHE_OK, não-sensível a maiúsculas/minúsculas.
+var _normalizarEntradaHoraCache = function(bruto) {
+    if (bruto && typeof bruto === "object" && !Array.isArray(bruto)) {
+        var horaObj = String(bruto.hora == null ? "" : bruto.hora).trim();
+        return {
+            tipo: String(bruto.tipo || "desconhecido"),
+            hora: horaObj.toUpperCase() === HORA_CACHE_OK ? HORA_CACHE_OK : horaObj
+        };
+    }
+    var s = String(bruto == null ? "" : bruto).trim();
+    return { tipo: "desconhecido", hora: s.toUpperCase() === HORA_CACHE_OK ? HORA_CACHE_OK : s };
+};
+
+// Ordem pedida (v2.6.9): gerencial primeiro, depois nfc-e, por último nf-e.
+var _HORA_CACHE_TIPO_RANK = { gerencial: 0, nfce: 1, nfe: 2 };
+
+// Extrai o número do documento a partir da chave "YYYY-MM-DD|numero".
+// Retorna null se não conseguir parsear como inteiro (chave em formato
+// inesperado) — nesse caso o desempate final por string cuida do resto.
+var _numeroDaChaveHoraCache = function(chave) {
+    var partes = String(chave).split("|");
+    var n = parseInt(partes.length > 1 ? partes[1] : chave, 10);
+    return isNaN(n) ? null : n;
+};
+
+var _ordenarHoraCache = function(cacheObj) {
+    var chaves = Object.keys(cacheObj);
+    chaves.sort(function(a, b) {
+        var ea = _normalizarEntradaHoraCache(cacheObj[a]);
+        var eb = _normalizarEntradaHoraCache(cacheObj[b]);
+        var ra = _HORA_CACHE_TIPO_RANK.hasOwnProperty(ea.tipo) ? _HORA_CACHE_TIPO_RANK[ea.tipo] : 99;
+        var rb = _HORA_CACHE_TIPO_RANK.hasOwnProperty(eb.tipo) ? _HORA_CACHE_TIPO_RANK[eb.tipo] : 99;
+        if (ra !== rb) return ra - rb;
+        // AJUSTE (v2.6.9): dentro do mesmo tipo, ordem DECRESCENTE por número do
+        // documento (do maior para o menor) — o mais recente primeiro, já que o
+        // número é sequencial por natureza.
+        var na = _numeroDaChaveHoraCache(a);
+        var nb = _numeroDaChaveHoraCache(b);
+        if (na !== null && nb !== null && na !== nb) return nb - na;
+        return a < b ? 1 : (a > b ? -1 : 0); // desempate final determinístico (também decrescente)
+    });
+    var ordenado = {};
+    chaves.forEach(function(k) { ordenado[k] = cacheObj[k]; });
+    return ordenado;
+};
+
+var _lerHoraFixadaCacheDisco = function() {
+    try {
+        var raw = fs.readFileSync(HORA_FIXADA_CACHE, "utf8").replace(/^\uFEFF/, "");
+        var obj = JSON.parse(raw);
+        if (obj && typeof obj === "object" && !Array.isArray(obj)) return obj;
+    } catch(e) {}
+    return {};
+};
+var _horaFixadaCache = _lerHoraFixadaCacheDisco();
+
+// Chaves removidas de propósito desde a última gravação (ex.: dias antigos
+// limpos na virada). Sem este registro, a mescla com o disco ressuscitaria a
+// entrada que já tinha sido gravada num flush anterior.
+var _horaCacheRemovidas = new Set();
+
+// _salvarHoraFixadaCache() → debounce de 500 ms (uso normal).
+// _salvarHoraFixadaCache.flush() → grava imediatamente (usado no exit).
+// PERDA FIX: sem o flush, correções gravadas nos últimos 500 ms antes de um
+// restart eram perdidas e as mesmas notas voltavam a ser "corrigidas" no boot.
+var _salvarHoraFixadaCache = (function() {
+    var _timer = null;
+    var _gravar = function() {
+        try {
+            // CONCORRÊNCIA FIX (v2.9.0): gerar-relatorio-html.js também grava
+            // este arquivo (horas fixadas de NFC-e/NF-e/gerencial na exibição).
+            // Antes, este processo gravava só a sua cópia em memória — lida UMA
+            // vez no boot — e apagava do disco tudo o que o gerador tivesse
+            // registrado desde então; na geração seguinte essas vendas eram
+            // "vistas pela primeira vez" de novo e a hora delas voltava a
+            // flutuar. Agora relê o disco e mescla: entradas do dia atual vindas
+            // do disco + as desta memória (que prevalecem), menos as removidas.
+            var _dhHoje = hoje();
+            var _disco = _lerHoraFixadaCacheDisco();
+            var _mesclado = {};
+            Object.keys(_disco).forEach(function(k) {
+                if (_horaCacheRemovidas.has(k)) return;
+                if (String(k).split("|")[0] < _dhHoje) return; // dias anteriores: descartados
+                _mesclado[k] = _disco[k];
+            });
+            // v2.15.4: o DISCO prevalece. Desde a v2.14.0 este processo não cria
+            // nem altera entradas (quem grava é o gerador, inclusive a
+            // "situacao" de vendas canceladas/convertidas); a cópia em memória
+            // é a do boot e, se prevalecesse, apagaria essas atualizações a
+            // cada reinício. Da memória entra só o que faltar no disco.
+            Object.keys(_horaFixadaCache).forEach(function(k) {
+                if (String(k).split("|")[0] < _dhHoje) return; // idem para a memória
+                if (_horaCacheRemovidas.has(k)) return;
+                if (!Object.prototype.hasOwnProperty.call(_mesclado, k)) _mesclado[k] = _horaFixadaCache[k];
+            });
+            _horaCacheRemovidas.clear();
+            // ORDENAÇÃO FIX: reordena por (tipo, hora) antes de cada gravação —
+            // ver comentário completo acima de _ordenarHoraCache.
+            _horaFixadaCache = _ordenarHoraCache(_mesclado);
+            if (!_gravarArquivoAtomico(HORA_FIXADA_CACHE, JSON.stringify(_horaFixadaCache, null, 2))) {
+                logTs("WARN _salvarHoraFixadaCache: falha ao gravar o cache de hora fixada.");
+            }
+        } catch(e) {
+            logTs("WARN _salvarHoraFixadaCache: " + e.message);
+        }
+    };
+    var api = function() {
+        clearTimeout(_timer);
+        _timer = setTimeout(function() { _timer = null; _gravar(); }, 500);
+    };
+    // v2.15.5: só grava se havia gravação PENDENTE. Antes regravava em toda
+    // saída — e, se o gerador gravasse entre a leitura e o rename daqui, a hora
+    // recém-fixada de uma venda sumia e voltava a "flutuar".
+    api.flush = function() { if (!_timer) return; clearTimeout(_timer); _timer = null; _gravar(); };
+    return api;
+})();
+
+// ---------------------------------------------------------------------------
+// Flag de aguardo de seleção manual do FDB
+// Ativado quando todas as tentativas automáticas falham.
+// ---------------------------------------------------------------------------
+var _aguardandoFdbManual = false;
+
+// ---------------------------------------------------------------------------
+// SSE — clientes conectados
+// ---------------------------------------------------------------------------
+var sseClients   = [];
+var sseIdCounter = 0;
+
+var broadcastSSE = function(data) {
+    var msg  = "data: "+JSON.stringify(data)+"\n\n";
+    var vivos = [];
+    sseClients.forEach(function(c){
+        var ok = false;
+        try {
+            // res.destroyed cobre o caso em que o socket caiu mas req.on("close")
+            // ainda não rodou — write() nesse estado não lança, só falha silenciosa.
+            if (!c.res.destroyed && c.res.writable !== false) {
+                c.res.write(msg);
+                try { if (c.res.socket) { c.res.socket.uncork && c.res.socket.uncork(); } } catch(_f) {}
+                ok = true;
+            }
+        } catch(e) { ok = false; }
+        if (ok) {
+            vivos.push(c);
+        } else {
+            // LEAK FIX: cliente descartado aqui nunca passava por req.on("close"),
+            // então o setInterval de heartbeat continuava rodando para sempre.
+            try { if (c.hb) clearInterval(c.hb); } catch(_h) {}
+            try { c.res.end(); } catch(_e) {}
+        }
+    });
+    sseClients = vivos;
+
+    return vivos.length;
+};
+// Só as telas abertas no computador do servidor (v2.19.0).
+var _broadcastSoServidor = function(data) {
+    var msg = "data: "+JSON.stringify(data)+"\n\n", n = 0;
+    sseClients.forEach(function(c){
+        if (!c.servidor) return;
+        try { if (!c.res.destroyed && c.res.writable !== false) { c.res.write(msg); n++; } } catch(_) {}
+    });
+    return n;
+};
+
+// ---------------------------------------------------------------------------
+// Aguarda FDB ficar acessível
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Ciclo de vida do polling (pollStatus + fast-poll)
+// DRY (v2.9.0): o mesmo bloco "setTimeout → pollStatus + setInterval +
+// _iniciarFastPoll" estava duplicado no boot e em aplicarNovoFdb, e não havia
+// como PARAR o polling — trocar para um banco inacessível deixava o fast-poll
+// antigo segurando a conexão persistente com o banco anterior.
+// ---------------------------------------------------------------------------
+var _pollStartTimer = null;
+var _iniciarPolling = function(atrasoMs) {
+    if (!Firebird) return;
+    clearTimeout(_pollStartTimer);
+    _pollStartTimer = setTimeout(function() {
+        _pollStartTimer = null;
+        _pollGen++; _pollUlt = null; // banco (re)iniciado: linha de base nova
+        pollStatus();
+        // pollStatus: fallback de segurança + funções de correção de horário.
+        // Fast-poll (15 ms, conexão persistente) trata toda a detecção de mudanças.
+        // pollStatus usa attach/detach por ciclo — rodar em excesso sobrecarrega
+        // o Firebird desnecessariamente. Mínimo 2s independente de POLL_INTERVAL.
+        if (_pollIntervalId) clearInterval(_pollIntervalId);
+        _pollIntervalId = setInterval(pollStatus, _intervaloPollStatus());
+        _iniciarFastPoll();
+    }, Math.max(0, atrasoMs || 0));
+};
+var _pararPolling = function() {
+    clearTimeout(_pollStartTimer); _pollStartTimer = null;
+    if (_pollIntervalId) { clearInterval(_pollIntervalId); _pollIntervalId = null; }
+    if (_fpIntervalId)   { clearInterval(_fpIntervalId);   _fpIntervalId   = null; }
+    _fpGen++; // invalida attach do fast-poll em voo
+    _pollGen++; _pollUlt = null; // ciclo do pollStatus em voo não grava nada
+    if (_fpDb) { try { _matarConexao(_fpDb); } catch(_) {} _fpDb = null; }
+    _fpBusy = false; _fpConectando = false;
+    _fpDescartarPendente(); // senão o temporizador geraria contra o banco novo
+};
+
+// Reconexão em segundo plano. Usada quando o banco não está acessível no
+// momento (boot esgotou as tentativas automáticas, ou o usuário salvou um FDB
+// sem conexão). BUG FIX (v2.9.0): nesses casos nada mais tentava conectar —
+// o relatório ficava parado até alguém reiniciar o servidor manualmente.
+// _reconexaoGen invalida um laço antigo quando outro FDB é escolhido.
+var _RECONEXAO_INTERVALO_MS = 15000;
+var _reconexaoGen = 0;
+var _agendarReconexaoFdb = function() {
+    var minhaGen = ++_reconexaoGen;
+    var tentar = function() {
+        if (minhaGen !== _reconexaoGen || dbStatus.ok) return;
+        testarFdb(FDB_HOST, FDB_PATH, function(ok) {
+            if (minhaGen !== _reconexaoGen || dbStatus.ok) return;
+            if (!ok) { setTimeout(tentar, _RECONEXAO_INTERVALO_MS); return; }
+            logTs("Banco voltou a responder em " + FDB_HOST + " — retomando monitoramento.");
+            dbStatus = {ok:true, ip:FDB_HOST, erro:null, scanCompleto:true, scanning:false};
+            _aguardandoFdbManual = false;
+            _salvarFbHost(FDB_HOST);
+            _resetarBaselineCorrecoes(false);
+            _invalidarCache();
+            var dh = hoje();
+            gerarEmBackground(dh, dh, dh);
+            _iniciarPolling(0);
+        });
+    };
+    setTimeout(tentar, _RECONEXAO_INTERVALO_MS);
+};
+
+var aguardarFDB = function(onPronto) {
+    var MAX_RETRY = 120;
+    var RETRY_MS  = 15000;
+    var n = 0;
+
+    var tentarHostAtual = function() {
+        n++;
+        logTs("Verificando banco [" + n + "/" + MAX_RETRY + "] em " + FDB_HOST + "...");
+        testarFdb(FDB_HOST, FDB_PATH, function(ok, erro) {
+            if (ok) {
+                logTs("Banco OK em " + FDB_HOST + " (tentativa " + n + ").");
+                dbStatus = {ok:true, ip:FDB_HOST, erro:null, scanCompleto:true, scanning:false};
+                _salvarFbHost(FDB_HOST);
+                onPronto(true);
+                return;
+            }
+            if (n < MAX_RETRY) {
+                logTs("Banco indisponível (" + (erro||"timeout") + "). Próxima tentativa em "+(RETRY_MS/1000)+"s...");
+                setTimeout(tentarHostAtual, RETRY_MS);
+            } else {
+                logTs("Máximo de tentativas atingido. Iniciando scan de rede...");
+                descobrirIPFirebird(function(scanOk) { onPronto(scanOk); });
+            }
+        });
+    };
+
+    var _tryLocal = function(onLocalDone) {
+        var _local = detectFdbLocal();
+        if (!_local || FDB_HOST === "127.0.0.1") {
+            onLocalDone(false);
+            return;
+        }
+        logTs("Arquivo FDB encontrado localmente (" + _local + ") — testando 127.0.0.1 antes da rede...");
+        testarFdb("127.0.0.1", _local, function(okLocal) {
+            if (okLocal) {
+                logTs("Banco local OK em 127.0.0.1! Trocando de " + FDB_HOST + " para local.");
+                FDB_PATH = _local;
+                FDB_HOST = "127.0.0.1";
+                FDB      = "127.0.0.1:" + _local;
+                dbStatus = {ok:true, ip:"127.0.0.1", erro:null, scanCompleto:true, scanning:false};
+                _salvarFbHost("127.0.0.1");
+                onLocalDone(true);
+            } else {
+                logTs("Arquivo local existe mas Firebird local não respondeu — tentando host de rede " + FDB_HOST + "...");
+                onLocalDone(false);
+            }
+        });
+    };
+
+    _tryLocal(function(localOk) {
+        if (localOk) { onPronto(true); return; }
+
+        testarFdb(FDB_HOST, FDB_PATH, function(okImediato, erroImediato) {
+            if (okImediato) {
+                dbStatus = {ok:true, ip:FDB_HOST, erro:null, scanCompleto:true, scanning:false};
+                _salvarFbHost(FDB_HOST);
+                onPronto(true);
+            } else {
+                logTs("Banco não respondeu em " + FDB_HOST + " (" + (erroImediato||"timeout") + "). Tentando scan de rede...");
+                descobrirIPFirebird(function(scanOk) {
+                    if (scanOk) {
+                        onPronto(true);
+                    } else {
+                        logTs("Nenhum servidor Firebird encontrado. Aguardando... (retry a cada " + (RETRY_MS/1000) + "s)");
+                        setTimeout(tentarHostAtual, RETRY_MS);
+                    }
+                });
+            }
+        });
+    });
+};
+var detectSubnet=function(){
+    var ifaces=os.networkInterfaces();
+    for(var n in ifaces){
+        var list=ifaces[n];
+        for(var i=0;i<list.length;i++){
+            var a=list[i];
+            var isV4=(a.family==="IPv4"||a.family===4);
+            if(isV4&&!a.internal&&!_ehIPTailscale(a.address)&&!/tailscale|zerotier/i.test(n)){
+                var p=a.address.split(".");
+                if(p[0]!=="127")return p[0]+"."+p[1]+"."+p[2];
+            }
+        }
+    }
+    return null;
+};
+
+var scanFirebird=function(subnet,callback){
+    logTs("Escaneando "+subnet+".1-254 na porta "+FIREBIRD_PORT+"...");
+    var found=[],total=254,done=0,active=0,MAX=_SCAN_CONCORRENCIA_MAX,queue=[];
+    for(var i=1;i<=254;i++)queue.push(subnet+"."+i);
+    var checkFim=function(){if(done===total)callback(found);else launch();};
+    var launch=function(){
+        while(active<MAX&&queue.length>0){
+            active++;
+            (function(ip){
+                var sock=new net.Socket(),resolved=false;
+                var finish=function(ok){
+                    if(resolved)return;resolved=true;
+                    sock.destroy();
+                    if(ok)found.push(ip);
+                    active--;done++;checkFim();
+                };
+                sock.setTimeout(450);
+                sock.on("connect",function(){finish(true);});
+                sock.on("error",  function(){finish(false);});
+                sock.on("timeout",function(){finish(false);});
+                try{sock.connect(FIREBIRD_PORT,ip);}catch(e){finish(false);}
+            })(queue.shift());
+        }
+    };
+    launch();
+};
+
+var testarFdb=function(host,dbPath,cb){
+    if(!Firebird){cb(false,"node-firebird nao disponivel");return;}
+    var opts={host:host,port:FIREBIRD_PORT,database:dbPath,user:USER,password:PASS,
+              role:null,charset:FB_CHARSET};
+    // _done previne double-callback: se timeout disparar E attach responder depois,
+    // apenas o primeiro vencedor chama cb; o segundo é descartado (e db.detach() é feito).
+    var _done=false;
+    var t=setTimeout(function(){
+        if(_done)return; _done=true;
+        cb(false,"Timeout 5s");
+    },5000);
+    Firebird.attach(opts,function(err,db){
+        if(_done){
+            // Timeout já disparou: descarta mas fecha conexão para não vazar
+            if(!err&&db){try{db.detach();}catch(_){}}
+            return;
+        }
+        _done=true;
+        clearTimeout(t);
+        if(err){cb(false,String(err.message||err));return;}
+        // PRECISÃO FIX (v2.6.7): detach() sem try/catch aqui era um HANG.
+        // Se ele lançasse, cb(true,null) nunca era chamado — e testarFdb é
+        // usado por encontrarIPFirebird(), que varre os IPs candidatos em
+        // cadeia: sem a callback, a varredura para no meio para sempre, o
+        // banco nunca é dado como encontrado, dbStatus.ok nunca vira true e
+        // o fast-poll nunca inicia. O servidor ficaria de pé, respondendo
+        // HTTP, e simplesmente nunca detectaria venda nenhuma. Repare que a
+        // linha equivalente logo acima (caminho do timeout) já tinha essa
+        // proteção — esta passou despercebida. A conexão de teste já cumpriu
+        // seu papel: fechá-la é best-effort e nunca deve impedir a resposta.
+        try { db.detach(); } catch(_) {}
+        cb(true,null);
+    });
+};
+
+var encontrarIPFirebird=function(ips,cb){
+    if(ips.length===0){cb(null);return;}
+    var ip=ips.shift();
+    testarFdb(ip,FDB_PATH,function(ok){if(ok)cb(ip);else encontrarIPFirebird(ips,cb);});
+};
+
+var descobrirIPFirebird=function(onPronto){
+    dbStatus.scanning=true;dbStatus.scanCompleto=false;
+    testarFdb(FDB_HOST,FDB_PATH,function(ok,erro){
+        if(ok){
+            logTs("Banco Firebird OK em "+FDB_HOST);
+            dbStatus={ok:true,ip:FDB_HOST,erro:null,scanCompleto:true,scanning:false};
+            onPronto(true);return;
+        }
+        logTs("Banco nao respondeu em "+FDB_HOST+" ("+erro+"). Scan de rede...");
+        var subnet=detectSubnet();
+        if(!subnet){
+            dbStatus={ok:false,ip:null,erro:"Nao foi possivel detectar a rede local.",scanCompleto:true,scanning:false};
+            onPronto(false);return;
+        }
+        scanFirebird(subnet,function(found){
+            logTs("Hosts com porta "+FIREBIRD_PORT+": "+(found.length?found.join(", "):"nenhum"));
+            if(found.length===0){
+                dbStatus={ok:false,ip:null,erro:"Nenhum servidor Firebird em "+subnet+".x:"+FIREBIRD_PORT+".",scanCompleto:true,scanning:false};
+                onPronto(false);return;
+            }
+            encontrarIPFirebird(found.slice(),function(ipOk){
+                if(ipOk){
+                    logTs("Banco encontrado em "+ipOk+"! Salvando...");
+                    FDB_HOST=ipOk; FDB=ipOk+":"+FDB_PATH;
+                    dbStatus={ok:true,ip:ipOk,erro:null,scanCompleto:true,scanning:false};
+                    _salvarFbHost(ipOk);
+                    onPronto(true);
+                } else {
+                    var ip1=found[0];
+                    FDB_HOST=ip1; FDB=ip1+":"+FDB_PATH;
+                    dbStatus={ok:false,ip:ip1,erro:"Porta "+FIREBIRD_PORT+" em "+ip1+" mas FDB nao respondeu.",scanCompleto:true,scanning:false};
+                    onPronto(false);
+                }
+            });
+        });
+    });
+};
+
+// ---------------------------------------------------------------------------
+// Extrai qt/total
+// ---------------------------------------------------------------------------
+var extrairStatusDoHtml = function(html) {
+    var qt = 0, tot = 0;
+
+    var mDados = html.match(/<script[^>]+id=["']dados["'][^>]*>([\s\S]*?)<\/script>/i);
+    if (mDados) {
+        try {
+            var dados = JSON.parse(mDados[1]);
+            if (dados && dados.totais) {
+                qt  = Number(dados.totais.qtd   || 0);
+                tot = Number(dados.totais.total  || 0);
+            }
+            if (!qt && dados && Array.isArray(dados.vendas)) {
+                qt = dados.vendas.length;
+                for (var i = 0; i < dados.vendas.length; i++) {
+                    var v = dados.vendas[i];
+                    tot += Number(v.total_nfce || v.total_pag || v.total || 0);
+                }
+            }
+            return { qt: qt, tot: tot };
+        } catch(e) {}
+    }
+
+    // SEGURANÇA FIX (ReDoS): a regex anterior /\[[\s\S]{0,400000}?\]/ ainda sofre
+    // backtracking quadrático em HTMLs grandes com múltiplos "]" antes do fechamento
+    // real do array (comum em JSON de vendas com itens aninhados). Um HTML hostil ou
+    // corrompido de ~400 KB podia bloquear o event loop por segundos.
+    // _extrairArrayBalanceado faz scan sequencial O(n) contando profundidade de
+    // colchetes/chaves, ignorando os que estão dentro de strings — sem backtracking.
+    var idxVendas = html.indexOf('"vendas"');
+    if (idxVendas !== -1) {
+        var idxAbre = html.indexOf("[", idxVendas);
+        if (idxAbre !== -1) {
+            var trechoArr = _extrairArrayBalanceado(html, idxAbre);
+            if (trechoArr) {
+                try {
+                    var arr = JSON.parse(trechoArr);
+                    qt = arr.length;
+                    for (var j = 0; j < arr.length; j++) {
+                        var x = arr[j];
+                        // CONTRATO FIX: x.gerencial não existe em dados.vendas.
+                        // Filho exporta cada venda com { total, total_nfce, total_pag }.
+                        // A ordem correta é: total_nfce (NFC-e/NF-e) → total_pag (gerencial) → total (consolidado).
+                        tot += Number(x.total_nfce || x.total_pag || x.total || 0);
+                    }
+                } catch(e) {
+                    var n = html.match(/"numero"\s*:/g);
+                    if (n) qt = n.length;
+                }
+            }
+        }
+    }
+    return { qt: qt, tot: tot };
+};
+
+// Extrai um array JSON balanceado a partir do índice do "[" de abertura — O(n),
+// sem backtracking. Respeita strings (ignora colchetes dentro de "...") e escapes.
+// Retorna a substring "[...]" completa ou null se o array não fechar dentro do html.
+var _extrairArrayBalanceado = function(html, idxAbre) {
+    var profundidade = 0;
+    var dentroDeString = false;
+    var escapando = false;
+    for (var i = idxAbre; i < html.length; i++) {
+        var ch = html[i];
+        if (escapando) { escapando = false; continue; }
+        if (dentroDeString) {
+            if (ch === "\\") { escapando = true; }
+            else if (ch === '"') { dentroDeString = false; }
+            continue;
+        }
+        if (ch === '"') { dentroDeString = true; continue; }
+        if (ch === "[") { profundidade++; }
+        else if (ch === "]") {
+            profundidade--;
+            if (profundidade === 0) return html.slice(idxAbre, i + 1);
+        }
+    }
+    return null; // array não fechou — HTML truncado/corrompido
+};
+
+// ---------------------------------------------------------------------------
+// Rastreamento de PIDs dos processos filhos
+// Usado pelo /api/restart para matar todos antes de sair.
+// ---------------------------------------------------------------------------
+var _spawnedPids = [];
+
+// ---------------------------------------------------------------------------
+// Timeout máximo para o processo filho gerar o relatório.
+// Padrão 10 s, configurável entre 5 s e 120 s via spawnTimeoutMs no config.json.
+// Valores fora do range são silenciosamente clampeados (não rejeitados).
+// NOTA: o gerar-relatorio-html.js tem query timeout interno de 80 s/query e
+// global de 90 s. Defina spawnTimeoutMs maior que o tempo real esperado das queries.
+var _SPAWN_TIMEOUT_MS = SPAWN_TIMEOUT_CFG;
+var _gerarTentativas  = Object.create(null); // chave → nº tentativas consecutivas
+// _gerarIdCounter: ID monotônico por chave — incrementado em cada gerarEmBackground.
+// Em proc.on("close"), ID divergente = geração supersedida (kill-and-restart) → descarta.
+var _gerarIdCounter   = Object.create(null); // chave → ID da geração atual
+// _gerandoKill: função kill da geração em andamento. _fpPoll usa para matar geração
+// velha imediatamente ao detectar mudança, sem esperar os ~300ms restantes.
+var _gerandoKill      = Object.create(null); // chave → function() mata o proc atual
+
+// Descarta TODO o cache de relatórios e as gerações em andamento.
+// BUG FIX (v2.9.0): os pontos que trocavam banco/proibidos/config faziam só
+// "cache = {}" — as gerações em voo continuavam rodando e, ao terminar,
+// gravavam no cache novo um HTML feito com a configuração ANTIGA (banco
+// anterior, proibidos anteriores). Incrementar o ID de cada chave faz o
+// close/timeout/error dessas gerações reconhecê-las como supersedidas.
+var _invalidarCache = function() {
+    // Incrementa o ID de TODA chave conhecida (não só das que têm processo
+    // vivo): uma retentativa já agendada após timeout também é cancelada.
+    var chaves = Object.keys(_gerarIdCounter);
+    Object.keys(_gerandoKill).forEach(function(k) { if (chaves.indexOf(k) < 0) chaves.push(k); });
+    chaves.forEach(function(k) {
+        var kill = _gerandoKill[k];
+        _gerarIdCounter[k] = (_gerarIdCounter[k] || 0) + 1;
+        delete _gerandoKill[k];
+        try { if (typeof kill === "function") kill(); } catch(_) {}
+    });
+    cache = Object.create(null);
+    _gerarTentativas = Object.create(null);
+};
+
+// ---------------------------------------------------------------------------
+// Gerador em background — com timeout e retry automático
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// GERADOR PRÉ-AQUECIDO (v2.13.0)
+// Abrir um processo Node e carregar o node-firebird custa ~45 ms a cada
+// geração. Fica sempre UM processo reserva já com isso pronto, esperando a
+// ordem pela entrada padrão: {"argv":[script, ...args], "env":{...}}. Só
+// depois da ordem ele carrega o gerar-relatorio-html.js — que lê config.json,
+// data, hora e cache de horas naquele instante, como num processo novo (a
+// reserva nunca usa dado velho, por mais tempo que tenha esperado). Entrada
+// fechada sem ordem (servidor encerrou) → a reserva sai sozinha.
+// Qualquer problema com a reserva (morta, pipe fechado) → spawn normal.
+// ---------------------------------------------------------------------------
+var _BOOT_GERADOR =
+    "var d=process.argv[1];" +
+    "try{require(require.resolve('node-firebird',{paths:[d]}));}catch(_){}" +
+    "var b='';process.stdin.setEncoding('utf8');" +
+    "var fim=function(){process.exit(0);};" +
+    "process.stdin.on('end',fim);" +
+    "process.stdin.on('data',function(c){b+=c;var i=b.indexOf('\\n');if(i<0)return;" +
+    "process.stdin.removeListener('end',fim);process.stdin.removeAllListeners('data');process.stdin.pause();" +
+    "var m=JSON.parse(b.slice(0,i));var e=m.env||{};Object.keys(e).forEach(function(k){process.env[k]=e[k];});" +
+    "process.argv=[process.execPath].concat(m.argv);require(m.argv[0]);});";
+var _geradorReserva = null;
+var _prepararReserva = function() {
+    if (_geradorReserva || _encerrando) return;
+    try {
+        var p = spawn(process.execPath, ["-e", _BOOT_GERADOR, __dirname],
+                      {stdio:["pipe","pipe","pipe"], env:_ENV_FILHO, windowsHide:true});
+        p.on("error", function() { if (_geradorReserva === p) _geradorReserva = null; });
+        p.on("exit",  function() { if (_geradorReserva === p) _geradorReserva = null; });
+        if (p.stdin) p.stdin.on("error", function() {}); // EPIPE se a reserva morrer: tratado na hora de usar
+        _geradorReserva = p;
+    } catch (_) { _geradorReserva = null; }
+};
+var _descartarReserva = function() {
+    var p = _geradorReserva; _geradorReserva = null;
+    if (p) { try { p.kill(); } catch (_) {} }
+};
+var _obterGerador = function(nArgs) {
+    var p = _geradorReserva; _geradorReserva = null;
+    var proc = null;
+    if (p && p.exitCode === null && p.signalCode === null && p.stdin && p.stdin.writable) {
+        try {
+            p.stdin.end(JSON.stringify({ argv: nArgs, env: { RELATORIO_FB_USER: USER, RELATORIO_FB_PASS: PASS } }) + "\n");
+            proc = p;
+        } catch (_) { try { p.kill(); } catch (__) {} }
+    } else if (p) { try { p.kill(); } catch (_) {} }
+    if (!proc) proc = spawn(process.execPath, nArgs, {stdio:["ignore","pipe","pipe"], env:_ENV_FILHO, windowsHide:true});
+    setImmediate(_prepararReserva); // repõe a reserva para a próxima geração
+    return proc;
+};
+
+// O gerador avisa as horas que acabou de corrigir NA TELA (linha
+// "@@CORRECOES_HORA@@" + JSON [{tipo, numero, de, para}]). Vira log e aviso na
+// tela — o banco não é alterado.
+var _ROTULO_TIPO_HORA = { nfce: "NFC-e", nfe: "NF-e", gerencial: "gerencial", desconhecido: "venda" };
+var _registrarCorrecoesHora = function(json) {
+    var lista;
+    try { lista = JSON.parse(json); } catch (_) { return; }
+    if (!Array.isArray(lista) || !lista.length) return;
+    var porTipo = {};
+    lista.forEach(function(c) {
+        if (!c || typeof c !== "object") return;
+        var t = _ROTULO_TIPO_HORA[c.tipo] || "venda";
+        (porTipo[t] = porTipo[t] || []).push(c);
+    });
+    Object.keys(porTipo).forEach(function(t) {
+        var itens = porTipo[t], para = String(itens[0].para || "");
+        logTs("Hora corrigida na tela (banco não alterado): " + itens.length + " " + t + " → " + para + " — " +
+              itens.map(function(c) { return _textoSeguroLog(String(c.numero) + " (era " + String(c.de) + ")", 40); }).join(", ") + ".");
+        _pushCorrecao("🕐 " + itens.length + " " + t + (itens.length > 1 ? "s" : "") + " com hora antiga exibida(s) como " + para,
+                      "rgba(251,191,36,.45)", true);
+    });
+};
+
+var gerarEmBackground=function(inicio,fim,chave,_pollTriggered){
+    var ent=cache[chave];
+    if(ent&&ent.gerando)return;
+
+    // Snapshot do HTML anterior — usado em proc.on("close") para detectar
+    // mudanças (subida OU queda) sem depender de statusAtual, que pode ser
+    // atualizado pelo pollStatus DURANTE a geração (race condition):
+    //   ex: agendarRegen gera qt=10 → poll detecta cancelamento → statusAtual.qt=9
+    //       → proc.on("close") compara 9 vs statusAtual(9) → false → sem SSE → BUG.
+    // Com snapshot de ent.qt (qt do HTML anterior), a comparação é sempre correta.
+    var _qtSnapshot  = (ent && typeof ent.qt  === "number" && ent.qt  >= 0) ? ent.qt  : -1;
+    var _totSnapshot = (ent && typeof ent.tot === "number" && ent.tot >= 0) ? ent.tot : -1;
+
+    // Timestamp de início — marca quando esta geração começou.
+    // Em proc.on("close"), se statusAtual.ts > _genStartTs significa que
+    // _fpPoll ou pollStatus escreveu dados MAIS FRESCOS durante os ~300ms de geração.
+    // Nesse caso: não sobrescreve statusAtual com o HTML potencialmente antigo.
+    var _genStartTs = Date.now();
+
+    // ID desta geração — se _gerarIdCounter[chave] divergir em proc.on("close"),
+    // significa que _fpPoll iniciou uma geração mais nova (kill-and-restart): descarta.
+    _gerarIdCounter[chave] = (_gerarIdCounter[chave] || 0) + 1;
+    var _meuId = _gerarIdCounter[chave];
+
+    // Evita crescimento ilimitado do cache de períodos
+    _evictarCacheAntigo();
+
+    // Controle de tentativas — incrementa ANTES de escrever no cache
+    _gerarTentativas[chave] = (_gerarTentativas[chave] || 0) + 1;
+    var _tentativa = _gerarTentativas[chave];
+    // MAX_TENTATIVAS_SPAWN definido como constante global no topo do arquivo
+    var MAX_TENTATIVAS = MAX_TENTATIVAS_SPAWN;
+
+    cache[chave]={html:null,gerando:true,erro:null,qt:0,tot:0,tentativa:_tentativa};
+
+    var label=(inicio===fim)?isoParaBR(inicio):(isoParaBR(inicio)+" a "+isoParaBR(fim));
+    // Geração iniciada — logs de progresso controlados por _queryLogsHoje.
+
+    var _tmpSafe = String(chave).replace(/[^a-zA-Z0-9_\-]/g,"_").slice(0,80);
+    var _tmpFile = path.join(TMP_DIR, "relatorio_srv_" + _tmpSafe + ".html");
+
+    // Passa o timeout configurado para o filho via --timeout.
+    // Filho usa este valor para calibrar _tGlobal e _tQuery em vez de calcular sozinho.
+    // Credenciais vão por variável de ambiente (_ENV_FILHO), não por argumento.
+    var nArgs=[SCRIPT,"--fdb",FDB,"--data-inicio",inicio,"--data-fim",fim,
+               "--saida",_tmpFile,
+               "--timeout",String(_SPAWN_TIMEOUT_MS)];
+    // Repassa o nível de log ao filho: sem "--debug" ele omite a cronometragem
+    // por etapa (7 linhas por geração), que é ruído no uso normal.
+    if (LOG_DEBUG) nArgs.push("--debug");
+    // Linha de base da correção de horário (ver "CORREÇÃO DE HORÁRIO — SÓ NA TELA"):
+    // só no relatório de hoje; vale até uma geração com ela concluir com sucesso.
+    var _comLinhaDeBase = _linhaDeBasePendente && inicio === fim && inicio === hoje();
+    if (_comLinhaDeBase) nArgs.push("--linha-de-base");
+    // CRASH FIX: spawn() pode lançar de forma SÍNCRONA (EMFILE por esgotamento de
+    // descritores, ENOMEM, execPath inválido). Como gerarEmBackground é chamado
+    // direto de dentro do handler HTTP (rotas / e /periodo), a exceção subia até
+    // o handler e derrubava a request — pior: cache[chave] ficava travado em
+    // {gerando:true} para sempre, deixando a página presa no paginaLoading.
+    var proc = null;
+    try {
+        proc = _obterGerador(nArgs);
+    } catch(spawnErr) {
+        logTs("ERRO spawn síncrono ("+label+"): "+(spawnErr && spawnErr.message || spawnErr));
+        cache[chave] = {html:null, gerando:false, erro:"Falha ao iniciar o gerador: "+(spawnErr && spawnErr.message || String(spawnErr))};
+        _gerarTentativas[chave] = 0;
+        delete _gerandoKill[chave];
+        return;
+    }
+    if (proc.pid) {
+        _spawnedPids.push(proc.pid);
+    } else {
+        logTs("WARN: spawn sem PID para "+label+" — processo pode ter falhado ao iniciar.");
+    }
+
+    // Mata o processo filho de forma assíncrona — NÃO bloqueia o event loop.
+    // execSync("taskkill") bloqueava até 3000ms, impedindo qualquer poll do browser
+    // durante o kill e fazendo o estado matando:true ser invisível ao usuário.
+    // Agora usa spawn (async) no Windows e SIGKILL (não-bloqueante) no Unix.
+    // onKilled() é chamado quando o kill concluiu (ou após fallback de 5 s).
+    var _matarProcessoFilho = function(onKilled) {
+        // Processo já encerrado: não chama taskkill — o Windows recicla PIDs e
+        // "taskkill /F /T /PID n" poderia derrubar um processo alheio.
+        if (!proc.pid || proc.exitCode !== null || proc.signalCode !== null) { if (onKilled) setTimeout(onKilled, 0); return; }
+        if (process.platform === "win32") {
+            var _tkFeito = false;
+            var _tkFallback = setTimeout(function() {
+                if (_tkFeito) return;
+                _tkFeito = true;
+                logTs("WARN: taskkill PID "+proc.pid+" não respondeu em 5 s — prosseguindo.");
+                if (onKilled) onKilled();
+            }, 5000);
+            try {
+                var tkProc = childProc.spawn(
+                    "taskkill", ["/F", "/T", "/PID", String(proc.pid)],
+                    {stdio: "ignore"}
+                );
+                tkProc.on("close", function() {
+                    if (_tkFeito) return;
+                    _tkFeito = true;
+                    clearTimeout(_tkFallback);
+                    if (onKilled) onKilled();
+                });
+                tkProc.on("error", function(e) {
+                    if (_tkFeito) return;
+                    _tkFeito = true;
+                    clearTimeout(_tkFallback);
+                    logTs("WARN taskkill erro: " + e.message);
+                    if (onKilled) onKilled();
+                });
+            } catch(e) {
+                clearTimeout(_tkFallback);
+                logTs("WARN _matarProcessoFilho spawn falhou: " + e.message);
+                if (onKilled) onKilled();
+            }
+        } else {
+            try { proc.kill("SIGKILL"); } catch(_) {}
+            if (onKilled) setTimeout(onKilled, 0);
+        }
+    };
+
+    // Expõe a função kill desta geração para o _fpPoll usar no kill-and-restart.
+    // Quando _fpPoll detectar mudança com gerando=true, chama _gerandoKill[chave]()
+    // para matar esta geração imediatamente e iniciar nova com dados frescos.
+    _gerandoKill[chave] = _matarProcessoFilho;
+
+    // RACE FIX (v2.4.1): remove de _gerandoKill APENAS se o slot ainda apontar
+    // para esta geração. Antes, o close handler de uma geração supersedida fazia
+    // `delete _gerandoKill[chave]` cego e apagava a função kill da geração NOVA
+    // que o fast-poll acabara de registrar — desarmando o kill-and-restart e
+    // fazendo a próxima venda esperar o timeout inteiro para ser detectada.
+    var _liberarKillProprio = function() {
+        if (_gerandoKill[chave] === _matarProcessoFilho) delete _gerandoKill[chave];
+    };
+
+    // Flag para evitar que o close handler execute após timeout
+    var _procEncerrado = false;
+
+    // Hard-timeout do processo filho — mata e relança se travar no banco.
+    // CORREÇÃO 1: matando:true é setado ANTES do kill, para que o browser
+    //             veja o estado no próximo poll (800 ms) sem depender do kill ter concluído.
+    // CORREÇÃO 2: kill é assíncrono (spawn, não execSync) — event loop livre durante o kill.
+    // CORREÇÃO 3: retry só é agendado APÓS o kill concluir (callback de _matarProcessoFilho).
+    // Esta geração foi substituída por uma mais nova (kill-and-restart do
+    // fast-poll ou _invalidarCache)? Nesse caso ela não pode mais tocar em
+    // cache[chave], que já pertence à geração nova.
+    var _ehSupersedida = function() { return _gerarIdCounter[chave] !== _meuId; };
+    var _limparRecursosProprios = function() {
+        try { if (fs.existsSync(_tmpFile)) fs.unlinkSync(_tmpFile); } catch(_) {}
+        if (proc.pid) _spawnedPids = _spawnedPids.filter(function(p){ return p !== proc.pid; });
+    };
+
+    var _spawnTimer = setTimeout(function() {
+        if (_procEncerrado) return;
+        _procEncerrado = true;
+        // BUG FIX (v2.9.0): o timeout de uma geração JÁ SUPERSEDIDA gravava
+        // {matando:true} por cima da entrada da geração nova (a página voltava
+        // para "processo encerrado") e agendava uma retentativa duplicada.
+        if (_ehSupersedida()) {
+            _matarProcessoFilho(function() { _limparRecursosProprios(); _liberarKillProprio(); });
+            return;
+        }
+        logTs("Timeout "+(_SPAWN_TIMEOUT_MS/1000)+"s gerando "+label+" — matando processo e refazendo.");
+
+        // Seta matando:true IMEDIATAMENTE — browser vê no próximo poll sem esperar o kill
+        if (_tentativa < MAX_TENTATIVAS) {
+            cache[chave] = {html:null, gerando:false, erro:null, qt:0, tot:0, matando:true, tentativa:_tentativa};
+        }
+
+        _matarProcessoFilho(function() {
+            // Kill concluiu (ou fallback de 5 s) — agora limpa e agenda retry
+            _limparRecursosProprios();
+            if (_ehSupersedida()) { _liberarKillProprio(); return; } // geração nova assumiu durante o kill
+            if (_tentativa < MAX_TENTATIVAS) {
+                // matando:true já foi setado antes do kill — browser teve tempo de ver.
+                // Aguarda 3200ms (4× poll de 800ms) antes de relançar — só se
+                // ninguém iniciou outra geração para a mesma chave nesse meio-tempo.
+                setTimeout(function() {
+                    if (_ehSupersedida()) return;
+                    gerarEmBackground(inicio, fim, chave, _pollTriggered);
+                }, 3200);
+            } else {
+                logTs("ERRO: "+MAX_TENTATIVAS+" tentativas falharam para "+label+". Abortando.");
+                cache[chave] = {html:null, gerando:false, erro:"Geração falhou após "+MAX_TENTATIVAS+" tentativas (timeout de "+(_SPAWN_TIMEOUT_MS/1000)+"s cada)."};
+                _gerarTentativas[chave] = 0;
+                // LEAK/BUG FIX: sem isso a função kill deste processo (já morto)
+                // permanecia registrada. Se o SO reciclasse o PID, um kill futuro
+                // do fast-poll executaria taskkill /F /T contra processo alheio.
+                _liberarKillProprio();
+            }
+        });
+    }, _SPAWN_TIMEOUT_MS);
+
+    // Roteia stdout/stderr do filho pelo console.log do servidor.
+    // ROBUSTEZ FIX: proc.stdout/proc.stderr podem ser null se o SO recusar a
+    // criação dos pipes — acessar .on() nesse caso lançava TypeError dentro do
+    // handler HTTP. Os blocos abaixo só são instalados se os streams existirem.
+    var _stdoutBuf = "";
+    if (proc.stdout) proc.stdout.on("data", function(d) {
+        _stdoutBuf += d.toString();
+        var lines = _stdoutBuf.split("\n");
+        _stdoutBuf = lines.pop(); // guarda linha incompleta
+        lines.forEach(function(l) {
+            var t = l.trim();
+            if (!t) return;
+            if (t === "@@RELATORIO_PRONTO@@") { _concluir(0); return; }
+            if (t.indexOf("@@CORRECOES_HORA@@") === 0) { _registrarCorrecoesHora(t.slice(18)); return; }
+            // RECONCILIACAO/AVISO RECONCILIACAO (gerar-relatorio-html.js v2.7.7+):
+            // fusão automática Gerencial→NF-e por valor idêntico é evento de
+            // negócio relevante (afeta o total do dia) — sempre grava via
+            // logTs(), independente de _queryLogsHoje/logDebug, para não ficar
+            // invisível fora da 1ª geração do dia ou sem logDebug:true no config.
+            if (t.indexOf("RECONCILIACAO:") === 0 || t.indexOf("AVISO RECONCILIACAO:") === 0) {
+                logTs(t);
+                return;
+            }
+            // Linhas ">> arquivo gravado:" eram tratadas por um bloco removido
+            // que causava confusão — agora caem no filtro isPrimeiraVez abaixo.
+            // Linhas de conexão e progresso somente na 1ª geração do dia
+            var isPrimeiraVez =
+                t.charAt(0) === ">" ||
+                t.indexOf("OK:") === 0 ||
+                t.indexOf("Conectando em:") === 0 ||
+                t.indexOf("Conectado!") === 0;
+            if (isPrimeiraVez) {
+                // Cronometragem de queries e caminho do HTML gerado sao rotina —
+                // relevantes so quando se investiga desempenho (ver logDebug).
+                if (!_queryLogsHoje) logDebug(t);
+            }
+        });
+    });
+    // CORREÇÃO: stderr do filho passava direto para process.stderr sem ser gravado no
+    // relatorio.log — erros do gerar-relatorio-html.js (ex: query timeout interno,
+    // unhandledRejection) ficavam invisíveis no log. Agora passam por logToFile().
+    if (proc.stderr) proc.stderr.on("data", function(d) {
+        var msg = d.toString().trim();
+        if (msg) logTs("[filho stderr] " + msg);
+        try { process.stderr.write(d); } catch(_) {}
+    });
+
+
+    proc.on("error",function(e){
+        if (_procEncerrado) return;
+        _procEncerrado = true;
+        clearTimeout(_spawnTimer);
+        logTs("ERRO spawn: "+e.message);
+        // Remove o PID da lista e libera a referência de kill desta geração.
+        _limparRecursosProprios();
+        _liberarKillProprio();
+        if (_ehSupersedida()) return; // não sobrescreve a entrada da geração nova
+        cache[chave]={html:null,gerando:false,erro:"Falha ao iniciar node: "+e.message};
+        _gerarTentativas[chave] = 0;
+    });
+    // CONCLUSÃO ANTECIPADA (v2.13.0): o gerador imprime "@@RELATORIO_PRONTO@@"
+    // assim que o HTML e o cache de horas estão gravados, ANTES de fechar as
+    // conexões com o Firebird. Fechar (detach) leva ~100 ms e só depois o
+    // processo terminava — e só então o navegador era avisado. Agora a
+    // conclusão roda no aviso (o processo segue fechando as conexões sozinho);
+    // "close" continua cobrindo gerador antigo (sem o aviso) e falhas.
+    var _concluir = function(code){
+        if (_procEncerrado) return;
+        _concluirInterno(code);
+        // Mudança chegou durante esta geração (_fpRegerar): gera de novo já.
+        if (_regerarAoConcluir[chave]) {
+            delete _regerarAoConcluir[chave];
+            setImmediate(function() {
+                if (cache[chave] && cache[chave].gerando) { _regerarAoConcluir[chave] = true; return; }
+                delete cache[chave];
+                gerarEmBackground(chave, chave, chave, true);
+            });
+        }
+    };
+    var _concluirInterno = function(code){
+        if (_procEncerrado) return; // timeout (ou o aviso de pronto) já tratou este processo
+        _procEncerrado = true;
+        clearTimeout(_spawnTimer);
+        // Flush de qualquer conteúdo restante no buffer (linha sem \n final)
+        if (_stdoutBuf.trim()) { logTs(_stdoutBuf.trim(), "GERADOR"); }
+        _stdoutBuf = "";
+        if (proc.pid) _spawnedPids = _spawnedPids.filter(function(p){ return p !== proc.pid; });
+
+        // Verifica se esta geração ainda é a ativa.
+        // _fpPoll pode ter iniciado uma geração mais nova (kill-and-restart) enquanto
+        // este processo rodava — nesse caso o resultado aqui é obsoleto: descarta.
+        if (_gerarIdCounter[chave] !== _meuId) {
+            logDebug("Geração " + chave + " #" + _meuId + " superada por #" + _gerarIdCounter[chave] + " — descartando.");
+            _liberarKillProprio(); // NUNCA remove a função kill da geração nova
+            try { if (fs.existsSync(_tmpFile)) fs.unlinkSync(_tmpFile); } catch(_) {}
+            return;
+        }
+        _liberarKillProprio(); // limpa referência — geração concluída
+
+        _gerarTentativas[chave] = 0; // sucesso ou erro definitivo — zera contador
+        try {
+        if(code!==0){
+            var msg="Script terminou com codigo "+code+". Verifique se o Firebird esta rodando.";
+            logTs("ERRO: "+msg);cache[chave]={html:null,gerando:false,erro:msg};return;
+        }
+        if(!fs.existsSync(_tmpFile)){
+            cache[chave]={html:null,gerando:false,erro:"Arquivo de saida nao criado."};return;
+        }
+        var html;
+        try{html=fs.readFileSync(_tmpFile,"utf8");}
+        catch(e){cache[chave]={html:null,gerando:false,erro:"Erro lendo HTML: "+e.message};return;}
+        try{fs.unlinkSync(_tmpFile);}catch(_){}
+        if (_comLinhaDeBase) _linhaDeBasePendente = false; // linha de base registrada
+
+        var st   = extrairStatusDoHtml(html);
+        var qt   = st.qt, tot = st.tot;
+        var ehHje= (inicio===fim && inicio===hoje());
+        // Polling do browser sincronizado com POLL_INTERVAL — garante que se o SSE
+        // falhar, o browser detecta a mudança no mesmo ritmo do servidor.
+        var pollMs = POLL_INTERVAL;
+
+        // Marca que já logamos as linhas de progresso hoje — próximas gerações ficam silenciosas
+        if (!_queryLogsHoje) _queryLogsHoje = true;
+
+        var _statusChanged = false;
+        if (ehHje && _qtSnapshot >= 0) {
+            // Compara novo HTML contra snapshot do HTML anterior (não statusAtual):
+            // statusAtual pode já ter sido atualizado pelo pollStatus durante a geração,
+            // tornando a comparação qt===statusAtual.qt sempre verdadeira e perdendo o evento.
+            if (qt !== _qtSnapshot || Math.abs(tot - _totSnapshot) > 0.005) {
+                logTs("Dados alterados: " + _descreverMudanca(_qtSnapshot, qt, _totSnapshot, tot));
+                _statusChanged = true;
+            }
+        }
+
+        var SC = "</" + "script>";
+        var arScript =
+            "<script>(function(){" +
+            // ── Handlers globais (sempre — relatório hoje e histórico) ─────────
+            "window.onerror=function(msg,src,line,col,err){" +
+            "try{fetch('/api/log-error',{method:'POST',headers:{'Content-Type':'application/json'}," +
+            "body:JSON.stringify({msg:String(msg),src:String(src||''),line:line,col:col," +
+            "stack:err&&err.stack?String(err.stack):''})});}catch(_){}" +
+            "};" +
+            "window.onunhandledrejection=function(ev){" +
+            "try{var r=ev&&ev.reason;fetch('/api/log-error',{method:'POST'," +
+            "headers:{'Content-Type':'application/json'}," +
+            "body:JSON.stringify({msg:'UnhandledRejection: '+String(r&&r.message||r)," +
+            "stack:r&&r.stack?String(r.stack):''})});}catch(_){}" +
+            "};" +
+            "try{var _th=localStorage.getItem('fdb_theme')||" +
+            "(document.cookie.match(/fdb_theme=([^;]+)/)||[])[1]||'ultra-dark';" +
+            "document.documentElement.setAttribute('data-theme',_th);" +
+            "}catch(e){};" +
+            // ── Auto-reload (apenas relatório de hoje) ────────────────────────
+            (ehHje ? (
+            // Badge visual confirma que auto-reload está ativo
+            "try{var _badge=document.createElement('div');" +
+            "_badge.id='__srv_badge';" +
+            "_badge.title='Auto-atualizacao ativa — detecta vendas em ~200ms';" +
+            "_badge.style.cssText='position:fixed;bottom:8px;left:8px;z-index:2147483646;" +
+            "background:rgba(0,200,80,.18);border:1px solid rgba(0,200,80,.35);border-radius:6px;" +
+            "padding:3px 8px;font-size:10px;color:rgba(0,220,80,.9);font-family:monospace;" +
+            "pointer-events:none;transition:opacity .5s;opacity:1';" +
+            "_badge.textContent=(typeof window.__recargaAutoDesligada==='function'&&window.__recargaAutoDesligada())?'\\u21bb ao vivo':'\\u21bb auto';" +
+            "document.body.appendChild(_badge);" +
+            "setTimeout(function(){_badge.style.opacity='0.18';},3000);" +
+            "}catch(_){}" +
+            // Estado interno — _loadTs marca quando esta página foi carregada
+            "var _q="+qt+",_t="+(Math.round(tot*100)/100)+",_loadTs=Date.now();" +
+            "console.log('[srv] auto-reload ativo | qt='+_q+' tot='+_t+' loadTs='+_loadTs);" +
+            // Aviso de servidor encerrado/sem conexão (v2.11.0) — faixa fixa no
+            // topo. Aparece quando o servidor avisa que vai encerrar (SSE
+            // "encerrando") ou quando a conexão fica perdida por mais de 4 s
+            // (servidor derrubado à força, rede caiu). Some e a página recarrega
+            // sozinha assim que o servidor volta a responder.
+            "var _srvFora=false,_srvErroDesde=0;" +
+            "var _srvAviso=function(titulo,detalhe,cor){try{" +
+            "var b=document.getElementById('__srv_fora');" +
+            "if(!b){b=document.createElement('div');b.id='__srv_fora';b.setAttribute('role','alert');" +
+            "b.style.cssText='position:fixed;top:0;left:0;right:0;z-index:2147483647;padding:12px 18px;" +
+            "font:600 14px Inter,Arial,sans-serif;color:#fff;text-align:center;box-shadow:0 4px 24px rgba(0,0,0,.5)';" +
+            "document.body.appendChild(b);}" +
+            "b.style.background=cor;b.textContent='';" +
+            "var t=document.createElement('div');t.textContent=titulo;b.appendChild(t);" +
+            "var d=document.createElement('div');d.textContent=detalhe;" +
+            "d.style.cssText='font-weight:400;font-size:12px;opacity:.9;margin-top:3px';b.appendChild(d);" +
+            "_srvFora=true;}catch(_){}};" +
+            "var _srvAvisoEncerrado=function(reiniciando){_srvAviso(" +
+            "reiniciando?'Servidor reiniciando...':'Servidor de relatórios encerrado'," +
+            "reiniciando?'O relatório volta sozinho em alguns segundos.':" +
+            "'Os dados desta tela pararam de ser atualizados. A página recarrega sozinha quando o servidor for iniciado de novo.'," +
+            "reiniciando?'#b45309':'#b91c1c');};" +
+            // Recarregamento automático (v2.17.0): antes, a página guarda rolagem e
+            // filtros (window.__antesRecarga, do gerador 3.19.0+) — a nova volta ao mesmo
+            // ponto, sem animações de entrada (não "pisca"). Sem a função, recarrega igual.
+            // Recarregar ao detectar mudanças (v2.20.0): com a opção DESLIGADA no aparelho
+            // (menu Tema → Atualização; gerador 3.23.0+), a página não recarrega sozinha —
+            // filtros, rolagem e janelas abertas ficam como estão; aparece o aviso "Há
+            // vendas novas" com o botão Atualizar. forcar=true ignora a opção.
+            "var _recPend=false;" +
+            "var _recDesl=function(){try{return typeof window.__recargaAutoDesligada==='function'&&window.__recargaAutoDesligada();}catch(_){return false;}};" +
+            "var _recAviso=function(){_recPend=true;try{" +
+            "var a=document.getElementById('__srv_novas');if(a){a.style.display='flex';return;}" +
+            "a=document.createElement('div');a.id='__srv_novas';a.setAttribute('role','status');" +
+            "a.style.cssText='position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:2147483646;display:flex;align-items:center;gap:10px;" +
+            "max-width:calc(100vw - 24px);padding:8px 8px 8px 14px;border-radius:999px;background:#0f172a;color:#f1f5f9;border:1px solid rgba(34,197,94,.55);" +
+            "box-shadow:0 8px 30px rgba(0,0,0,.55);font:600 13px Inter,Arial,sans-serif';" +
+            "var t=document.createElement('span');t.textContent='\\u25cf H\\u00e1 vendas novas';t.style.cssText='color:#4ade80;white-space:nowrap';a.appendChild(t);" +
+            "var b=document.createElement('button');b.type='button';b.textContent='Atualizar';" +
+            "b.style.cssText='border:0;border-radius:999px;padding:6px 14px;background:#22c55e;color:#04210f;font:700 13px Inter,Arial,sans-serif;cursor:pointer';" +
+            "b.onclick=function(){_recarregar(true);};a.appendChild(b);" +
+            "var x=document.createElement('button');x.type='button';x.textContent='\\u00d7';x.setAttribute('aria-label','Ocultar aviso');" +
+            "x.style.cssText='border:0;background:none;color:#94a3b8;font-size:18px;line-height:1;padding:2px 6px;cursor:pointer';" +
+            "x.onclick=function(){a.style.display='none';};a.appendChild(x);" +
+            "document.body.appendChild(a);}catch(_){}};" +
+            "var _recarregar=function(forcar){" +
+            // v2.22.0: desligada, a venda nova ENTRA do mesmo jeito — a página troca só os
+            // dados no lugar (window.__atualizarSemRecarregar, gerador 3.26.0+). O aviso
+            // "Há vendas novas" fica só para quando isso falhar (ou gerador antigo).
+            "if(!forcar&&_recDesl()){" +
+            "if(typeof window.__atualizarSemRecarregar==='function'){_loadTs=Date.now();" +
+            "Promise.resolve(window.__atualizarSemRecarregar()).then(function(ok){" +
+            "if(ok){_recPend=false;var na=document.getElementById('__srv_novas');if(na)na.style.display='none';}else{_recAviso();}" +
+            "}).catch(function(){_recAviso();});return;}" +
+            "_recAviso();return;}" +
+            "try{if(typeof window.__antesRecarga==='function')window.__antesRecarga();}catch(_){}" +
+            "window.location.replace(window.location.href);};" +
+            // Chamada pelo menu ao trocar a opção: ligou com venda pendente → atualiza já.
+            "window.__srvRecargaMudou=function(lig){try{var bd=document.getElementById('__srv_badge');if(bd)bd.textContent=lig?'\\u21bb auto':'\\u21bb ao vivo';}catch(_){}" +
+            "if(lig&&_recPend)_recarregar(true);};" +
+            // SSE (primário)
+            "var _es=null,_connTry=0;" +
+            "var _conn=function(){" +
+            "try{" +
+            "_es=new EventSource('/api/events');" +
+            "_es.onmessage=function(ev){" +
+            "try{var d=JSON.parse(ev.data);" +
+            "if(d.type==='reload')_recarregar();" +
+            // navigate leva a URL de destino (selecionar-fdb, periodo...). Antes
+            // era tratado igual a reload e a aba ficava na mesma página. Só
+            // aceita caminho relativo ao próprio servidor ("/..." e não "//").
+            "if(d.type==='navigate'){var _u=String(d.url||'/');if(_u.charAt(0)!=='/'||_u.charAt(1)==='/')_u='/';window.location.assign(_u);}" +
+            "if(d.type==='foco'){try{window.focus();}catch(_){}}" +
+            "if(d.type==='encerrando'){_srvAvisoEncerrado(!!d.reiniciando);}" +
+            // tema (v2.16.0): troca o tema e salva, como a escolha no menu da página.
+            "if(d.type==='tema'&&d.id){try{if(typeof window.__aplicarTema==='function'){window.__aplicarTema(String(d.id),String(d.nome||''));}" +
+            "else{var _ti=String(d.id).replace(/[^a-z0-9-]/g,'');try{localStorage.setItem('fdb_theme',_ti);}catch(_){}" +
+            "try{document.cookie='fdb_theme='+_ti+';path=/;max-age=31536000;SameSite=Strict';}catch(_){}" +
+            "document.documentElement.setAttribute('data-theme',_ti);}}catch(_){}}" +
+            // prefs (v2.19.0): as preferências deste aparelho mudaram — relê sem recarregar.
+            "if(d.type==='prefs'){try{if(typeof window.__aplicarPrefs==='function')window.__aplicarPrefs();}catch(_){}}" +
+            // aviso (v2.16.0): mensagem enviada pelo api.ps1 a todas as telas.
+            "if(d.type==='aviso'&&d.msg){try{" +
+            "var _aw=document.getElementById('__srv_aviso');if(_aw)_aw.parentNode.removeChild(_aw);" +
+            "_aw=document.createElement('div');_aw.id='__srv_aviso';_aw.setAttribute('role','alert');" +
+            "_aw.style.cssText='position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:2147483647;max-width:min(560px,92vw);" +
+            "padding:14px 44px 14px 18px;border-radius:12px;background:#0f172a;color:#f1f5f9;border:1px solid rgba(56,189,248,.55);" +
+            "box-shadow:0 10px 40px rgba(0,0,0,.6);font:600 14px Inter,Arial,sans-serif;line-height:1.45;word-break:break-word;opacity:1;transition:opacity .4s';" +
+            "var _at=document.createElement('div');_at.style.cssText='font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#38bdf8;margin-bottom:4px';_at.textContent='Aviso';_aw.appendChild(_at);" +
+            "var _am=document.createElement('div');_am.textContent=String(d.msg);_aw.appendChild(_am);" +
+            "var _ax=document.createElement('button');_ax.type='button';_ax.textContent='\u00d7';_ax.setAttribute('aria-label','Fechar');" +
+            "_ax.style.cssText='position:absolute;top:8px;right:10px;background:none;border:0;color:#94a3b8;font-size:20px;cursor:pointer';" +
+            "_ax.onclick=function(){try{_aw.parentNode.removeChild(_aw);}catch(_){}};_aw.appendChild(_ax);" +
+            "document.body.appendChild(_aw);" +
+            "var _as=Math.max(3,Math.min(120,Number(d.segundos)||12));" +
+            "setTimeout(function(){_aw.style.opacity='0';setTimeout(function(){try{_aw.parentNode&&_aw.parentNode.removeChild(_aw);}catch(_){}},450);},_as*1000);" +
+            "}catch(_){}}" +
+            "if(d.type==='navigate-hash'&&d.hash){" +
+            "if(typeof __abrirModalConfig==='function'&&d.hash==='config'){__abrirModalConfig();}" +
+            "else if(typeof __abrirModalPeriodo==='function'&&d.hash==='periodo'){__abrirModalPeriodo();}" +
+            "}" +
+            "}catch(e){};};" +
+            "_es.onopen=function(){_connTry=0;console.log('[srv] SSE conectado');};" +
+            "_es.onerror=function(){if(_es){_es.close();_es=null;}" +
+            "_connTry++;var delay=Math.min(2000*_connTry,30000);" +
+            "console.log('[srv] SSE erro #'+_connTry+' — reconectando em '+delay+'ms');" +
+            "setTimeout(_conn,delay);};" +
+            "}catch(e){console.log('[srv] SSE falhou: '+e.message);setTimeout(_conn,5000);}" +
+            "};" +
+            "_conn();" +
+            // Poll HTTP (fallback — detecta mesmo sem SSE)
+            "var _pollErros=0;" +
+            // DEDUP FIX (auditoria v2.5.0): /api/status agora devolve 'correcoes' por
+            // JANELA DE TEMPO (não-destrutivo — ver _pushCorrecao/_CORRECOES_JANELA_MS
+            // no servidor), então a MESMA correção aparece em várias respostas seguidas
+            // de poll. Sem este controle de 'já vista', o mesmo toast reapareceria a
+            // cada ciclo de poll (a cada "+pollMs+"ms) enquanto durar a janela. Usa 'seq'
+            // (contador monotônico do servidor) em vez de 'ts' para o rastreio: duas
+            // correções diferentes podem compartilhar o mesmo milissegundo, mas nunca
+            // o mesmo seq.
+            "var _ultimaCorrecaoSeq=0;" +
+            "var _poll=function(){" +
+            "fetch('/api/status',{cache:'no-store'})" +
+            ".then(function(r){return r.ok?r.json():Promise.reject(r.status);})" +
+            ".then(function(d){" +
+            "_pollErros=0;_srvErroDesde=0;" +
+            // Servidor voltou depois de ter caído/encerrado: recarrega para
+            // mostrar os dados atuais (e tirar o aviso).
+            "if(_srvFora){_recarregar(true);return;}" +
+            "if(d.correcoes&&d.correcoes.length){" +
+            "var _deveReload=false;" +
+            "d.correcoes.forEach(function(c){" +
+            "if(c.seq&&c.seq<=_ultimaCorrecaoSeq)return;" + // já exibida nesta aba — pula
+            "if(c.seq&&c.seq>_ultimaCorrecaoSeq)_ultimaCorrecaoSeq=c.seq;" +
+            "try{" +
+            "var _tw=document.getElementById('__srv_tw')||" +
+            "(function(){var e=document.createElement('div');e.id='__srv_tw';" +
+            "e.style.cssText='position:fixed;bottom:20px;right:20px;z-index:2147483647;" +
+            "display:flex;flex-direction:column-reverse;gap:8px;pointer-events:none;max-width:320px';" +
+            "document.body.appendChild(e);return e;})();" +
+            "var _t=document.createElement('div');" +
+            "_t.style.cssText='background:#0f172a;border:1px solid '+(c.cor||'rgba(14,165,233,.4)')" +
+            "+';border-radius:10px;padding:10px 14px;font-size:12px;line-height:1.5;" +
+            "color:#e2e8f0;font-family:Inter,Arial,sans-serif;" +
+            "box-shadow:0 4px 24px rgba(0,0,0,.65);opacity:1;transition:opacity .5s ease;" +
+            "pointer-events:none;word-break:break-word';" +
+            "_t.textContent=c.msg;" +
+            "_tw.appendChild(_t);" +
+            "setTimeout(function(){_t.style.opacity='0';" +
+            "setTimeout(function(){try{_t.parentNode&&_t.parentNode.removeChild(_t);}catch(_){}},550);}," +
+            "(window.__TOAST_MS>=500?window.__TOAST_MS:" + TOAST_DURATION + "));" +
+            "}catch(_){}" +
+            "if(c.reload)_deveReload=true;" +
+            "});" +
+            "if(_deveReload){setTimeout(function(){_recarregar();},800);}}" +
+            "if(d.qt>=0&&(" +
+            // Mecanismo 1 (primário): changeTs > _loadTs — detecta mudanças ocorridas
+            // APÓS esta página ter sido carregada, mesmo que _q===d.qt (HTML já atualizado).
+            "(d.changeTs&&d.changeTs>_loadTs)||" +
+            // Mecanismo 2 (backup): comparação direta — captura divergências de qt/tot
+            "d.qt!==_q||Math.abs(d.total-_t)>0.01)){" +
+            "console.log('[srv] reload: changeTs='+d.changeTs+' loadTs='+_loadTs+' qt='+d.qt+'/'+_q);" +
+            "_q=d.qt;_t=d.total;_loadTs=Date.now();" + // atualiza para evitar loops
+            "_recarregar();}}" +
+            ")" +
+            ".catch(function(err){_pollErros++;" +
+            "if(_pollErros<=3)console.log('[srv] poll erro #'+_pollErros+': '+err);" +
+            "if(!_srvErroDesde)_srvErroDesde=Date.now();" +
+            "if(!_srvFora&&Date.now()-_srvErroDesde>4000)_srvAviso('Sem conexão com o servidor de relatórios'," +
+            "'O servidor pode ter sido encerrado ou a rede caiu. Os dados desta tela pararam de ser atualizados; a página recarrega sozinha quando a conexão voltar.','#b91c1c');" +
+            "});};" +
+            "setInterval(_poll,"+pollMs+");"
+            ) : "") +
+            // ── Sincronização de fuso horário (sempre) ────────────────────────
+            "var _syncHo=function(){try{fetch('/api/hora-usuario',{method:'POST'," +
+            "headers:{'Content-Type':'application/json'}," +
+            "body:JSON.stringify({ts:Date.now()," +
+            "tzOffsetMs:new Date().getTimezoneOffset()*60000})," +
+            "cache:'no-store'}).catch(function(){});}catch(_){}};" +
+            "_syncHo();setInterval(_syncHo,"+INTERVALO_SYNC_HORA_MS+");" +
+            "})();" + SC;
+
+        var serverModeSnip =
+            "<script>" +
+            "window.__SERVER_MODE__=true;" +
+            "window.__STATUS_INICIAL__={qt:"+qt+",total:"+(Math.round(tot*100)/100)+"};" +
+            "<\/script>";
+
+        try {
+            // ── serverModeSnip → injeta antes de </head> ──────────────────────
+            var headClose = html.lastIndexOf("</head>");
+            if (headClose >= 0) {
+                html = html.slice(0, headClose) + serverModeSnip + html.slice(headClose);
+            } else {
+                var bOpen = html.indexOf("<body");
+                if (bOpen >= 0) { html = html.slice(0, bOpen) + serverModeSnip + html.slice(bOpen); }
+                else             { html = serverModeSnip + html; }
+                logTs("AVISO: </head> nao encontrado — SERVER_MODE injetado como fallback.");
+            }
+
+            // ── arScript → injeta ANTES de </body> ───────────────────────────
+            // USA lastIndexOf("</body>") em vez de replace("</body></html>", ...)
+            // para ser robusto a:  "</body>\n</html>",  "</body>  </html>",  etc.
+            // String.replace() com string longa falha se houver '$' no arScript
+            // (padrões de substituição como $&, $', $1) — corrompendo o script.
+            if (arScript) {
+                var bodyClose = html.lastIndexOf("</body>");
+                if (bodyClose >= 0) {
+                    html = html.slice(0, bodyClose) + arScript + html.slice(bodyClose);
+                } else {
+                    html = html + arScript;
+                    logTs("ERRO: </body> nao encontrado no HTML — arScript injetado no fim. Auto-reload pode nao funcionar.");
+                }
+            }
+            // Selo da cópia offline (v3.0.0) — independente do resto da página.
+            {
+                var _bodyOff = html.lastIndexOf("</body>");
+                if (_bodyOff >= 0) html = html.slice(0, _bodyOff) + _OFFLINE_SNIP + html.slice(_bodyOff);
+                else html = html + _OFFLINE_SNIP;
+            }
+        } catch(injErr) {
+            logTs("ERRO na injecao HTML: " + (injErr && injErr.stack || injErr));
+        }
+
+        // Detecta se _fpPoll ou pollStatus gravaram statusAtual DURANTE esta geração
+        // COM dados diferentes dos que nosso HTML produziu.
+        // Apenas timestamp (ts > _genStartTs) NÃO é suficiente: pollStatus atualiza
+        // statusAtual.ts mesmo sem detectar mudança, causando falsos positivos que
+        // disparariam re-gerações desnecessárias a cada ciclo de poll.
+        var _statusAtualizadoDurante = ehHje &&
+            statusAtual.ts > _genStartTs &&
+            (statusAtual.qt !== qt || Math.abs(statusAtual.total - tot) > 0.005);
+
+        cache[chave]={html:html,gerando:false,erro:null,qt:qt,tot:tot,geradoEm:Date.now()};
+
+        if (ehHje) {
+            if (!_statusAtualizadoDurante) {
+                // Nossa geração é a fonte mais fresca — atualiza statusAtual normalmente
+                statusAtual = Object.assign({}, statusAtual, {qt:qt, total:tot, ts:Date.now()});
+            }
+            // Se _statusAtualizadoDurante=true: _fpPoll/pollStatus gravou dados mais recentes
+            // durante a geração. Preserva esses dados — NÃO sobrescreve com o HTML antigo.
+            // (o revert era o bug: página ficava presa com datos velhos indefinidamente)
+        }
+
+        // SSE dispatch: dispara quando:
+        //   1. _pollTriggered=true — fast-poll/pollStatus detectou mudança e iniciou esta geração.
+        //      SSE emitido AQUI (após HTML pronto) — browser recarrega direto para HTML final,
+        //      sem passar por paginaLoading.
+        //   2. _statusChanged — mudança detectada vs snapshot do HTML anterior (agendarRegen path).
+        //   Nota: correções de horário usam reload:true nos toasts.
+        if ((_statusChanged || (ehHje && !!_pollTriggered)) && sseClients.length > 0) {
+            _statusChangeTs = Date.now(); // HTML pronto — poll HTTP também recarrega direto para página final
+            broadcastSSE({type:"reload"});
+        } else if (_statusChanged || (ehHje && !!_pollTriggered)) {
+            // Sem clientes SSE — atualiza changeTs para que o poll HTTP detecte e recarregue
+            _statusChangeTs = Date.now();
+        }
+
+        // Re-trigger: _fpPoll/pollStatus detectou mudança DURANTE esta geração
+        // mas o filho leu o BD antes da venda (HTML está antigo).
+        // Agenda nova geração imediata para capturar os dados frescos.
+        // Só re-aciona se não houve _statusChanged nem _pollTriggered — nesses casos
+        // o HTML já tem os dados corretos e o SSE já disparou (não precisa repetir).
+        if (_statusAtualizadoDurante && !_statusChanged && !_pollTriggered && ehHje) {
+            logTs("Dados atualizados durante geração — re-acionando para capturar dados frescos...");
+            setImmediate(function() {
+                if (!cache[chave] || !cache[chave].gerando) {
+                    delete cache[chave];
+                    gerarEmBackground(chave, chave, chave, true);
+                }
+            });
+        }
+        } catch(fatalErr) {
+            logTs("ERRO FATAL em proc.close ("+chave+"): "+(fatalErr&&fatalErr.stack||fatalErr));
+            try { cache[chave]={html:null,gerando:false,erro:"Erro interno: "+(fatalErr&&fatalErr.message||String(fatalErr))}; } catch(_) {}
+        }
+    };
+    proc.on("close", function(code) {
+        if (proc.pid) _spawnedPids = _spawnedPids.filter(function(p){ return p !== proc.pid; });
+        _concluir(code);
+    });
+};
+
+// ---------------------------------------------------------------------------
+// FAST-POLL: detecção de vendas em < 300 ms via conexão Firebird persistente.
+//
+// Arquitetura dois níveis:
+//   1. Fast-poll (200ms fixo, este bloco): query mínima (COUNT+SUM) em conexão
+//      persistente. Detecta qualquer variação em qt ou total → aciona
+//      gerarEmBackground imediato via _pollTriggered=true → SSE após HTML pronto.
+//      Sem overhead de attach/detach por ciclo — conexão reutilizada entre 200ms.
+//      Se a conexão morrer (banco reiniciado, rede, crash): _fpDb=null e reconecta
+//      no próximo ciclo (silencioso, sem spam de log).
+//
+//   2. pollStatus (POLL_INTERVAL, fallback / validador): query completa com IIF
+//      por tipo (Gerencial/NFC-e/NF-e). Roda correções de horário, valida breakdown
+//      por modelo e serve como net de segurança se o fast-poll falhar.
+//      Ao detectar mudança já acionada pelo fast-poll, gerarEmBackground retorna
+//      early (ent.gerando=true) sem custo extra.
+//
+// Resultado: detecção em 200-400ms; POLL_INTERVAL vira fallback de segurança.
+// ---------------------------------------------------------------------------
+// v2.13.0: intervalo ADAPTATIVO, mínimo 15 ms (resolução do relógio do
+// Windows, ~15,6 ms). O próximo ciclo só começa depois de 3× o tempo médio da
+// consulta: o fast-poll nunca ocupa mais de ~1/3 do tempo do Firebird, que é o
+// mesmo banco do caixa (PDV). Medido com 300 mil vendas: consulta de ~11 ms
+// com índice em DATA (→ ciclo de ~35 ms) e ~285 ms sem índice (→ ~850 ms);
+// antes, a 50 ms fixos, uma consulta lenta fazia o fast-poll consultar sem
+// parar, deixando o banco ocupado 100% do tempo.
+var _FP_INTERVAL_MS       = 15;
+var _FP_FATOR_FOLGA       = 3;
+var _FP_INTERVALO_MAX_MS  = 3000;
+var _fpMediaMs            = 0;   // média móvel do tempo de consulta
+var _fpInicioCiclo        = 0;
+var _fpFaixaLog           = 0;
+var _fpFaixaLogTs         = 0;
+var _fpIntervaloAlvo = function() {
+    return Math.max(_FP_INTERVAL_MS, Math.min(_FP_INTERVALO_MAX_MS, Math.round(_fpMediaMs * _FP_FATOR_FOLGA)));
+};
+var _FP_FAIXAS = [15, 30, 60, 120, 250, 500, 1000, 2000, 3000];
+var _fpRegistrarDuracao = function(ms) {
+    _fpMediaMs = _fpMediaMs ? (_fpMediaMs * 0.7 + ms * 0.3) : ms;
+    var alvo = _fpIntervaloAlvo(), faixa = _FP_FAIXAS[0];
+    for (var i = 0; i < _FP_FAIXAS.length; i++) if (alvo >= _FP_FAIXAS[i]) faixa = _FP_FAIXAS[i];
+    // Log na 1ª medição e quando a faixa muda — no máximo 1 por minuto (um tempo
+    // oscilando na divisa de duas faixas não enche o log).
+    if (faixa !== _fpFaixaLog && (!_fpFaixaLog || Date.now() - _fpFaixaLogTs > 60000)) {
+        {
+            logTs("FastPoll: consulta levando ~" + Math.round(_fpMediaMs) + " ms — intervalo ajustado para ~" + alvo +
+                  " ms (o fast-poll usa no máximo 1/3 do tempo do banco)." +
+                  (_fpMediaMs > 100 ? " Consulta lenta: verifique se as tabelas NFCE/PAGAMENT têm índice no campo DATA." : ""));
+        }
+        _fpFaixaLog = faixa; _fpFaixaLogTs = Date.now();
+    }
+};
+var _fpDb            = null;  // conexão Firebird persistente (reutilizada entre ciclos)
+var _fpConectando    = false; // evita tentativas de attach paralelas
+var _fpBusy          = false; // evita ciclos sobrepostos
+// Primeira linha de base do fast-poll após ligar/reconectar (v2.15.5): o
+// relatório de hoje pode ter sido gerado ANTES dela (ao ligar, a geração vem
+// ~5 s antes do fast-poll) — uma venda nesse intervalo entraria direto na linha
+// de base e nunca seria "mudança". Por isso, ao fechar a 1ª linha de base, gera
+// uma vez (em silêncio). Antes isso era coberto, por acaso, pelo falso "Dados
+// alterados" do pollStatus ao ligar.
+var _fpBaseFeita = false;
+var _fpConferirBaseInicial = function(dh) {
+    if (_fpBaseFeita) return;
+    _fpBaseFeita = true;
+    logDebug("FastPoll: linha de base inicial — conferindo o relatório de hoje.");
+    _fpRegerar(dh);
+};
+var _fpUltimoQt      = -1;    // última contagem vista (-1 = sem baseline ainda)
+var _fpUltimoTot     = -1;    // último total visto
+var _fpUltimoPend    = -1;    // últimas NFC-e pendentes de autorização vistas
+var _fpUltimoSvend   = -1;    // últimas vendas sem vendedor vistas
+var _fpUltimoSforma  = -1;    // últimos pagamentos sem forma definida vistos
+var _fpDhAtual       = null;  // data do último ciclo — detecta virada de dia e reseta baseline
+var _fpIntervalId    = null;
+// _fpGen: token de geração do fast-poll. Incrementado por _iniciarFastPoll().
+// RACE FIX (v2.4.1): se _iniciarFastPoll() era chamado enquanto um Firebird.attach
+// estava em voo (ex.: reconfiguração manual do FDB durante a reconexão), a callback
+// tardia gravava a conexão ANTIGA em _fpDb — que aponta para o banco anterior.
+// Comparando o token, a callback obsoleta apenas descarta a conexão.
+var _fpGen           = 0;
+
+// SQL mínima: COUNT+SUM sem IIF/tipo breakdown.
+// Mais rápida que a query completa do pollStatus — ideal para detecção contínua.
+// Inclui nfce (cancelado filtrado) e pagament (formas ignoradas: 00/13).
+// FP_PEND (v2.7.4): conta as NFC-e AINDA NAO AUTORIZADAS (total vazio).
+// Sem essa terceira medida, o fast-poll so' enxerga qt/total — e o momento em
+// que a SEFAZ autoriza a nota, preenchendo VENDEDOR/HORA/NATUREZA, nao muda
+// necessariamente nenhum dos dois (o valor ja estava sendo contado pelo
+// PAGAMENT). O usuario ficava olhando "(aguardando autorizacao)" na tela e
+// precisava apertar atualizar na mao. Com FP_PEND, a transicao
+// pendente -> autorizada e' detectada explicitamente e dispara a regeneracao
+// + reload automatico como qualquer outra mudanca.
+// FP_SVEND (v2.7.6): conta as vendas do dia SEM VENDEDOR definido. Fecha a
+// ultima lacuna de deteccao: quando alguem atribui o vendedor a uma venda que
+// ja estava contabilizada, qt e total NAO mudam — e a tela continuaria
+// mostrando "(sem vendedor)" ate' alguem apertar atualizar na mao. As demais
+// situacoes de "nao identificado" ja eram cobertas indiretamente: a forma de
+// pagamento so' fica vazia enquanto nao ha linha em PAGAMENT, e a chegada
+// dessa linha ja altera qt/total.
+// So' e' incluida quando a coluna nfce.VENDEDOR existe de fato (ver sondagem
+// em _fpConectar) — referenciar coluna inexistente derrubaria toda a consulta
+// e mataria a deteccao de vendas.
+var _montarFpSql = function(temVendedor) {
+    var _selVend = temVendedor
+        ? "  SELECT 0 AS qt, 0 AS tot, 0 AS pend, 1 AS svend, 0 AS sforma" +
+          "  FROM nfce" +
+          "  WHERE data >= ? AND data < ? + 1" +
+          "  AND COALESCE(cancelado,'N') NOT IN ('S','T')" +
+          "  AND total > 0" +
+          "  AND (VENDEDOR IS NULL OR TRIM(VENDEDOR) = '')" +
+          "  UNION ALL"
+        : "";
+    return "SELECT COALESCE(SUM(qt),0) AS FP_QT, COALESCE(SUM(tot),0) AS FP_TOT," +
+           " COALESCE(SUM(pend),0) AS FP_PEND, COALESCE(SUM(svend),0) AS FP_SVEND," +
+           " COALESCE(SUM(sforma),0) AS FP_SFORMA" +
+           " FROM (" +
+           _selVend +
+           "  SELECT 1 AS qt, total AS tot, 0 AS pend, 0 AS svend, 0 AS sforma" +
+           "  FROM nfce" +
+           "  WHERE data >= ? AND data < ? + 1" +
+           "  AND COALESCE(cancelado,'N') NOT IN ('S','T')" +
+           "  AND total > 0" +
+           "  UNION ALL" +
+           "  SELECT 0 AS qt, 0 AS tot, 1 AS pend, 0 AS svend, 0 AS sforma" +
+           "  FROM nfce" +
+           "  WHERE data >= ? AND data < ? + 1" +
+           "  AND COALESCE(cancelado,'N') NOT IN ('S','T')" +
+           "  AND COALESCE(total,0) <= 0" +
+           // ESCOPO: so' documento fiscal aguarda autorizacao da SEFAZ. Sem este
+           // filtro, toda gerencial ABERTA (venda em andamento no caixa, total
+           // ainda vazio) entrava na contagem de "pendentes" — e cada item
+           // lancado no cupom mudava esse numero, disparando regeneracao do
+           // relatorio sem que nada relevante tivesse mudado.
+           "  AND COALESCE(modelo,65) IN (65,55)" +
+           "  UNION ALL" +
+           "  SELECT 1 AS qt, valor AS tot, 0 AS pend, 0 AS svend, 0 AS sforma" +
+           "  FROM pagament" +
+           "  WHERE data >= ? AND data < ? + 1" +
+           "  AND valor > 0" +
+           "  AND SUBSTRING(forma FROM 1 FOR 2) NOT IN ('00','13')" +
+           "  UNION ALL" +
+           // FP_SFORMA (v2.7.7): pagamentos do dia cuja FORMA ainda esta em
+           // branco. Fecha a lacuna do "nao identificado" que sobrava: quando um
+           // pagamento JA EXISTE mas sem forma definida, e alguem preenche a
+           // forma depois, nem a quantidade nem o valor mudam — o fast-poll nao
+           // via nada e a tela ficava em "nao identificado" ate' alguem apertar
+           // atualizar. (O caso de um pagamento NOVO chegando ja era detectado,
+           // porque a linha nova altera qt/total.)
+           "  SELECT 0 AS qt, 0 AS tot, 0 AS pend, 0 AS svend, 1 AS sforma" +
+           "  FROM pagament" +
+           "  WHERE data >= ? AND data < ? + 1" +
+           "  AND (forma IS NULL OR TRIM(forma) = '')" +
+           " ) t";
+};
+// Numero de pares (data,data) que a consulta espera, para montar os parametros.
+var _fpNumBlocos = function(temVendedor) { return temVendedor ? 5 : 4; };
+var _fpTemVendedor = null;  // null = ainda nao sondado; true/false = resultado do esquema
+var _FP_SQL = _montarFpSql(false); // substituido apos a sondagem em _fpConectar
+
+// ---------------------------------------------------------------------------
+// FAST-POLL COMPLETO (v2.12.0) — detecção por TIPO e por REGISTRO.
+// A consulta básica acima soma tudo (gerencial + NFC-e + NF-e + pagamentos) em
+// uma quantidade e um total. Ela é cega para mudanças que se compensam:
+//   - venda que muda de tipo com o mesmo valor (gerencial → NFC-e);
+//   - valor que sobe numa venda e cai em outra na mesma proporção;
+//   - troca de vendedor (A → B) ou de forma de pagamento (Dinheiro → PIX);
+//   - NF-e gravada só na tabela VENDAS (a básica olha só a NFCE).
+// A completa separa quantidade e total por tipo (Gerencial 99, NFC-e 65, NF-e
+// 55, outros), conta canceladas, e soma uma ASSINATURA por registro —
+// MOD(HASH(número|caixa|total|vendedor|modelo), 1000003) — que muda quando
+// qualquer um desses campos muda em qualquer venda, mesmo que quantidade e
+// total continuem iguais. Pagamentos: assinatura de pedido|caixa|forma|valor
+// de TODAS as linhas do dia. VENDAS (NF-e): quantidade, total e assinatura.
+// Uma varredura por tabela (antes: 3 a 4 na NFCE, 2 na PAGAMENT).
+// HORA fica de fora da assinatura de propósito: o próprio servidor corrige
+// horários (primeira visão) e isso não pode disparar outra regeneração.
+// Montada a partir do esquema real (colunas sondadas uma vez) e testada ao
+// conectar; se o banco não aceitar (Firebird sem HASH, coluna ausente), o
+// fast-poll segue no modo básico, sem perder a detecção.
+// ---------------------------------------------------------------------------
+var _FP_SIG_MOD = 1000003;
+var _fpHash = function(campos) {
+    return "MOD(HASH(" + campos.join(" || '|' || ") + "), " + _FP_SIG_MOD + ")";
+};
+var _fpTxt = function(col, tam) { return "COALESCE(TRIM(CAST(" + col + " AS VARCHAR(" + tam + "))),'')"; };
+
+// esquema: { NFCE:{COL:true}, PAGAMENT:{...}, VENDAS:{...} } (nomes em maiúsculas)
+// Devolve { sql, pares } ou null se faltar o mínimo.
+// v2.15.0: indices = mapa "TABELA.COLUNA" → true lido do catálogo (ou null se
+// não deu para ler). Tabela cuja coluna de data TEM índice vai para a parte
+// rápida; sem índice, para a complementar. Se todas têm (ou nenhuma tem, ou o
+// catálogo não respondeu) fica UMA consulta só, no ritmo normal.
+var _montarFpSqlCompleto = function(esquema, indices) {
+    var nf = esquema.NFCE || {}, pg = esquema.PAGAMENT || {}, vd = esquema.VENDAS || {};
+    if (!nf.DATA || !nf.TOTAL || !pg.DATA || !pg.VALOR) return null;
+    var pares = 0;
+
+    // ── NFCE: uma varredura, agregada por tipo ────────────────────────────
+    var sigN = [];
+    if (nf.NUMERONF)  sigN.push(_fpTxt("numeronf", 60));
+    if (nf.GERENCIAL) sigN.push(_fpTxt("gerencial", 60));
+    if (nf.CAIXA)     sigN.push(_fpTxt("caixa", 30));
+    sigN.push("CAST(COALESCE(total,0) AS VARCHAR(30))");
+    if (nf.VENDEDOR)  sigN.push(_fpTxt("vendedor", 200));
+    var exprM  = nf.MODELO    ? "COALESCE(modelo,65)" : "65";
+    if (nf.MODELO)    sigN.push("CAST(" + exprM + " AS VARCHAR(5))");
+    var exprC  = nf.CANCELADO ? "IIF(COALESCE(cancelado,'N') IN ('S','T'),1,0)" : "0";
+    var exprSv = nf.VENDEDOR  ? "IIF(vendedor IS NULL OR TRIM(vendedor) = '',1,0)" : "0";
+    var nfce = "SELECT " + exprM + " AS m, " + exprC + " AS c, COALESCE(total,0) AS v, " +
+               _fpHash(sigN) + " AS s, " + exprSv + " AS sv" +
+               " FROM nfce WHERE data >= ? AND data < ? + 1";
+    pares++;
+    var tipos = [["G", "m = 99"], ["NFC", "m = 65"], ["NF", "m = 55"], ["OUT", "m NOT IN (99,65,55)"]];
+    var aggN = [];
+    tipos.forEach(function(t) {
+        var ok = "c = 0 AND v > 0 AND " + t[1];
+        aggN.push("COALESCE(SUM(IIF(" + ok + ",1,0)),0) AS " + t[0] + "_QT");
+        aggN.push("COALESCE(SUM(IIF(" + ok + ",v,0)),0) AS " + t[0] + "_TOT");
+        aggN.push("COALESCE(SUM(IIF(" + ok + ",s,0)),0) AS " + t[0] + "_SIG");
+    });
+    aggN.push("COALESCE(SUM(c),0) AS N_CANC");
+    aggN.push("COALESCE(SUM(IIF(c = 0 AND v <= 0 AND m IN (65,55),1,0)),0) AS N_PEND");
+    aggN.push("COALESCE(SUM(IIF(c = 0 AND v > 0 AND sv = 1,1,0)),0) AS N_SVEND");
+
+    // ── PAGAMENT ──────────────────────────────────────────────────────────
+    var sigP = [];
+    if (pg.PEDIDO) sigP.push(_fpTxt("pedido", 60));
+    if (pg.CAIXA)  sigP.push(_fpTxt("caixa", 30));
+    if (pg.FORMA)  sigP.push(_fpTxt("forma", 200));
+    sigP.push("CAST(COALESCE(valor,0) AS VARCHAR(30))");
+    var exprF2 = pg.FORMA ? "SUBSTRING(forma FROM 1 FOR 2)" : "CAST(NULL AS VARCHAR(2))";
+    var exprSf = pg.FORMA ? "IIF(forma IS NULL OR TRIM(forma) = '',1,0)" : "0";
+    var pag = "SELECT COALESCE(valor,0) AS v, " + exprF2 + " AS f2, " + exprSf + " AS sf, " +
+              _fpHash(sigP) + " AS s FROM pagament WHERE data >= ? AND data < ? + 1";
+    pares++;
+    var okP = "v > 0 AND f2 NOT IN ('00','13')";
+    var aggP = [
+        "COALESCE(SUM(IIF(" + okP + ",1,0)),0) AS PAG_QT",
+        "COALESCE(SUM(IIF(" + okP + ",v,0)),0) AS PAG_TOT",
+        "COUNT(*) AS PAG_N",
+        "COALESCE(SUM(s),0) AS PAG_SIG",
+        "COALESCE(SUM(sf),0) AS PAG_SFORMA"
+    ];
+
+    // ── VENDAS (NF-e) — só se a tabela tiver o mínimo ──────────────────────
+    var colDataV = vd.SAIDAD ? "saidad" : (vd.EMISSAO ? "emissao" : null);
+    var vendas = null, aggV = null;
+    if (colDataV && vd.NUMERONF && vd.TOTAL) {
+        var sigV = [_fpTxt("numeronf", 60), "CAST(COALESCE(total,0) AS VARCHAR(30))"];
+        if (vd.VENDEDOR)    sigV.push(_fpTxt("vendedor", 200));
+        if (vd.STATUS)      sigV.push(_fpTxt("status", 1000));
+        if (vd.DATA_CANCEL) sigV.push("COALESCE(CAST(data_cancel AS VARCHAR(30)),'')");
+        var exprCv = vd.DATA_CANCEL ? "IIF(data_cancel IS NULL,0,1)" : "0";
+        vendas = "SELECT COALESCE(total,0) AS v, " + exprCv + " AS c, " + _fpHash(sigV) + " AS s" +
+                 " FROM vendas WHERE " + colDataV + " >= ? AND " + colDataV + " < ? + 1" +
+                 (vd.MODELO ? " AND CAST(modelo AS VARCHAR(5)) = '55'" : "");
+        pares++;
+        aggV = [
+            "COALESCE(SUM(IIF(c = 0 AND v > 0,1,0)),0) AS NFV_QT",
+            "COALESCE(SUM(IIF(c = 0 AND v > 0,v,0)),0) AS NFV_TOT",
+            "COALESCE(SUM(s),0) AS NFV_SIG",
+            "COALESCE(SUM(c),0) AS NFV_CANC"
+        ];
+    }
+
+    // Blocos por tabela: cada um é "SELECT agregados FROM (linhas do dia)".
+    var blocos = [
+        { tab: "NFCE",     col: "DATA",                    rot: "NFCE",     re: "G|NFC|NF|OUT|N",
+          sub: "SELECT " + aggN.join(", ") + " FROM (" + nfce + ") n1" },
+        { tab: "PAGAMENT", col: "DATA",                    rot: "PAGAMENT", re: "PAG",
+          sub: "SELECT " + aggP.join(", ") + " FROM (" + pag + ") p1" }
+    ];
+    if (vendas) blocos.push({ tab: "VENDAS", col: colDataV.toUpperCase(), rot: "VENDAS (NF-e)", re: "NFV",
+                              sub: "SELECT " + aggV.join(", ") + " FROM (" + vendas + ") v1" });
+    var juntar = function(lista) {
+        if (!lista.length) return null;
+        return "SELECT * FROM " + lista.map(function(b, i) { return "(" + b.sub + ") t" + i; }).join(" CROSS JOIN ");
+    };
+    var comIdx = indices ? blocos.filter(function(b) { return indices[b.tab + "." + b.col]; }) : [];
+    var semIdx = indices ? blocos.filter(function(b) { return !indices[b.tab + "." + b.col]; }) : blocos;
+    var dividir = comIdx.length > 0 && semIdx.length > 0;
+    var rapidas = dividir ? comIdx : blocos, lentas = dividir ? semIdx : [];
+    var nomes = function(l) { return l.map(function(b) { return b.rot; }).join(", "); };
+    return {
+        sql: juntar(blocos), pares: pares, temVendas: !!vendas,
+        alvosIndice: blocos.map(function(b) { return b.tab + "." + b.col; }),
+        semIndice: indices ? semIdx.map(function(b) { return b.tab + "." + b.col; }) : null,
+        sqlN: juntar(rapidas), paresN: rapidas.length, rotN: nomes(rapidas),
+        sqlC: juntar(lentas),  paresC: lentas.length,  rotC: nomes(lentas),
+        reC: lentas.length ? new RegExp("^(" + lentas.map(function(b) { return b.re; }).join("|") + ")_") : null
+    };
+};
+
+// Campos lidos da consulta completa. tipo: "tot" compara com tolerância de
+// centavo; os demais comparam exatos.
+var _FP_CAMPOS = [
+    "G_QT", "G_TOT", "G_SIG", "NFC_QT", "NFC_TOT", "NFC_SIG", "NF_QT", "NF_TOT", "NF_SIG",
+    "OUT_QT", "OUT_TOT", "OUT_SIG", "N_CANC", "N_PEND", "N_SVEND",
+    "PAG_QT", "PAG_TOT", "PAG_N", "PAG_SIG", "PAG_SFORMA",
+    "NFV_QT", "NFV_TOT", "NFV_SIG", "NFV_CANC"
+];
+var _fpLerCompleto = function(r) {
+    var o = {};
+    _FP_CAMPOS.forEach(function(k) {
+        var v = r[k] !== undefined ? r[k] : r[k.toLowerCase()];
+        o[k] = Number(v || 0);
+        if (!isFinite(o[k])) o[k] = 0;
+    });
+    return o;
+};
+var _fpDiferente = function(a, b) {
+    for (var i = 0; i < _FP_CAMPOS.length; i++) {
+        var k = _FP_CAMPOS[i];
+        if (/_TOT$/.test(k) ? Math.abs(a[k] - b[k]) > 0.005 : a[k] !== b[k]) return true;
+    }
+    return false;
+};
+var _fpBRL = function(v) { return "R$ " + Number(v || 0).toFixed(2).replace(".", ","); };
+var _fpSinal = function(depois, antes) { return depois > antes ? "↑" : "↓"; };
+// Descreve, por tipo, o que mudou: quantidade e total com sentido (↑ subiu /
+// ↓ caiu) e diferença; "venda alterada" quando só a assinatura mudou.
+var _descreverMudancaCompleta = function(a, b) {
+    var partes = [];
+    [["G", "Gerencial"], ["NFC", "NFC-e"], ["NF", "NF-e"], ["NFV", "NF-e (VENDAS)"], ["OUT", "Outros"]].forEach(function(t) {
+        var p = t[0], sub = [];
+        var dq = b[p + "_QT"] - a[p + "_QT"], dt = b[p + "_TOT"] - a[p + "_TOT"];
+        if (dq !== 0) sub.push("vendas " + a[p + "_QT"] + " → " + b[p + "_QT"] + " (" + _fpSinal(b[p + "_QT"], a[p + "_QT"]) + " " + (dq > 0 ? "+" : "") + dq + ")");
+        if (Math.abs(dt) > 0.005) sub.push("total " + _fpBRL(a[p + "_TOT"]) + " → " + _fpBRL(b[p + "_TOT"]) + " (" + _fpSinal(b[p + "_TOT"], a[p + "_TOT"]) + " " + (dt > 0 ? "+" : "−") + _fpBRL(Math.abs(dt)) + ")");
+        if (!sub.length && b[p + "_SIG"] !== a[p + "_SIG"]) sub.push("venda alterada (número, vendedor, valor ou tipo)");
+        if (sub.length) partes.push(t[1] + ": " + sub.join(", "));
+    });
+    var dpt = b.PAG_TOT - a.PAG_TOT;
+    if (b.PAG_QT !== a.PAG_QT || Math.abs(dpt) > 0.005)
+        partes.push("Pagamentos: " + a.PAG_QT + " → " + b.PAG_QT + ", " + _fpBRL(a.PAG_TOT) + " → " + _fpBRL(b.PAG_TOT) + " (" + _fpSinal(b.PAG_TOT, a.PAG_TOT) + ")");
+    else if (b.PAG_SIG !== a.PAG_SIG || b.PAG_N !== a.PAG_N)
+        partes.push("Pagamentos: forma ou valor alterado");
+    if (b.N_CANC !== a.N_CANC)       partes.push("canceladas " + a.N_CANC + " → " + b.N_CANC);
+    if (b.NFV_CANC !== a.NFV_CANC)   partes.push("NF-e canceladas " + a.NFV_CANC + " → " + b.NFV_CANC);
+    if (b.N_PEND !== a.N_PEND)       partes.push("NFC-e aguardando autorização " + a.N_PEND + " → " + b.N_PEND);
+    if (b.N_SVEND !== a.N_SVEND)     partes.push("vendas sem vendedor " + a.N_SVEND + " → " + b.N_SVEND);
+    if (b.PAG_SFORMA !== a.PAG_SFORMA) partes.push("pagamentos sem forma " + a.PAG_SFORMA + " → " + b.PAG_SFORMA);
+    return partes.length ? partes.join(" | ") : "alteração detectada";
+};
+var _fpModo           = null;  // null = a decidir; "completo" | "basico"
+var _fpEsquema        = null;  // colunas sondadas (uma vez por banco)
+// ── Modo completo em DUAS partes, escolhidas pelos ÍNDICES (v2.15.0) ────
+// A sondagem lê no catálogo quais colunas de data têm índice (NFCE.DATA,
+// PAGAMENT.DATA, VENDAS.SAIDAD/EMISSAO). Rápida (N) = tabelas COM índice;
+// complementar (C) = tabelas SEM índice (cada leitura percorre a tabela
+// inteira). Antes tudo ia numa consulta só, e numa loja sem índice em
+// PAGAMENT.DATA ela levava 100–200 ms, atrasando também a detecção de venda
+// nova (ciclo de 300–600 ms). Divididas, cada parte tem o seu ritmo medido
+// sozinho: a rápida usa no máximo 1/4 do tempo do banco e a complementar 1/12
+// — juntas, o mesmo teto de 1/3. Se TODAS as tabelas têm índice (ou nenhuma
+// tem) não há o que separar: uma consulta única, folga 3 (1/3), como sempre.
+var _FP_SQL_N = null, _FP_PARES_N = 0, _FP_SQL_C = null, _FP_PARES_C = 0;
+var _FP_FOLGA_N = 4, _FP_FOLGA_C = 12;
+var _FP_RE_C = null;                       // campos que vêm da parte complementar (null = não há)
+var _fpRotN = "", _fpRotC = "";            // tabelas de cada parte (para o log)
+var _FP_MIN_C_MS = 250, _FP_MAX_C_MS = 30000;
+var _fpUltN = null, _fpUltC = null;        // últimos vetores vistos (null = sem baseline)
+var _fpMediaN = 0, _fpMediaC = 0;          // médias móveis do tempo de cada consulta
+var _fpMedidoN = false, _fpMedidoC = false;  // 0 ms é medição válida — não usar a média como "já medido"
+var _fpProxN = 0, _fpProxC = 0;            // quando cada parte pode rodar de novo
+var _fpLogPartesFaixa = "", _fpLogPartesTs = 0;
+var _fpAlvoN = function() { return Math.max(_FP_INTERVAL_MS, Math.min(_FP_INTERVALO_MAX_MS, Math.round(_fpMediaN * (_FP_SQL_C ? _FP_FOLGA_N : _FP_FATOR_FOLGA)))); };
+var _fpAlvoC = function() { return Math.max(_FP_MIN_C_MS, Math.min(_FP_MAX_C_MS, Math.round(_fpMediaC * _FP_FOLGA_C))); };
+var _fpEhCampoC = function(k) { return !!_FP_RE_C && _FP_RE_C.test(k); };
+// Vetor completo a partir das duas partes (para comparar e descrever).
+var _fpJuntar = function(n, c) {
+    var o = {};
+    _FP_CAMPOS.forEach(function(k) { o[k] = (_fpEhCampoC(k) ? (c || {})[k] : (n || {})[k]) || 0; });
+    return o;
+};
+var _fpFaixaDe = function(ms) { var f = _FP_FAIXAS[0]; for (var i = 0; i < _FP_FAIXAS.length; i++) if (ms >= _FP_FAIXAS[i]) f = _FP_FAIXAS[i]; return f; };
+var _fpRegistrarParte = function(parte, ms) {
+    if (parte === "N") { _fpMediaN = _fpMedidoN ? (_fpMediaN * 0.7 + ms * 0.3) : ms; _fpMedidoN = true; }
+    else               { _fpMediaC = _fpMedidoC ? (_fpMediaC * 0.7 + ms * 0.3) : ms; _fpMedidoC = true; }
+    if (!_FP_SQL_C) {
+        // Consulta única (todas com índice, ou nenhuma): um registro por faixa.
+        var f1 = _fpFaixaDe(_fpAlvoN());
+        if (f1 !== _fpLogPartesFaixa && (!_fpLogPartesFaixa || Date.now() - _fpLogPartesTs > 60000)) {
+            logTs("FastPoll: consulta única (" + _fpRotN + ") ~" + Math.round(_fpMediaN) + " ms → a cada ~" + _fpAlvoN() +
+                  " ms (no máximo 1/3 do tempo do banco)." +
+                  (_fpMediaN > 100 ? " Consulta lenta: veja o aviso de índices." : ""));
+            _fpLogPartesFaixa = f1; _fpLogPartesTs = Date.now();
+        }
+        return;
+    }
+    if (!_fpMedidoN || !_fpMedidoC) return; // registra quando as duas já foram medidas
+    var faixa = _fpFaixaDe(_fpAlvoN()) + "/" + _fpFaixaDe(Math.min(_fpAlvoC(), 3000));
+    if (faixa !== _fpLogPartesFaixa && (!_fpLogPartesFaixa || Date.now() - _fpLogPartesTs > 60000)) {
+        logTs("FastPoll: consulta rápida (" + _fpRotN + ", com índice) ~" + Math.round(_fpMediaN) + " ms → a cada ~" + _fpAlvoN() +
+              " ms | complementar (" + _fpRotC + ", sem índice) ~" + Math.round(_fpMediaC) + " ms → a cada ~" + _fpAlvoC() +
+              " ms (juntas, no máximo 1/3 do tempo do banco).");
+        _fpLogPartesFaixa = faixa; _fpLogPartesTs = Date.now();
+    }
+};
+// ── Mudança pendente (v2.15.2/v2.15.3): UM refresh por movimento ───────
+// O caixa grava venda (NFCE) e pagamento (PAGAMENT) em transações separadas,
+// com alguns centésimos de segundo entre elas — e, com as duas partes do
+// fast-poll, cada tabela é vista numa leitura diferente. Gerar a cada leitura
+// que muda dava 2 ou 3 refresh por movimento (log da loja):
+//   - venda nova: venda e, ~1 s depois, o pagamento;
+//   - venda excluída: a venda sai e, depois, o pagamento sai;
+//   - gerencial convertido em NFC-e: some do gerencial e fica "aguardando
+//     autorização" (~2–3 s), vira NFC-e autorizada, e o pagamento muda.
+// Agora toda mudança abre uma PENDÊNCIA e a geração espera o movimento
+// terminar, com prazos curtos:
+//   - a outra parte é lida pelo menos uma vez depois da última mudança;
+//   - mudou a QUANTIDADE (venda entrou ou saiu): espera o pagamento mudar
+//     (relendo a cada meia consulta), no máximo _FP_ESPERA_PAG_MS;
+//   - NFC-e "aguardando autorização" subiu: espera a autorização (o
+//     pendente voltar), no máximo _FP_ESPERA_AUT_MS.
+// Então gera UMA vez, com tudo, e uma linha no log. Um temporizador gera de
+// qualquer jeito se as leituras falharem.
+var _FP_ESPERA_PAG_MS = 1500;
+var _FP_ESPERA_AUT_MS = 8000;
+// Teto da pendência desde a 1ª mudança: com vendas chegando sem pausa, cada
+// mudança reabriria a espera e a tela nunca atualizaria.
+var _FP_PEND_MAX_MS = 2000, _FP_PEND_MAX_AUT_MS = 10000;
+var _fpTetoPendente = function(p) { return p.inicio + (p.esperaAut ? _FP_PEND_MAX_AUT_MS : _FP_PEND_MAX_MS); };
+var _fpPendente = null;
+var _FP_RE_QT = /^(G|NFC|NF|OUT|NFV)_QT$/;
+var _fpArmarPendente = function(p) {
+    clearTimeout(p.t);
+    var limite = Math.min(Math.max(p.atePag || 0, p.ateAut || 0, Date.now()) + 1500, _fpTetoPendente(p)) - Date.now();
+    p.t = setTimeout(function() { if (_fpPendente === p) _fpFecharPendente(); }, limite);
+};
+var _fpFecharPendente = function() {
+    var p = _fpPendente;
+    if (!p) return;
+    _fpPendente = null;
+    clearTimeout(p.t);
+    var b = _fpJuntar(_fpUltN, _fpUltC);
+    if (!_fpDiferente(p.a, b)) return; // o movimento se desfez sozinho: nada a gerar
+    logTs("FastPoll: " + _descreverMudancaCompleta(p.a, b) + " → regerando.");
+    _fpRegerar(p.dh);
+};
+var _fpDescartarPendente = function() {
+    if (_fpPendente) { clearTimeout(_fpPendente.t); _fpPendente = null; }
+};
+// Chamada após CADA leitura bem-sucedida do modo completo em duas partes.
+// antes/depois = vetores completos (as duas partes) antes e depois da leitura.
+var _fpLeituraParte = function(parte, mudou, antes, depois, dh) {
+    var agora = Date.now();
+    var p = _fpPendente;
+    if (mudou) {
+        if (!p) {
+            p = _fpPendente = { a: antes, dh: dh, inicio: agora, esperaPag: false, pagOk: false, atePag: 0,
+                                esperaAut: false, autOk: false, ateAut: 0, t: null };
+        }
+        p.parteMud = parte; p.outroLido = false;
+        if (parte === "N") _fpProxC = 0; else _fpProxN = 0; // a outra parte, já
+        var qtMudou  = _FP_CAMPOS.some(function(k) { return _FP_RE_QT.test(k) && depois[k] !== antes[k]; });
+        var pagMudou = _FP_CAMPOS.some(function(k) { return /^PAG_/.test(k) && depois[k] !== antes[k]; });
+        if (qtMudou && !pagMudou) { p.esperaPag = true; p.pagOk = false; p.atePag = agora + _FP_ESPERA_PAG_MS; }
+        if (pagMudou) p.pagOk = true;
+        if (depois.N_PEND > antes.N_PEND) { p.esperaAut = true; p.autOk = false; p.ateAut = agora + _FP_ESPERA_AUT_MS; }
+        _fpArmarPendente(p);
+    } else if (!p) {
+        return;
+    } else if (parte !== p.parteMud) {
+        p.outroLido = true;
+    }
+    if (p.esperaAut && !p.autOk && depois.N_PEND <= p.a.N_PEND) p.autOk = true;
+    var pagPronto = !p.esperaPag || p.pagOk || agora >= p.atePag;
+    var autPronto = !p.esperaAut || p.autOk || agora >= p.ateAut;
+    if ((p.outroLido && pagPronto && autPronto) || agora >= _fpTetoPendente(p)) { _fpFecharPendente(); return; }
+    // Esperando o pagamento: relê a parte que tem a PAGAMENT logo (meia consulta).
+    if (!pagPronto) {
+        if (_fpEhCampoC("PAG_QT")) _fpProxC = Math.min(_fpProxC, agora + Math.max(50, Math.round(_fpMediaC * 0.5)));
+        else _fpProxN = Math.min(_fpProxN, agora + Math.max(50, Math.round(_fpMediaN * 0.5)));
+    }
+};
+var _fpUltimoOkTs     = 0;     // instante da última consulta rápida bem-sucedida
+// Fast-poll completo saudável = já cobre tudo que o pollStatus compara (e mais).
+// Nesse caso o pollStatus não regera por conta própria (v2.13.0) e roda bem
+// mais espaçado (v2.15.0) — ele também percorre a PAGAMENT inteira quando não
+// há índice.
+var _fpUltimoOkTsC = 0; // última leitura bem-sucedida da parte complementar
+var _fpCompletoSaudavel = function() {
+    // v2.15.5: com duas partes, a complementar também precisa estar em dia —
+    // senão mudanças só nela (ex.: forma de pagamento) não eram vistas por
+    // ninguém: o fast-poll falhando e o pollStatus achando que estava tudo bem.
+    return _fpModo === "completo" && Date.now() - _fpUltimoOkTs < Math.max(1500, _fpAlvoN() * 2 + 500) &&
+        (!_FP_SQL_C || Date.now() - _fpUltimoOkTsC < Math.max(3000, _fpAlvoC() * 2 + 1000));
+};
+
+// Sonda o esquema (NFCE, PAGAMENT, VENDAS) UMA vez por banco e decide o modo:
+// monta a consulta completa a partir das colunas que existem e a executa uma
+// vez de teste; se o banco recusar, fica no modo básico. Também define
+// _fpTemVendedor/_FP_SQL do modo básico (substitui a sondagem só de VENDEDOR).
+// v2.15.0: também lê no catálogo quais colunas de data têm índice (mesma
+// conexão, uma consulta depois da outra) e divide a consulta completa por isso.
+// Timeout de 5 s: sem ele, uma sondagem pendurada deixava _fpBusy preso e o
+// fast-poll parado para sempre.
+var _fpSondar = function(db, gen, done) {
+    var _fim = false;
+    var _t = setTimeout(function() {
+        if (_fim) return; _fim = true;
+        try { _matarConexao(db); } catch(_) {}
+        if (gen === _fpGen) _fpDb = null;
+        done();
+    }, 5000);
+    var concluir = function() { if (_fim) return; _fim = true; clearTimeout(_t); done(); };
+    db.query(
+        "SELECT TRIM(RDB$RELATION_NAME) AS T, TRIM(RDB$FIELD_NAME) AS C FROM RDB$RELATION_FIELDS " +
+        "WHERE TRIM(RDB$RELATION_NAME) IN ('NFCE','PAGAMENT','VENDAS')",
+        [],
+        function(err, rows) {
+            if (_fim || gen !== _fpGen) return concluir();
+            // Falha na sondagem: estado continua "a decidir" e tenta de novo na
+            // próxima conexão; enquanto isso roda o básico, que serve em qualquer esquema.
+            if (err || !rows) return concluir();
+            var esq = { NFCE: {}, PAGAMENT: {}, VENDAS: {} };
+            rows.forEach(function(r) {
+                var t = String(r.T || r.t || "").trim().toUpperCase(), c = String(r.C || r.c || "").trim().toUpperCase();
+                if (esq[t] && c) esq[t][c] = true;
+            });
+            _fpEsquema = esq;
+            var _vend = !!esq.NFCE.VENDEDOR;
+            if (_fpTemVendedor !== _vend) {
+                _fpTemVendedor = _vend;
+                _FP_SQL = _montarFpSql(_fpTemVendedor);
+                logDebug("FastPoll: coluna nfce.VENDEDOR " + (_vend ? "detectada" : "ausente") + ".");
+            }
+            db.query(_FP_SQL_INDICES, [], function(errI, rowsI) {
+                if (_fim || gen !== _fpGen) return concluir();
+                // Catálogo ilegível: segue sem dividir (consulta única) — só diagnóstico.
+                var idx = null;
+                if (!errI && rowsI) {
+                    idx = {};
+                    rowsI.forEach(function(r) {
+                        idx[String(r.T || r.t || "").trim().toUpperCase() + "." + String(r.C || r.c || "").trim().toUpperCase()] = true;
+                    });
+                } else {
+                    logDebug("FastPoll: catálogo de índices não lido (" + _textoSeguroLog(errI ? (errI.message || errI) : "sem linhas") + ").");
+                }
+                var m = _montarFpSqlCompleto(esq, idx);
+                if (m && m.semIndice) _fpLogIndices(m.alvosIndice, m.semIndice);
+                if (!m) {
+                    _fpModo = "basico";
+                    logTs("FastPoll: modo básico (tabelas sem as colunas mínimas para a detecção completa).");
+                    return concluir();
+                }
+                var dh = hoje();
+                var prm = function(n) { var a = []; for (var i = 0; i < n; i++) a.push(dh, dh); return a; };
+                var falhou = function(e2) {
+                    _fpModo = "basico";
+                    logTs("FastPoll: consulta completa indisponível neste banco (" +
+                          _textoSeguroLog(e2 ? (e2.message || e2) : "sem linhas") + ") — usando o modo básico.");
+                    concluir();
+                };
+                // Testa as duas partes, uma depois da outra (nunca duas consultas ao
+                // mesmo tempo na mesma conexão).
+                db.query(m.sqlN, prm(m.paresN), function(e2, r2) {
+                    if (_fim || gen !== _fpGen) return concluir();
+                    if (e2 || !r2 || !r2.length) return falhou(e2);
+                    // Sem parte complementar (consulta única): nada mais a testar.
+                    var _testarC = m.sqlC ? function(cb) { db.query(m.sqlC, prm(m.paresC), cb); }
+                                          : function(cb) { cb(null, [{}]); };
+                    _testarC(function(e3, r3) {
+                        if (_fim || gen !== _fpGen) return concluir();
+                        if (e3 || !r3 || !r3.length) return falhou(e3);
+                        _fpModo = "completo";
+                        _FP_SQL_N = m.sqlN; _FP_PARES_N = m.paresN; _fpRotN = m.rotN;
+                        _FP_SQL_C = m.sqlC; _FP_PARES_C = m.paresC; _fpRotC = m.rotC;
+                        _FP_RE_C = m.reC;
+                        var _det = "vendas, totais, tipo, vendedor, canceladas, pagamentos (forma/valor)" +
+                                   (m.temVendas ? ", NF-e da tabela VENDAS" : "");
+                        if (m.sqlC) {
+                            logTs("FastPoll: modo completo em duas partes pelos índices — rápida: " + m.rotN +
+                                  " (com índice) | complementar: " + m.rotC + " (sem índice, ritmo mais espaçado). Detecta: " + _det + ".");
+                        } else {
+                            logTs("FastPoll: modo completo em consulta única (" + m.rotN + ") — " +
+                                  (m.semIndice && !m.semIndice.length ? "todas as tabelas com índice." :
+                                   m.semIndice ? "nenhuma tabela com índice (nada a separar)." :
+                                   "catálogo de índices não lido (nada a separar).") + " Detecta: " + _det + ".");
+                        }
+                        concluir();
+                    });
+                });
+            });
+        }
+    );
+};
+
+// Confere no CATÁLOGO do banco (só leitura) se as colunas de data que o
+// fast-poll e o gerador filtram têm índice (índice ativo com a coluna em 1º
+// lugar). Sem índice, cada consulta lê a tabela inteira (medido: 300 mil
+// vendas → ~285 ms a ~1 s em vez de ~11 ms). O sistema é somente leitura e NÃO
+// cria índices: o log diz o que falta para quem administra o banco decidir.
+var _FP_SQL_INDICES =
+    "SELECT TRIM(i.RDB$RELATION_NAME) AS T, TRIM(s.RDB$FIELD_NAME) AS C " +
+    "FROM RDB$INDICES i JOIN RDB$INDEX_SEGMENTS s ON s.RDB$INDEX_NAME = i.RDB$INDEX_NAME " +
+    "WHERE s.RDB$FIELD_POSITION = 0 AND (i.RDB$INDEX_INACTIVE IS NULL OR i.RDB$INDEX_INACTIVE = 0) " +
+    "AND TRIM(i.RDB$RELATION_NAME) IN ('NFCE','PAGAMENT','VENDAS')";
+var _fpLogIndices = function(alvos, faltam) {
+    if (!faltam.length) {
+        logTs("Índices: " + alvos.join(", ") + " — ok (consultas rápidas).");
+    } else {
+        logTs("AVISO índices: sem índice em " + faltam.join(", ") + " — cada leitura percorre a tabela inteira " +
+              "(mais lenta e mais pesada para o banco do caixa). O sistema é somente leitura e não cria índices; " +
+              "peça ao suporte do Small Commerce (ou ao responsável pelo banco) para criar índice nessa(s) coluna(s).");
+    }
+};
+
+// Dispara a regeneração do dia (v2.14.0: SEM cancelar a geração em curso).
+// Antes a geração em andamento era morta e recomeçada a cada mudança: com
+// vendas chegando a cada < ~150 ms sem pausa, nenhuma geração terminava e a
+// tela só atualizava quando o movimento parava. Agora a geração em curso
+// termina (a tela atualiza com ela) e, se chegou mudança no meio, UMA nova
+// geração começa logo em seguida — várias mudanças no meio viram uma só.
+var _regerarAoConcluir = Object.create(null);
+var _fpRegerar = function(dh) {
+    var _ent = cache[dh];
+    if (_ent && _ent.gerando) { _regerarAoConcluir[dh] = true; return; }
+    delete cache[dh];
+    gerarEmBackground(dh, dh, dh, true);
+};
+
+// Conecta (ou reconecta) a conexão persistente do fast-poll.
+// _done flag previne double-callback (timeout + attach concorrentes).
+var _fpConectar = function(cb) {
+    if (_fpConectando) { cb(false); return; }
+    _fpConectando = true;
+    var _minhaGen = _fpGen; // token no momento do attach
+    var opts = {host:FDB_HOST, port:FIREBIRD_PORT, database:FDB_PATH, user:USER, password:PASS,
+                role:null, charset:FB_CHARSET, lowercase_keys:false};
+    var _done = false;
+    var _t = setTimeout(function() {
+        if (_done) return; _done = true;
+        _fpConectando = false;
+        if (_minhaGen === _fpGen) _fpDb = null;
+        cb(false);
+    }, 3000);
+    try {
+        Firebird.attach(opts, function(err, db) {
+            if (_done) { if (!err && db) { try { db.detach(); } catch(_) {} } return; }
+            _done = true;
+            clearTimeout(_t);
+            _fpConectando = false;
+            // Geração obsoleta: o fast-poll foi reiniciado durante o attach.
+            // Descarta esta conexão sem tocar em _fpDb (que já é da nova geração).
+            if (_minhaGen !== _fpGen) {
+                if (!err && db) { try { _matarConexao(db); } catch(_) {} }
+                cb(false);
+                return;
+            }
+            if (err || !db) { _fpDb = null; cb(false); return; }
+            _fpDb = db;
+            // Esquema e modo (completo/básico) são sondados UMA vez por banco
+            // (v2.7.9: sondar a cada reconexão gerou 99,8% do log num Firebird
+            // instável). Ver _fpSondar.
+            if (_fpModo !== null) { cb(true); return; }
+            _fpSondar(db, _minhaGen, function() { cb(_minhaGen === _fpGen && _fpDb === db); });
+        });
+    } catch(syncErr) {
+        // Firebird.attach nunca deveria lançar sincronamente, mas por segurança:
+        if (!_done) {
+            _done = true; clearTimeout(_t); _fpConectando = false;
+            if (_minhaGen === _fpGen) _fpDb = null;
+            cb(false);
+        }
+    }
+};
+
+// Executa um ciclo do fast-poll.
+// Reutiliza _fpDb se disponível; reconecta silenciosamente se necessário.
+var _fpPoll = function() {
+    if (!Firebird || !dbStatus.ok || _fpBusy || _fpConectando) return;
+    var _agoraFp = Date.now();
+    // Lendo a cópia offline: os dados só mudam quando a cópia é trocada (e a
+    // troca já regera o relatório) — não precisa consultar a cada 15 ms.
+    if (_offline && _offline.lendoCopia() && _agoraFp - _fpInicioCiclo < 2000) return;
+    // Modo completo: cada parte no seu ritmo (ver "Modo completo em DUAS partes").
+    // A complementar tem prioridade quando as duas estão em dia, para nunca
+    // ficar para trás; mesmo assim a rápida roda no máximo 1 ciclo depois.
+    var _parteFp = null;
+    if (_fpModo === "completo" && _FP_SQL_N) {
+        if (_FP_SQL_C && _agoraFp >= _fpProxC) _parteFp = "C";
+        else if (_agoraFp >= _fpProxN) _parteFp = "N";
+        else return;
+    } else if (_agoraFp - _fpInicioCiclo < _fpIntervaloAlvo()) return; // folga para o banco (ver _FP_FATOR_FOLGA)
+    _fpInicioCiclo = _agoraFp;
+    _fpBusy = true;
+    var dh = hoje();
+
+    // Virada de dia: reseta baseline para não comparar hoje com ontem
+    if (_fpDhAtual && _fpDhAtual !== dh) {
+        _fpUltimoQt    = -1;
+        _fpUltimoTot   = -1;
+        _fpUltimoPend  = -1;
+        _fpUltimoSvend  = -1;
+        _fpUltimoSforma = -1;
+        _fpUltN = null; _fpUltC = null; _fpDescartarPendente();
+        logTs("FastPoll: virada de dia (" + _fpDhAtual + " → " + dh + ") — baseline resetado.");
+    }
+    _fpDhAtual = dh;
+
+    var _paramsBasico = function() {
+        var p = [];
+        for (var _b = 0; _b < _fpNumBlocos(_fpTemVendedor); _b++) { p.push(dh, dh); }
+        return p;
+    };
+    var _executar = function() {
+        // Watchdog: se query não responder em 2s → conexão morta
+        // BUG FIX (v2.15.5): o watchdog e os callbacks guardam a geração e a
+        // conexão DESTE ciclo. Antes, um watchdog/callback atrasado de um ciclo
+        // anterior a _iniciarFastPoll (troca de banco, reconexão) matava a
+        // conexão NOVA e zerava o _fpBusy do ciclo novo.
+        // A parte complementar (sem índice) pode passar de 2 s numa tabela
+        // grande: prazo maior para ela, senão nunca terminava e a cada ciclo
+        // a conexão era derrubada.
+        var _genEx = _fpGen, _dbEx = _fpDb;
+        var _prazoWd = (_fpModo === "completo" && _parteFp === "C") ? Math.max(5000, Math.round(_fpMediaC * 3)) : 2000;
+        var _wdFired = false;
+        var _wdFp = setTimeout(function() {
+            _wdFired = true;
+            try { if (_dbEx) _matarConexao(_dbEx); } catch(_) {}
+            if (_genEx !== _fpGen) return;
+            if (_fpDb === _dbEx) _fpDb = null;
+            _fpBusy = false;
+        }, _prazoWd);
+
+        // ── Modo completo: parte rápida (N) ou complementar (C) ───────────
+        if (_fpModo === "completo" && _FP_SQL_N) {
+            var _parte = _parteFp || "N";
+            var _sqlP = _parte === "N" ? _FP_SQL_N : _FP_SQL_C;
+            var _pc = [], _nPares = _parte === "N" ? _FP_PARES_N : _FP_PARES_C;
+            for (var _bc = 0; _bc < _nPares; _bc++) { _pc.push(dh, dh); }
+            var _dbC = _fpDb, _tqC = Date.now();
+            var _agendar = function() {
+                if (_parte === "N") _fpProxN = _tqC + _fpAlvoN(); else _fpProxC = _tqC + _fpAlvoC();
+            };
+            _dbC.query(_sqlP, _pc, function(errC, rowsC) {
+                if (_wdFired || _genEx !== _fpGen) { clearTimeout(_wdFp); return; }
+                if (errC && /deadlock|conflict|lock/i.test(String(errC.message || errC))) {
+                    // Conflito passageiro com gravação do caixa: só pula este ciclo
+                    // (não troca de modo nem derruba a conexão).
+                    clearTimeout(_wdFp);
+                    _agendar();
+                    _fpBusy = false;
+                    return;
+                }
+                if (errC || !rowsC || !rowsC.length) {
+                    // A consulta falhou: foi ela (ex.: valor maior que o CAST,
+                    // função ausente) ou a conexão? Tenta a básica na MESMA
+                    // conexão. Se a básica funciona, o problema é da completa →
+                    // passa ao modo básico de vez (com log) em vez de derrubar a
+                    // detecção num laço de reconexões. Se falha também, é a conexão.
+                    _dbC.query(_FP_SQL, _paramsBasico(), function(errB, rowsB) {
+                        clearTimeout(_wdFp);
+                        if (_wdFired || _genEx !== _fpGen) { clearTimeout(_wdFp); return; }
+                        if (!errB && rowsB && rowsB.length) {
+                            _fpModo = "basico";
+                            _fpFecharPendente(); // gera o que estava pendente antes de trocar de modo
+                            _fpUltN = null; _fpUltC = null;
+                            logTs("FastPoll: consulta completa passou a falhar (" +
+                                  _textoSeguroLog(errC ? (errC.message || errC) : "sem linhas") + ") — seguindo no modo básico.");
+                            _fpBusy = false;
+                            return;
+                        }
+                        try { _matarConexao(_dbEx); } catch(_) {}
+                        if (_fpDb === _dbEx) _fpDb = null;
+                        _fpBusy = false;
+                    });
+                    return;
+                }
+                clearTimeout(_wdFp);
+                _fpRegistrarParte(_parte, Date.now() - _tqC);
+                _agendar();
+                var atual = _fpLerCompleto(rowsC[0]);
+                var anterior = _parte === "N" ? _fpUltN : _fpUltC;
+                if (_parte === "N") { _fpUltimoOkTs = Date.now(); _fpUltN = atual; } else { _fpUltC = atual; _fpUltimoOkTsC = Date.now(); }
+                if (!_fpBaseFeita && _fpUltN && (!_FP_SQL_C || _fpUltC)) _fpConferirBaseInicial(dh);
+                // Contagem por tipo do /api/status (g/nfc/nf): antes só o pollStatus
+                // a preenchia e ela ficava -1 ("ainda não lido") até a 1ª conferência
+                // — com o fast-poll completo saudável, até 10 s depois de ligar. A
+                // regra é a mesma do pollStatus (sem canceladas, total > 0), então
+                // os dois escrevem os mesmos números. qt/total/ts não são tocados.
+                if (_parte === "N" ? !_fpEhCampoC("G_QT") : _fpEhCampoC("G_QT")) {
+                    var _r2 = function(v) { return Math.round(v * 100) / 100; };
+                    statusAtual = Object.assign({}, statusAtual, {
+                        g:   {qt: atual.G_QT,   tot: _r2(atual.G_TOT)},
+                        nfc: {qt: atual.NFC_QT, tot: _r2(atual.NFC_TOT)},
+                        nf:  {qt: atual.NF_QT,  tot: _r2(atual.NF_TOT)}
+                    });
+                }
+                var _mudou = !!anterior && _fpDiferente(anterior, atual);
+                if (_FP_SQL_C && _fpUltN && _fpUltC) {
+                    // Duas partes: a geração espera o movimento terminar (ver
+                    // "Mudança pendente") — um refresh por venda/exclusão/conversão.
+                    var _antesJ = _parte === "N" ? _fpJuntar(anterior || atual, _fpUltC) : _fpJuntar(_fpUltN, anterior || atual);
+                    _fpLeituraParte(_parte, _mudou, _antesJ, _fpJuntar(_fpUltN, _fpUltC), dh);
+                } else if (_mudou) {
+                    var _a = _parte === "N" ? _fpJuntar(anterior, _fpUltC) : _fpJuntar(_fpUltN, anterior);
+                    var _b = _fpJuntar(_fpUltN, _fpUltC);
+                    logTs("FastPoll: " + _descreverMudancaCompleta(_a, _b) + " → regerando.");
+                    _fpRegerar(dh);
+                }
+                _fpBusy = false;
+            });
+            return;
+        }
+
+        var _tqB = Date.now();
+        _fpDb.query(_FP_SQL, _paramsBasico(), function(err, rows) {
+            clearTimeout(_wdFp);
+            if (!err && rows && rows.length && !_wdFired) _fpRegistrarDuracao(Date.now() - _tqB);
+            // Se watchdog já disparou, descarta callback para evitar duplo processamento
+            if (_wdFired || _genEx !== _fpGen) { clearTimeout(_wdFp); return; }
+
+            if (err || !rows || !rows.length) {
+                try { _matarConexao(_dbEx); } catch(_) {}
+                if (_fpDb === _dbEx) _fpDb = null;
+                _fpBusy = false;
+                return;
+            }
+            var r   = rows[0];
+            var n   = function(k) { return Number(r[k] || r[k.toLowerCase()] || 0); };
+            var qt    = n("FP_QT");
+            var tot   = n("FP_TOT");
+            var pend  = n("FP_PEND");
+            var svend  = n("FP_SVEND");
+            var sforma = n("FP_SFORMA");
+
+            // pend != anterior cobre a autorização de uma NFC-e convertida: o valor
+            // já estava sendo contado pelo PAGAMENT, então qt/tot podem não mudar —
+            // mas VENDEDOR/HORA/NATUREZA acabaram de ser preenchidos e a tela
+            // precisa recarregar para sair de "(aguardando autorização)".
+            if (_fpUltimoQt >= 0 &&
+                (qt !== _fpUltimoQt || Math.abs(tot - _fpUltimoTot) > 0.005 ||
+                 pend !== _fpUltimoPend || svend !== _fpUltimoSvend ||
+                 sforma !== _fpUltimoSforma)) {
+
+                logTs("FastPoll: " + _descreverMudanca(_fpUltimoQt, qt, _fpUltimoTot, tot) +
+                      (pend !== _fpUltimoPend ? " | NFC-e aguardando autorização: " + _fpUltimoPend + " → " + pend : "") +
+                      (svend !== _fpUltimoSvend ? " | vendas sem vendedor: " + _fpUltimoSvend + " → " + svend : "") +
+                      (sforma !== _fpUltimoSforma ? " | pagamentos sem forma: " + _fpUltimoSforma + " → " + sforma : "") +
+                      " → regerando.");
+                // NÃO atualiza statusAtual nem dispara SSE aqui.
+                // Ambos ocorrem em gerarEmBackground proc.on("close") quando HTML está pronto,
+                // garantindo que o browser recarregue direto para a página final sem paginaLoading.
+
+                _fpRegerar(dh);
+            } else if (_fpUltimoQt < 0) {
+                _fpConferirBaseInicial(dh); // 1ª linha de base do modo básico
+            }
+
+            _fpUltimoQt    = qt;
+            _fpUltimoTot   = tot;
+            _fpUltimoPend  = pend;
+            _fpUltimoSvend  = svend;
+            _fpUltimoSforma = sforma;
+            _fpBusy = false;
+        });
+    };
+
+    if (_fpDb) {
+        _executar();
+    } else {
+        _fpConectar(function(ok) {
+            if (ok) _executar();
+            else     _fpBusy = false;
+        });
+    }
+};
+
+// Inicia (ou reinicia limpo) o fast-poll.
+// Chamada sempre que o banco é configurado ou reconectado.
+var _iniciarFastPoll = function() {
+    if (_fpIntervalId) clearInterval(_fpIntervalId);
+    _fpGen++;               // invalida qualquer attach em voo da geração anterior
+    _fpUltimoQt = _fpUltimoTot = _fpUltimoPend = _fpUltimoSvend = _fpUltimoSforma = -1;
+    _fpBaseFeita = false;
+    // Banco novo (ou reconfigurado): esquema e modo voltam a ser sondados.
+    _fpUltN = null; _fpUltC = null; _fpDescartarPendente();
+    _fpModo = null; _fpEsquema = null; _fpTemVendedor = null;
+    _fpMediaMs = 0; _fpInicioCiclo = 0; // banco novo: tempo de consulta medido de novo
+    _fpMediaN = 0; _fpMediaC = 0; _fpMedidoN = false; _fpMedidoC = false; _fpProxN = 0; _fpProxC = 0; _fpLogPartesFaixa = "";
+    _FP_SQL = _montarFpSql(false); _FP_SQL_N = null; _FP_PARES_N = 0; _FP_SQL_C = null; _FP_PARES_C = 0;
+    _FP_RE_C = null; _fpRotN = ""; _fpRotC = ""; _fpUltimoOkTsC = 0;
+    _fpDhAtual  = null;
+    _fpBusy     = false;
+    _fpConectando = false;  // libera o flag caso um attach anterior tenha ficado preso
+    if (_fpDb) { try { _matarConexao(_fpDb); } catch(_) {} _fpDb = null; }
+    _fpIntervalId = setInterval(_fpPoll, _FP_INTERVAL_MS);
+    logTs("Fast-poll iniciado (" + _FP_INTERVAL_MS + " ms) — detecção de vendas em tempo real.");
+};
+
+// ---------------------------------------------------------------------------
+// Polling direto via Firebird — executa a cada POLL_INTERVAL (config.json).
+//  • Query única com IIF detecta mudanças por tipo: Gerencial(99), NFC-e(65), NF-e(55)
+//    e emite ">" (subiu) ou "<" (caiu) por tipo no log antes de regenerar.
+//  • Timeout de 5 s por consulta (_QUERY_TIMEOUT_MS): se ultrapassar, cancela
+//    o socket TCP e refaz após 500 ms.
+//  • Somente leitura: não corrige nada no banco (correção de horário é só na
+//    tela, feita pelo gerador — ver "CORREÇÃO DE HORÁRIO — SÓ NA TELA").
+// ---------------------------------------------------------------------------
+var _pollBusy = false;
+var _pollIntervalId = null; // guarda o ID do setInterval ativo — evita acúmulo de loops
+var _QUERY_TIMEOUT_MS = 5000;   // 5 segundos — cancela e refaz se exceder
+// REGRA DE HORA FIXA (v2.7.7) — janela ampliada de 30 min para 1 HORA a
+// pedido do usuário. Define até quando olhar para trás procurando vendas
+// com horário a corrigir. Vendas mais antigas que isso são deixadas em paz
+// (assume-se que o horário delas é o correto, não um relógio adiantado).
+// CONFIGURÁVEL (v2.10.0): a janela agora vem de "janelaCorrecaoHoraMin" no
+// config.json (editável nas telas de configurações). Padrão: 180 min (3 h);
+// limites: 5 min a 720 min (12 h). O gerador lê a mesma chave, então os dois
+// lados sempre aplicam a mesma janela.
+var JANELA_HORA_PADRAO_MIN = 180;
+var JANELA_HORA_MIN_MIN    = 5;
+var JANELA_HORA_MAX_MIN    = 720;
+var _normalizarJanelaHoraMin = function(v) {
+    var n = parseInt(v, 10);
+    if (!(n >= JANELA_HORA_MIN_MIN && n <= JANELA_HORA_MAX_MIN)) return JANELA_HORA_PADRAO_MIN;
+    return n;
+};
+var _HORA_GERENCIAL_JANELA_MS    = _normalizarJanelaHoraMin(appCfg.janelaCorrecaoHoraMin) * 60 * 1000; // janela de verificação retroativa para gerenciais
+
+
+// ---------------------------------------------------------------------------
+// Fuso horário informado pelo browser (POST /api/hora-usuario a cada 30 s).
+// Hoje é usado apenas para diagnóstico (log em modo debug): a correção de
+// horário (só na tela) usa o relógio LOCAL da máquina, o mesmo do Firebird.
+// CÓDIGO MORTO REMOVIDO (v2.9.0): agoraAjustado(),
+// que convertia a hora para o fuso do browser, não era mais chamada em lugar
+// nenhum desde que essa troca foi feita.
+// ---------------------------------------------------------------------------
+var _clientTzOffsetMs = 0; // atualizado via /api/hora-usuario
+
+// Destrói a conexão Firebird na força — corta o socket TCP imediatamente,
+// sem esperar o banco responder (db.detach() aguarda; socket.destroy() não).
+var _matarConexao = function(db) {
+    // node-firebird expõe o socket em propriedades que variam por versão.
+    // Tenta as variações conhecidas em ordem para garantir destroy real.
+    try {
+        var conn = db && db._connection;
+        var sock = conn && (conn._socket || conn._Socket || conn.socket || conn._sock);
+        if (sock && typeof sock.destroy === "function") {
+            sock.destroy();
+        } else if (conn && typeof conn.destroy === "function") {
+            conn.destroy(); // fallback: destrói o objeto de conexão inteiro
+        }
+    } catch(_) {}
+    try { if (db && typeof db.detach === "function") db.detach(); } catch(_) {}
+};
+
+// Mata todos os processos filhos pendentes (gerarEmBackground).
+// Chamado quando poll ou attach ultrapassam o timeout — garante que
+// subprocessos aguardando o mesmo banco também sejam encerrados.
+var _matarTodosFilhos = function(motivo) {
+    _descartarReserva();
+    var pids = _spawnedPids.slice();
+    if (!pids.length) return;
+    logTs("Matando " + pids.length + " processo(s) filho(s) " + (motivo || "por timeout de poll") + ".");
+    pids.forEach(function(pid) {
+        if (process.platform === "win32") {
+            // spawn (não-bloqueante) evita travar o event loop até 3s/pid
+            try { childProc.spawn("taskkill", ["/F", "/T", "/PID", String(pid)], {stdio:"ignore", detached:true}); } catch(_) {}
+        } else {
+            try { process.kill(pid, "SIGKILL"); } catch(_) {}
+        }
+    });
+    _spawnedPids = [];
+};
+
+// Executa uma query com hard-timeout de _QUERY_TIMEOUT_MS ms.
+// Se estourar: destrói o socket TCP (cancela de verdade), mata processos filhos
+// pendentes e chama cb(null, null). O caller detecta (rows===null && e===null) e agenda retry.
+var _executarConsultaPoll = function(db, sql, params, cb) {
+    var encerrado = false;
+
+    var timer = setTimeout(function() {
+        if (encerrado) return;
+        encerrado = true;
+        logTs("Poll: query passou de " + (_QUERY_TIMEOUT_MS/1000) + "s — cortando socket e refazendo.");
+        // BUG FIX (auditoria v2.5.0 — CONCORRÊNCIA/DANO COLATERAL): esta função
+        // chamava _matarTodosFilhos(), que mata TODA geração de relatório em
+        // andamento no processo — inclusive relatórios por período/intervalo
+        // que podem estar rodando há vários minutos de forma totalmente
+        // legítima (ver SPAWN_TIMEOUT_CFG, que aceita até 600s) e SEM NENHUMA
+        // relação com esta query de poll específica travar. Um soluço
+        // passageiro de rede/disco no poll (5s) não deveria derrubar um
+        // relatório de meses que um usuário está esperando pacientemente.
+        // O poll já se recupera sozinho apenas cortando a SUA PRÓPRIA conexão
+        // (_matarConexao(db), abaixo) — não precisa (e não deve) matar
+        // subprocessos de terceiros para isso.
+        _matarConexao(db);
+        cb(null, null);
+    }, _QUERY_TIMEOUT_MS);
+
+    db.query(sql, params, function(e, rows) {
+        if (encerrado) return; // timeout já disparou — ignora resposta tardia
+        encerrado = true;
+        clearTimeout(timer);
+        cb(e, rows);
+    });
+};
+
+// ---------------------------------------------------------------------------
+// CORREÇÃO DE HORÁRIO — SÓ NA TELA (v2.14.0)
+// O servidor não corrige mais horários no banco (antes: UPDATE em nfce e
+// pagament). Quem decide a hora EXIBIDA é o gerador, pela mesma regra de
+// sempre (futuro, ou de 3 min até a janela configurada → hora da 1ª visão),
+// gravando a decisão só no hora-fixada-cache.json, fora do banco.
+// "Primeira visão": ao ligar, ao reconectar e ao trocar de banco, a primeira
+// geração do dia recebe --linha-de-base e só REGISTRA o que já existe (sem
+// corrigir) — não dá para saber como essas vendas chegaram. Na virada do dia
+// não há linha de base: o dia novo começa vazio e tudo é primeira visão.
+// ---------------------------------------------------------------------------
+var _linhaDeBasePendente = true; // boot
+var _resetarBaselineCorrecoes = function(semLinhaDeBase) {
+    _linhaDeBasePendente = !semLinhaDeBase;
+};
+
+// pollStatus também respeita a folga para o banco: o próximo ciclo só começa
+// depois de 3× a duração do anterior (cada ciclo abre conexão e varre o dia).
+var _pollInicioCiclo = 0, _pollMediaMs = 0;
+var _pollUlt = null; // última leitura do pollStatus {qt, tot, dh} — linha de base própria (v2.15.5)
+var _pollGen = 0;    // muda a cada início/parada: ciclo de um banco anterior não grava nada
+var pollStatus = function() {
+    if (!Firebird || _pollBusy || !dbStatus.ok) return;
+    if (_pollMediaMs && Date.now() - _pollInicioCiclo < _pollMediaMs * _FP_FATOR_FOLGA) return;
+    // Fast-poll completo saudável já cobre tudo: aqui só uma conferência a cada 10 s.
+    if (_fpCompletoSaudavel() && Date.now() - _pollInicioCiclo < 10000) return;
+    _pollInicioCiclo = Date.now();
+    _pollBusy = true;
+    var _genPoll = _pollGen; // troca de banco no meio do ciclo → resultado descartado
+    var dh   = hoje();
+    var opts = {host:FDB_HOST, port:FIREBIRD_PORT, database:FDB_PATH, user:USER, password:PASS,
+                role:null, charset:FB_CHARSET, lowercase_keys:false};
+
+    // RACE FIX (v2.4.1): antes, o watchdog liberava _pollBusy sem marcar o ciclo
+    // como encerrado. Se o attach/query respondesse depois, o ciclo velho seguia
+    // até o fim e chamava _liberar(db) — zerando o _pollBusy de um ciclo NOVO já
+    // em andamento e permitindo dois pollStatus simultâneos sobre o mesmo banco
+    // (duas conexões, dois _corrigirHorarios*, statusAtual escrito fora de ordem).
+    // _cicloFim garante que apenas o primeiro desfecho encerre o ciclo.
+    var _cicloFim = false;
+
+    // Libera recursos e _pollBusy após qualquer desfecho
+    var _liberar = function(db, reagendar) {
+        if (_cicloFim) { if (db) { try { _matarConexao(db); } catch(_) {} } return; }
+        _cicloFim = true;
+        clearTimeout(_watchdog);
+        clearTimeout(_attachTimer);
+        if (db) { try { _matarConexao(db); } catch(_) {} }
+        var _durPoll = Date.now() - _pollInicioCiclo;
+        _pollMediaMs = _pollMediaMs ? (_pollMediaMs * 0.7 + _durPoll * 0.3) : _durPoll;
+        _pollBusy = false;
+        if (reagendar) setTimeout(pollStatus, 500);
+    };
+
+    // Watchdog de segurança — impede _pollBusy travado para sempre
+    var _watchdog = setTimeout(function() {
+        if (_cicloFim) return;
+        logTs("Poll: watchdog geral de "+(POLL_WATCHDOG_MS/1000)+"s disparado — liberando _pollBusy.");
+        // BUG FIX (auditoria v2.5.0): não mata mais subprocessos de geração de
+        // relatório aqui — ver justificativa detalhada em _executarConsultaPoll.
+        _liberar(_dbRef, false);
+    }, POLL_WATCHDOG_MS);
+
+    // --- Timeout no próprio attach (banco pode demorar a aceitar conexão) ---
+    var _dbRef       = null;
+    var _attachFeito = false;
+    var _attachTimer = setTimeout(function() {
+        if (_attachFeito || _cicloFim) return;
+        _attachFeito = true;
+        logTs("Poll: attach passou de " + (_QUERY_TIMEOUT_MS/1000) + "s — abortando e refazendo.");
+        // BUG FIX (auditoria v2.5.0): não mata mais subprocessos de geração de
+        // relatório aqui — ver justificativa detalhada em _executarConsultaPoll.
+        _liberar(_dbRef, true);
+    }, _QUERY_TIMEOUT_MS);
+
+    Firebird.attach(opts, function(err, db) {
+        // Ciclo já encerrado (timeout de attach ou watchdog): descarta a conexão.
+        if (_attachFeito || _cicloFim) { if (db) { try { _matarConexao(db); } catch(_) {} } return; }
+        _attachFeito = true;
+        clearTimeout(_attachTimer);
+        _dbRef = db;
+
+        if (err) { _liberar(db, false); return; }
+
+        // SQL única com IIF por tipo: gerencial(99), NFC-e(65), NF-e(55) e pagamentos.
+        // Detecta > e < para cada tipo a cada POLL_INTERVAL (config.json).
+        // NF-e (modelo=55) estava ausente na versão anterior — agora incluído.
+        var sql =
+            "SELECT" +
+            " COALESCE(SUM(IIF(tipo=99,1,0)),0) AS QT_G," +
+            " COALESCE(SUM(IIF(tipo=99,tot,0)),0) AS TOT_G," +
+            " COALESCE(SUM(IIF(tipo=65,1,0)),0) AS QT_NFC," +
+            " COALESCE(SUM(IIF(tipo=65,tot,0)),0) AS TOT_NFC," +
+            " COALESCE(SUM(IIF(tipo=55,1,0)),0) AS QT_NF," +
+            " COALESCE(SUM(IIF(tipo=55,tot,0)),0) AS TOT_NF," +
+            " COALESCE(SUM(IIF(tipo=0,1,0)),0) AS QT_PAG," +
+            " COALESCE(SUM(IIF(tipo=0,tot,0)),0) AS TOT_PAG" +
+            " FROM (" +
+            " SELECT COALESCE(modelo,65) AS tipo, total AS tot" +
+            " FROM nfce" +
+            " WHERE data >= ? AND data < ? + 1" +
+            " AND COALESCE(cancelado,'N') NOT IN ('S','T')" +
+            " AND total > 0" +
+            " UNION ALL" +
+            " SELECT 0 AS tipo, valor AS tot" +
+            " FROM pagament" +
+            " WHERE data >= ? AND data < ? + 1" +
+            " AND valor > 0" +
+            " AND SUBSTRING(forma FROM 1 FOR 2) NOT IN ('00','13')" +
+            " ) t";
+
+        _executarConsultaPoll(db, sql, [dh, dh, dh, dh], function(e, rows) {
+            // rows===null && e===null → timeout do socket — _matarConexao já foi chamado
+            if (rows === null && e === null) {
+                _liberar(null, true); // refaz após 500 ms
+                return;
+            }
+
+            if (e || !rows || !rows.length) { _liberar(db, false); return; }
+
+            // Se o watchdog disparou enquanto a query rodava, este ciclo já foi
+            // encerrado e um novo pode estar ativo — não escreve statusAtual.
+            if (_cicloFim) { try { _matarConexao(db); } catch(_) {} return; }
+            if (_genPoll !== _pollGen) { _liberar(db, false); return; } // leitura do banco anterior
+
+            var r = rows[0];
+            // Suporte a casing variável retornado pelo node-firebird
+            var n = function(k) { return Number(r[k] || r[k.toLowerCase()] || 0); };
+
+            var qtG   = n("QT_G"),   totG   = n("TOT_G");
+            var qtNFC = n("QT_NFC"), totNFC = n("TOT_NFC");
+            var qtNF  = n("QT_NF"),  totNF  = n("TOT_NF");
+            var qtPAG = n("QT_PAG"), totPAG = n("TOT_PAG");
+
+            // Totais combinados — mantidos para SSE, arScript e cache
+            var qt  = qtG + qtNFC + qtNF + qtPAG;
+            var tot = totG + totNFC + totNF + totPAG;
+
+            // Busy-flag interno de cada função impede paralelismo — detecção a cada poll (≤200ms).
+            // Não precisa de throttle: o flag libera assim que a query Firebird termina (~10-100ms local).
+
+            // -------------------------------------------------------------------
+            // Detecção de mudança por tipo: gerencial, NFC-e, NF-e
+            // Emite ">" quando subiu e "<" quando caiu.
+            // Detectado a cada POLL_INTERVAL (config.json).
+            // -------------------------------------------------------------------
+            var novoTipo = {
+                g:   {qt: qtG,   tot: totG},
+                nfc: {qt: qtNFC, tot: totNFC},
+                nf:  {qt: qtNF,  tot: totNF}
+            };
+            var resultado = _descreverMudancaTipo(statusAtual, novoTipo);
+
+            // Fallback: se os campos por tipo ainda não têm baseline (primeira execução
+            // do poll), compara com a leitura ANTERIOR do próprio pollStatus.
+            // BUG FIX (v2.15.5): antes comparava com statusAtual.qt/total, que vêm
+            // da GERAÇÃO e contam só vendas — aqui qt/tot somam vendas E
+            // pagamentos (UNION com a PAGAMENT). Ao ligar dava sempre "Dados
+            // alterados: vendas 400 > 201 → regerando" e uma geração à toa.
+            if (!resultado.mudou && _pollUlt && _pollUlt.dh === dh &&
+                (qt !== _pollUlt.qt || Math.abs(tot - _pollUlt.tot) > 0.005)) {
+                resultado = {
+                    mudou: true,
+                    descricao: _descreverMudanca(_pollUlt.qt, qt, _pollUlt.tot, tot)
+                };
+            }
+            _pollUlt = { qt: qt, tot: tot, dh: dh };
+
+            if (resultado.mudou && _fpCompletoSaudavel()) {
+                // O fast-poll completo já regerou esta mudança (ver _fpCompletoSaudavel).
+                logDebug("pollStatus: " + resultado.descricao + " — já tratado pelo fast-poll.");
+            } else if (resultado.mudou) {
+                logTs("Dados alterados: " + resultado.descricao + " → regerando.");
+                // SSE NÃO é disparado aqui. É disparado em gerarEmBackground (proc.on("close"))
+                // quando o HTML está pronto, via _pollTriggered=true.
+                // Disparar SSE antes do HTML existir forçava o browser para paginaLoading,
+                // adicionando 800ms de poll + 600ms de animação a cada detecção de venda.
+                // BUG FIX (v2.15.5): pelo mesmo caminho do fast-poll — não apaga
+                // a geração em curso (com vendas sem pausa nenhuma terminava).
+                _fpRegerar(dh);
+            }
+
+            // qt/total/ts ficam com a GERAÇÃO (a tela compara com eles): gravar
+            // aqui a soma vendas+pagamentos fazia a página recarregar à toa.
+            statusAtual = Object.assign({}, statusAtual, {
+                g:   {qt: qtG,   tot: totG},
+                nfc: {qt: qtNFC, tot: totNFC},
+                nf:  {qt: qtNF,  tot: totNF}
+            });
+            _liberar(db, false);
+        });
+    });
+};
+
+// ---------------------------------------------------------------------------
+// Regeneração periódica do relatório de hoje — loop intencional que garante
+// que o HTML esteja sempre atualizado em disco.
+// A DETECÇÃO de mudanças de dados é feita exclusivamente pelo pollStatus;
+// agendarRegen apenas regenera se nenhuma geração estiver em andamento.
+// ---------------------------------------------------------------------------
+
+// Cooldown mínimo entre regenerações após sucesso.
+// CORREÇÃO DE BUG: sem esse cooldown, o agendarRegen deletava o cache e
+// relançava a geração (gerando:true) antes que o browser conseguisse redirecionar
+// e exibir o HTML (o redirect leva ~600ms após o paginaLoading detectar pronto:true).
+// Resultado: loop infinito em paginaLoading mesmo com o HTML já gerado.
+// O cooldown precisa ser maior que: SPAWN_TIMEOUT_CFG + 600ms de animação + margem.
+// Bug do loop em paginaLoading foi eliminado (SSE só dispara após HTML pronto).
+//
+// REVERTIDO PARA 500ms (v2.6.4) — a auditoria v2.5.0 tinha elevado este valor
+// para 5 min tratando agendarRegen como "regeneração desnecessária", mas isso
+// causou uma REGRESSÃO REAL na detecção de vendas, relatada pelo usuário
+// ("fast-poll não detecta imediatamente"). O motivo: o fast-poll detecta a
+// venda em 50ms e chama gerarEmBackground corretamente — mas gerarEmBackground
+// não é a única coisa que precisa acontecer. Quando o cache do dia acabou de
+// ser regravado (ent.geradoEm recente), este cooldown de 5 min BLOQUEAVA a
+// próxima regeneração do agendarRegen por 5 minutos inteiros; qualquer venda
+// cuja regeneração falhasse ou fosse superada (kill-and-restart do fast-poll,
+// spawn que estourou timeout, erro transitório do Firebird) só voltava a ser
+// refletida na tela na próxima janela de 5 min, em vez de nos ~200ms
+// seguintes. O custo que a auditoria quis eliminar existe, mas é o preço
+// dessa rede de segurança funcionar de fato: 500ms é o valor original,
+// validado em produção pelo autor, e a latência percebida de venda na tela
+// vale muito mais que o custo de CPU ocioso.
+// DESEMPENHO (v2.9.0): o laço anterior regenerava o relatório do dia a cada
+// ~500 ms MESMO SEM NENHUMA MUDANÇA — um processo Node novo + 3 conexões
+// Firebird + consulta do dia inteiro, 24 h por dia, ~2 por segundo. Era a
+// maior carga sobre o banco da loja, o mesmo banco que o próprio log descreve
+// como "instável/sobrecarregado". A v2.6.4 reverteu um cooldown de 5 min
+// porque ele atrasava a RECUPERAÇÃO de falhas; aqui as duas coisas ficam
+// separadas:
+//   • sem HTML válido (erro, conteúdo ausente, cache apagado) → regera já
+//     (a cada _REGEN_APOS_FALHA_MS no máximo, para não martelar banco fora do ar);
+//   • com HTML válido → regera a cada _REGEN_SEGURANCA_MS, só como rede de
+//     segurança. Vendas novas, cancelamentos, autorizações e correções de
+//     horário continuam disparando a regeneração imediata (fast-poll ~50 ms /
+//     pollStatus / correções), que não passa por este laço.
+var _REGEN_CHECK_MS       = 200;    // frequência da verificação (barata: só olha o cache)
+var _REGEN_SEGURANCA_MS   = 15000;  // HTML válido: regeneração preventiva
+var _REGEN_APOS_FALHA_MS  = 1000;   // sem HTML válido: intervalo mínimo entre tentativas
+var _regenUltimaFalhaTs   = 0;
+
+var agendarRegen = function() {
+    setTimeout(function() {
+        try {
+            var dh = hoje();
+            var ent = cache[dh];
+            var agora = Date.now();
+            var podeRegen;
+            if (!ent) {
+                podeRegen = true;
+            } else if (ent.gerando || ent.matando) {
+                podeRegen = false;
+            } else if (ent.erro || !ent.html) {
+                podeRegen = (agora - _regenUltimaFalhaTs) >= _REGEN_APOS_FALHA_MS;
+                if (podeRegen) _regenUltimaFalhaTs = agora;
+            } else {
+                podeRegen = !ent.geradoEm || (agora - ent.geradoEm) >= _REGEN_SEGURANCA_MS;
+            }
+            // Com o banco fora do ar e sem seleção manual pendente, ainda gera
+            // (a página precisa mostrar o erro); em modo de seleção manual não.
+            if (podeRegen && !_aguardandoFdbManual) {
+                delete cache[dh];
+                gerarEmBackground(dh, dh, dh);
+            }
+        } catch(e) {
+            logTs("WARN agendarRegen: " + (e && e.message || e));
+        }
+        agendarRegen(); // sempre reagenda — uma exceção nunca pode matar o laço
+    }, _REGEN_CHECK_MS);
+};
+
+// ---------------------------------------------------------------------------
+// HTML helpers
+// ---------------------------------------------------------------------------
+var htmlFavicon="<link rel=\"icon\" type=\"image/png\" href=\"/favicon.png\">";
+
+var paginaLoading=function(titulo,sub,chavePoll,urlDest){
+    var p="/pronto?k="+encodeURIComponent(chavePoll);
+    var dJs=_jsonParaScript(urlDest);
+    var SC2="</"+"script>";
+    // SVGs injetados como variáveis JS — browser usa sem depender do servidor
+    var jsVars=
+        "var _TMS="+_SPAWN_TIMEOUT_MS+";" + // timeout configurado no servidor
+        "var _SVGT="+JSON.stringify(SVG_TIMER)+";" +
+        "var _SVGR="+JSON.stringify(SVG_RETRY)+";" +
+        "var _SVGW="+JSON.stringify(SVG_WARN)+";";
+
+    return "<!doctype html><html lang=\"pt-br\"><head><meta charset=\"utf-8\">"+htmlFavicon+
+        "<title>Gerando...</title>"+
+        // Aplica tema antes do primeiro render — evita flash
+        "<script>(function(){try{var t=localStorage.getItem('fdb_theme')||(document.cookie.match(/fdb_theme=([^;]+)/)||[])[1]||'ultra-dark';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();"+SC2+
+        "<style>" +
+        "*{box-sizing:border-box}" +
+        "body{margin:0;background:#000;display:flex;align-items:center;justify-content:center;min-height:100vh;font-family:Inter,Arial,sans-serif;color:#ededed}" +
+        ".box{text-align:center;padding:40px 28px;max-width:440px;width:100%}" +
+        // Spinner — velocidade e cor mudam conforme estado
+        ".spin{width:48px;height:48px;border:3px solid rgba(255,255,255,.1);border-top-color:#0ea5e9;" +
+        "border-radius:50%;animation:sp .8s linear infinite;margin:0 auto 24px;transition:border-top-color .25s,animation-duration .25s}" +
+        ".spin.kill{border-top-color:#f87171;animation-duration:.35s}" +
+        ".spin.retry{border-top-color:#fb923c;animation-duration:.55s}" +
+        ".spin.semresp{border-top-color:#71717a;animation-duration:1.2s}" +
+        ".spin.pronto{border-top-color:#4ade80;animation-duration:.5s}" +
+        "@keyframes sp{to{transform:rotate(360deg)}}" +
+        // Título muda de cor conforme estado
+        "h2{margin:0 0 6px;font-size:20px;font-weight:700;transition:color .25s}" +
+        "h2.kill{color:#f87171}" +
+        "h2.retry{color:#fb923c}" +
+        "h2.semresp{color:#71717a}" +
+        "h2.pronto{color:#4ade80}" +
+        ".sub{color:#a1a1aa;font-size:14px}" +
+        ".tempo{color:#71717a;font-size:13px;margin-top:12px;font-variant-numeric:tabular-nums}" +
+        // Caixa de status — aparece abaixo do contador, animada
+        "#sb{display:none;margin-top:18px;padding:13px 16px;border-radius:10px;" +
+        "font-size:13px;font-weight:600;line-height:1.5;text-align:left;animation:fdin .2s ease}" +
+        "@keyframes fdin{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}" +
+        "#sb.kill{background:rgba(248,113,113,.1);color:#f87171;border:1px solid rgba(248,113,113,.35)}" +
+        "#sb.retry{background:rgba(251,146,60,.1);color:#fb923c;border:1px solid rgba(251,146,60,.35)}" +
+        "#sb.semresp{background:rgba(113,113,122,.1);color:#a1a1aa;border:1px solid rgba(113,113,122,.25)}" +
+        "#sb.pronto{background:rgba(74,222,128,.08);color:#4ade80;border:1px solid rgba(74,222,128,.3)}" +
+        ".sr{display:flex;align-items:flex-start;gap:10px}" +   // sb-row
+        ".si{flex-shrink:0;margin-top:1px}" +                   // sb-icon
+        ".st strong{display:block}" +                            // sb-title
+        ".st span{display:block;font-size:11px;font-weight:400;opacity:.8;margin-top:3px}" + // sb-detail
+        "</style></head><body>" +
+        "<div class=\"box\">" +
+        "<div class=\"spin\" id=\"_sp\"></div>" +
+        "<h2 id=\"_ht\">"+escH(titulo)+"</h2>" +
+        "<div class=\"sub\">"+escH(sub)+"</div>" +
+        "<div class=\"tempo\" id=\"_t\">Aguarde...</div>" +
+        "<div id=\"sb\"></div>" +
+        "</div>" +
+        "<script>" +
+        jsVars +
+        "var _t0=Date.now(),_dest="+dJs+";" +
+        "var _el=document.getElementById('_t');" +
+        "var _sp=document.getElementById('_sp');" +
+        "var _ht=document.getElementById('_ht');" +
+        "var _sb=document.getElementById('sb');" +
+        "var _MAX=5,_prev=null;" +
+        // _setState: aplica estado visual em todos os elementos de uma vez.
+        // _prev guarda o último cls — evita redraw idêntico no estado normal,
+        // mas sempre re-renderiza quando html é fornecido (kill, retry, semresp).
+        "function _setState(cls,html){" +
+        "var same=cls===_prev;" +
+        "if(same&&!html){return;}" + // normal→normal: sem nada a mudar
+        "_prev=cls;" +
+        "if(_sp)_sp.className='spin'+(cls?' '+cls:'');" +
+        "if(_ht)_ht.className=cls||'';" +
+        "if(_sb){" +
+        "if(html){_sb.className=cls;_sb.innerHTML=html;_sb.style.display='block';}" +
+        "else{_sb.style.display='none';_sb.innerHTML='';_sb.className='';}" +
+        "}}" +
+        // _sbHtml: monta o HTML interno da caixa de status
+        "function _sbHtml(ico,title,detail){" +
+        "return '<div class=\"sr\"><span class=\"si\">'+ico+'</span><span class=\"st\"><strong>'+title+'</strong><span>'+detail+'</span></span></div>';}" +
+        // poll principal — 80ms quando ativo (era 150ms), 500ms em erro de rede
+        "var _poll=function(){fetch('"+p+"',{cache:'no-store'})" +
+        ".then(function(r){return r.ok?r.json():r.json().catch(function(){return{pronto:false,erro:null,tentativa:1,matando:false};});})" +
+        ".then(function(d){" +
+        "try{" +
+        "if(!d||typeof d!=='object'){setTimeout(_poll,300);return;}" +
+        "var seg=Math.floor((Date.now()-_t0)/1000);" +
+        // Erro definitivo → substitui a página inteira
+        // XSS FIX: d.erro pode conter e.message com < > & (ex: path do SO, args do spawn).
+        // Sanitiza com replace antes de inserir em innerHTML.
+        "var _esc=function(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');};" +
+        "if(d.erro){document.body.innerHTML='<div style=\"padding:40px;font-family:monospace\">" +
+        "<h2 style=\"color:#f87171\">Erro</h2>" +
+        "<pre style=\"color:#f87171;white-space:pre-wrap\">'+_esc(d.erro)+'<\\/pre>" +
+        "<p><a href=\"/\" style=\"color:#0ea5e9\">Tentar novamente<\\/a><\\/p><\\/div>';return;}" +
+        // Pronto → mostra estado verde por 100ms antes de redirecionar (era 600ms)
+        "if(d.pronto){" +
+        "var _svgOk='<svg xmlns=\"http:\\/\\/www.w3.org\\/2000\\/svg\" width=\"13\" height=\"13\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\" style=\"display:inline;vertical-align:-2px;margin-right:4px\"><path d=\"M20 6 9 17l-5-5\"\\/><\\/svg>';" +
+        "if(_sp)_sp.className='spin pronto';" +
+        "if(_ht)_ht.className='pronto';" +
+        "if(_sb){_sb.className='pronto';_sb.innerHTML=_sbHtml(_svgOk,'Relatório pronto!','Redirecionando...');_sb.style.display='block';}" +
+        "setTimeout(function(){window.location.replace(_dest);},100);return;}" +
+        // Atualiza contador de segundos
+        "if(_el)_el.textContent='Consultando banco... '+seg+'s';" +
+        // Estado KILL — processo filho encerrado por timeout, aguardando relançamento
+        "if(d.matando){" +
+        "_setState('kill',_sbHtml(_SVGT," +
+        "'Processo encerrado — timeout de '+(_TMS/1000)+'s'," +
+        "'Aguardando relançamento da consulta em 3s...'));" +
+        // Estado RETRY — nova tentativa em andamento após kill anterior
+        "}else if(d.tentativa>1){" +
+        "_setState('retry',_sbHtml(_SVGR," +
+        "'Tentativa '+d.tentativa+' de '+_MAX," +
+        "'Tentativa anterior excedeu '+(_TMS/1000)+'s — refazendo consulta ao banco...'));" +
+        // Estado NORMAL — geração em progresso sem intercorrências
+        "}else{_setState('',null);}" +
+        "setTimeout(_poll,80);" +
+        "}catch(e){console.error('[poll]',e);setTimeout(_poll,300);}" +
+        "})" +
+        // Erro de rede puro (sem resposta) — estado semresp
+        ".catch(function(){" +
+        "_setState('semresp',_sbHtml(_SVGW," +
+        "'Sem resposta do servidor'," +
+        "'Aguardando reconexão...'));" +
+        "setTimeout(_poll,500);});" +
+        // SSE na paginaLoading — redireciona no exato instante que proc.on("close") emite reload,
+        // sem depender do ciclo de poll (eliminando até 80ms + 100ms de espera no caminho feliz).
+        "};var _pEs=null,_pConn=function(){" +
+        "try{_pEs=new EventSource('/api/events');" +
+        "_pEs.onmessage=function(ev){try{var d=JSON.parse(ev.data);" +
+        "if(d.type==='reload'){window.location.replace(_dest);}" +
+        "}catch(_){};};" +
+        "_pEs.onopen=function(){" +
+        // Ao conectar SSE, verifica /pronto imediatamente — HTML pode já estar pronto
+        // se a geração terminou antes da conexão SSE ser estabelecida.
+        "fetch('"+p+"',{cache:'no-store'}).then(function(r){return r.ok?r.json():null;})" +
+        ".then(function(d){if(d&&d.pronto)window.location.replace(_dest);}).catch(function(){});" +
+        "};" +
+        "_pEs.onerror=function(){if(_pEs){_pEs.close();_pEs=null;}setTimeout(_pConn,3000);};" +
+        "}catch(e){setTimeout(_pConn,5000);}};_pConn();" +
+        "setTimeout(_poll,80);" +
+        SC2+"</body></html>";
+};
+
+var paginaErro=function(titulo,msg,href){
+    return "<!doctype html><html lang=\"pt-br\"><head><meta charset=\"utf-8\">"+htmlFavicon+
+        "<title>Erro</title><style>body{background:#000;color:#ededed;font-family:monospace;padding:40px;max-width:700px;margin:0 auto}a{color:#0ea5e9}</style></head><body>"+
+        "<h2 style=\"color:#f87171\">"+escH(titulo)+"</h2>"+
+        "<pre style=\"color:#f87171;white-space:pre-wrap\">"+escH(msg)+"</pre>"+
+        "<p><a href=\""+escH(href)+"\">Tentar novamente</a></p>"+
+        "<p><a href=\"/selecionar-fdb\">Selecionar banco manualmente (SMALL.FDB)</a></p>"+
+        "</body></html>";
+};
+
+var paginaFormPeriodo=function(dHoje){
+    return "<!doctype html><html lang=\"pt-br\"><head><meta charset=\"utf-8\">"+htmlFavicon+
+        "<title>Gerar por periodo</title>"+
+        "<style>*{box-sizing:border-box}body{margin:0;background:#000;display:flex;align-items:center;justify-content:center;min-height:100vh;font-family:Inter,Arial,sans-serif;color:#ededed}.box{background:#0a0a0a;border:1px solid rgba(255,255,255,.1);border-radius:16px;padding:36px 40px;width:90%;max-width:380px}h2{margin:0 0 24px;font-size:20px;font-weight:700}label{display:block;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#a1a1aa;margin-bottom:6px}input[type=date]{display:block;width:100%;background:#000;color:#ededed;border:1px solid rgba(255,255,255,.15);border-radius:8px;padding:10px 14px;font-size:14px;margin-bottom:20px;color-scheme:dark;outline:none}input[type=date]:focus{border-color:#0ea5e9}button{width:100%;padding:14px;background:#0ea5e9;color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer}button:hover{background:#0284c7}button:disabled{opacity:.5;cursor:not-allowed}.back{display:block;text-align:center;margin-top:14px;color:#a1a1aa;font-size:13px;text-decoration:none}.back:hover{color:#ededed}#err{display:none;color:#f87171;font-size:13px;margin-bottom:12px;padding:10px;background:rgba(248,113,113,.1);border-radius:6px}"+
+        "</style></head><body><div class=\"box\"><h2>Gerar por periodo</h2>"+
+        "<div id=\"err\"></div><label>Data inicial</label>"+
+        "<input type=\"date\" id=\"ini\" value=\""+dHoje+"\">"+
+        "<label>Data final</label><input type=\"date\" id=\"fim\" value=\""+dHoje+"\">"+
+        "<button id=\"bg\" onclick=\"gerar()\">Gerar Relatorio</button>"+
+        "<a href=\"/\" class=\"back\">Voltar para hoje</a></div>"+
+        "<script>function gerar(){var i=document.getElementById('ini').value,"+
+        "f=document.getElementById('fim').value,"+
+        "e=document.getElementById('err'),b=document.getElementById('bg');"+
+        "if(!i||!f){e.textContent='Informe as duas datas.';e.style.display='block';return;}"+
+        "if(i>f){e.textContent='Data inicial deve ser anterior ou igual a final.';e.style.display='block';return;}"+
+        "e.style.display='none';b.disabled=true;b.textContent='Gerando...';"+
+        "window.location.href='/periodo?i='+encodeURIComponent(i)+'&f='+encodeURIComponent(f);}"+
+        "['ini','fim'].forEach(function(id){document.getElementById(id).addEventListener('keydown',function(e){if(e.key==='Enter')gerar();});});"+
+        "</script></body></html>";
+};
+
+// ---------------------------------------------------------------------------
+// paginaEscolherFdb — exibida quando FDB não é encontrado automaticamente.
+// Permite ao usuario informar o caminho do SMALL.FDB via:
+//   1) Dialogo nativo Windows (OpenFileDialog via PowerShell — botao Procurar)
+//   2) Campo de texto (colar o caminho manualmente)
+// ---------------------------------------------------------------------------
+// CLEAN FIX: parâmetro erroAnterior removido — a função era chamada sempre sem argumento.
+// O campo de erro (#err) começa oculto e é exibido via JS quando o fetch de /api/salvar-fdb falha.
+var paginaEscolherFdb = function() {
+    var SC4 = "</" + "script>";
+    var msgErro = "<div id=\"err\" style=\"display:none\"></div>";
+
+    return "<!doctype html><html lang=\"pt-br\"><head><meta charset=\"utf-8\">" + htmlFavicon +
+        "<title>Selecionar Banco de Dados</title>" +
+        "<script>(function(){try{var t=localStorage.getItem('fdb_theme')||(document.cookie.match(/fdb_theme=([^;]+)/)||[])[1]||'ultra-dark';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();" + SC4 +
+        "<style>" +
+        "*{box-sizing:border-box}" +
+        "body{margin:0;background:#000;display:flex;align-items:center;justify-content:center;min-height:100vh;font-family:Inter,Arial,sans-serif;color:#ededed;padding:16px}" +
+        ".box{background:#0a0a0a;border:1px solid rgba(255,255,255,.12);border-radius:16px;padding:36px 40px;width:100%;max-width:520px}" +
+        ".ico{font-size:40px;margin-bottom:16px;display:block;text-align:center}" +
+        "h2{margin:0 0 6px;font-size:20px;font-weight:700;text-align:center}" +
+        ".sub{color:#71717a;font-size:13px;margin-bottom:24px;text-align:center;line-height:1.5}" +
+        "label{display:block;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#a1a1aa;margin-bottom:7px}" +
+        ".row-inp{display:flex;gap:8px;margin-bottom:8px}" +
+        "input[type=text]{flex:1;background:#000;color:#ededed;border:1px solid rgba(255,255,255,.15);border-radius:8px;padding:10px 14px;font-size:13px;font-family:monospace;outline:none;min-width:0}" +
+        "input[type=text]:focus{border-color:#0ea5e9}" +
+        ".btn{padding:10px 18px;background:#0ea5e9;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap}" +
+        ".btn:hover{background:#0284c7}.btn:disabled{opacity:.5;cursor:not-allowed}" +
+        ".btn-sec{background:rgba(255,255,255,.08);color:#ededed}" +
+        ".btn-sec:hover{background:rgba(255,255,255,.14)}" +
+        ".btn-full{width:100%;padding:14px;font-size:15px;margin-top:4px}" +
+        ".hint{font-size:12px;color:#52525b;margin-bottom:20px;line-height:1.5}" +
+        ".sep{border:none;border-top:1px solid rgba(255,255,255,.07);margin:20px 0}" +
+        ".cands{margin:0;padding:0;list-style:none}" +
+        ".cands li{font-size:12px;font-family:monospace;color:#52525b;padding:3px 0;cursor:pointer;transition:color .15s}" +
+        ".cands li:hover{color:#0ea5e9}" +
+        "#spin{display:none;width:16px;height:16px;border:2px solid rgba(255,255,255,.15);border-top-color:#0ea5e9;border-radius:50%;animation:s .7s linear infinite;margin:0 auto}" +
+        "@keyframes s{to{transform:rotate(360deg)}}" +
+        "</style></head><body>" +
+        "<div class=\"box\">" +
+        "<span class=\"ico\">" + SVG_DATABASE + "</span>" +
+        "<h2>Banco de dados não encontrado</h2>" +
+        "<p class=\"sub\">O arquivo <strong>SMALL.FDB</strong> não foi localizado automaticamente.<br>Informe o caminho correto para continuar.</p>" +
+        msgErro +
+        "<label>Caminho do arquivo SMALL.FDB</label>" +
+        "<div class=\"row-inp\">" +
+        "<input type=\"text\" id=\"fdbPath\" placeholder=\"Ex: C:\\Program Files (x86)\\SmallSoft\\Small Commerce\\SMALL.FDB\">" +
+        "<button class=\"btn btn-sec\" id=\"btnPicker\" title=\"Abrir seletor de arquivos do Windows\">" + SVG_FOLDER + "Procurar</button>" +
+        "</div>" +
+        "<p class=\"hint\">Cole o caminho completo ou use o botão <strong>Procurar</strong> para abrir o explorador de arquivos do Windows.</p>" +
+        "<button class=\"btn btn-full\" id=\"btnSalvar\" onclick=\"salvar()\">Conectar ao Banco</button>" +
+        "<div id=\"spin\" style=\"margin-top:16px\"></div>" +
+        "<hr class=\"sep\">" +
+        "<p style=\"font-size:12px;color:#52525b;margin:0 0 8px\">Locais comuns:</p>" +
+        "<ul class=\"cands\" id=\"cands\"></ul>" +
+        "</div>" +
+        "<script>" +
+        "(function(){" +
+        // Candidatos comuns — clique para preencher o campo
+        "var cands=[" +
+        "'C:\\\\Program Files (x86)\\\\SmallSoft\\\\Small Commerce\\\\SMALL.FDB'," +
+        "'C:\\\\Program Files\\\\SmallSoft\\\\Small Commerce\\\\SMALL.FDB'," +
+        "'C:\\\\ProgramData\\\\SmallSoft\\\\Small Commerce\\\\SMALL.FDB'," +
+        "'C:\\\\SmallSoft\\\\Small Commerce\\\\SMALL.FDB'," +
+        "'C:\\\\Dados\\\\SMALL.FDB'," +
+        "'C:\\\\SmallCommerce\\\\SMALL.FDB'" +
+        "];" +
+        "var ul=document.getElementById('cands');" +
+        "cands.forEach(function(c){" +
+        "var li=document.createElement('li');" +
+        "li.textContent=c;" +
+        "li.title='Clique para usar este caminho';" +
+        "li.addEventListener('click',function(){document.getElementById('fdbPath').value=c;});" +
+        "ul.appendChild(li);" +
+        "});" +
+        // Botão Procurar — chama /api/abrir-picker-fdb que spawna OpenFileDialog nativo
+        "document.getElementById('btnPicker').addEventListener('click',function(){" +
+        "var btn=this;" +
+        "btn.disabled=true;btn.textContent='Aguarde...';" +
+        "document.getElementById('spin').style.display='block';" +
+        "fetch('/api/abrir-picker-fdb',{cache:'no-store'})" +
+        ".then(function(r){return r.json();})" +
+        ".then(function(d){" +
+        "btn.disabled=false;btn.innerHTML=" + JSON.stringify(SVG_FOLDER + "Procurar") + ";" +
+        "document.getElementById('spin').style.display='none';" +
+        "if(d.ok&&d.caminho){document.getElementById('fdbPath').value=d.caminho;}" +
+        "else if(d.cancelado){/* usuario cancelou — sem acao */}" +
+        "else{mostrarErro(d.erro||'Não foi possível abrir o seletor de arquivos.');}}" +
+        ")" +
+        ".catch(function(e){" +
+        "btn.disabled=false;btn.innerHTML=" + JSON.stringify(SVG_FOLDER + "Procurar") + ";" +
+        "document.getElementById('spin').style.display='none';" +
+        "mostrarErro('Erro ao abrir seletor: '+e.message);" +
+        "});" +
+        "});" +
+        // Tecla Enter no campo dispara salvar
+        "document.getElementById('fdbPath').addEventListener('keydown',function(e){" +
+        "if(e.key==='Enter')salvar();" +
+        "});" +
+        "})();" +
+        "function salvar(){" +
+        "var p=document.getElementById('fdbPath').value.trim();" +
+        "var btn=document.getElementById('btnSalvar');" +
+        "if(!p){mostrarErro('Informe o caminho do arquivo SMALL.FDB.');return;}" +
+        "if(!/\\.fdb$/i.test(p)){mostrarErro('O arquivo deve ter extensão .fdb');return;}" +
+        "btn.disabled=true;btn.textContent='Conectando...';" +
+        "document.getElementById('spin').style.display='block';" +
+        "document.getElementById('err').style.display='none';" +
+        "fetch('/api/salvar-fdb',{method:'POST'," +
+        "headers:{'Content-Type':'application/json'}," +
+        "body:JSON.stringify({caminho:p})})" +
+        ".then(function(r){return r.json();})" +
+        ".then(function(d){" +
+        "if(d.ok){window.location.replace('/');}" +
+        "else{" +
+        "btn.disabled=false;btn.textContent='Conectar ao Banco';" +
+        "document.getElementById('spin').style.display='none';" +
+        "mostrarErro(d.erro||'Não foi possível conectar ao banco.');}" +
+        "})" +
+        ".catch(function(e){" +
+        "btn.disabled=false;btn.textContent='Conectar ao Banco';" +
+        "document.getElementById('spin').style.display='none';" +
+        "mostrarErro('Erro de rede: '+e.message);" +
+        "});" +
+        "}" +
+        "function mostrarErro(t){" +
+        "var e=document.getElementById('err');" +
+        "e.textContent=t;e.style.display='block';" +
+        "window.scrollTo({top:0,behavior:'smooth'});" +
+        "}" +
+        SC4 +
+        "</body></html>";
+};
+
+// ---------------------------------------------------------------------------
+// Abre diálogo nativo Windows para selecionar arquivo .fdb.
+// Usa PowerShell + System.Windows.Forms:
+//   • Form pai criado com Text=APP_NAME e Icon=FAVICON (branding da loja).
+//   • OpenFileDialog exibido via ShowDialog($form) para herdar o branding.
+// Retorna { ok, caminho } | { ok:false, erro } | { cancelado:true }.
+// ---------------------------------------------------------------------------
+var _pickerAberto = false;
+var abrirPickerFdbWindows = function(cb) {
+    // ROBUSTEZ FIX (v2.4.1): o diálogo só existe no Windows (System.Windows.Forms).
+    // Em qualquer outra plataforma o powershell.exe simplesmente não existe e o
+    // spawn cairia no proc.on("error") — mas é mais claro e mais rápido recusar
+    // antes de tentar.
+    if (process.platform !== "win32") {
+        cb({ ok: false, erro: "Seletor de arquivos nativo disponível apenas no Windows." });
+        return;
+    }
+
+    // Escapa aspas simples para PowerShell (single-quoted strings: ' → '')
+    var psNome  = APP_NAME.replace(/'/g, "''");
+    var psIcone = FAVICON.replace(/'/g, "''"); // backslashes são literais em PS single-quoted
+
+    // Script PowerShell: cria Form pai (com nome e ícone da loja) antes de chamar
+    // ShowDialog($f), garantindo que o diálogo nativo exiba o branding correto.
+    var ps = [
+        "Add-Type -AssemblyName System.Windows.Forms;",
+        "Add-Type -AssemblyName System.Drawing;",
+        "$f = New-Object System.Windows.Forms.Form;",
+        "$f.Text = '" + psNome + "';",
+        "$f.ShowInTaskbar = $true;",
+        "$f.WindowState = [System.Windows.Forms.FormWindowState]::Minimized;",
+        "try { if (Test-Path '" + psIcone + "') { $f.Icon = New-Object System.Drawing.Icon('" + psIcone + "') } } catch {};",
+        "$f.Show();",
+        "$d = New-Object System.Windows.Forms.OpenFileDialog;",
+        "$d.Title = '" + psNome + " \u2014 Selecionar banco de dados (.fdb)';",
+        "$d.Filter = 'Banco Firebird (*.fdb)|*.fdb|Backup Firebird (*.fbk;*.gbk)|*.fbk;*.gbk|Todos os arquivos (*.*)|*.*';",
+        "$d.InitialDirectory = 'C:\\';",
+        "if ($d.ShowDialog($f) -eq 'OK') { Write-Output $d.FileName } else { Write-Output '__CANCELADO__' };",
+        "$f.Close()"
+    ].join(" ");
+
+    // CRASH FIX (v2.4.1): proc.on("error") e proc.on("close") podiam disparar os
+    // DOIS para o mesmo processo (ex.: ENOENT do powershell.exe emite "error" e,
+    // dependendo da versão do Node, ainda emite "close" com code=null) — cb() era
+    // chamada duas vezes, e a segunda resposta na mesma request HTTP derrubava o
+    // processo inteiro com ERR_HTTP_HEADERS_SENT.
+    var _cbFeito = false;
+    var _chamarCb = function(resultado) {
+        if (_cbFeito) return;
+        _cbFeito = true;
+        clearTimeout(_pkTimer);
+        cb(resultado);
+    };
+
+    var resultado = "";
+    var proc;
+    try {
+        proc = spawn("powershell.exe", [
+            "-NoProfile", "-NonInteractive", "-Command", ps
+        ], { stdio: ["ignore", "pipe", "pipe"] });
+    } catch(spawnErr) {
+        _chamarCb({ ok: false, erro: "Falha ao iniciar o PowerShell: " + (spawnErr && spawnErr.message || spawnErr) });
+        return;
+    }
+
+    // Timeout de segurança: o diálogo fica aberto indefinidamente esperando o
+    // usuário. 5 minutos é generoso o bastante para não incomodar, mas garante
+    // que um PowerShell travado (ex.: pop-up de erro do .NET escondido atrás de
+    // outra janela) não deixe o processo pendurado para sempre — mata o processo
+    // e libera o botão "Procurar" no browser.
+    var _pkTimer = setTimeout(function() {
+        try { proc.kill(); } catch(_) {}
+        if (process.platform === "win32" && proc.pid) {
+            try { childProc.spawn("taskkill", ["/F", "/T", "/PID", String(proc.pid)], {stdio:"ignore"}); } catch(_) {}
+        }
+        _chamarCb({ ok: false, erro: "Seletor de arquivos não respondeu a tempo (5 min)." });
+    }, 5 * 60 * 1000);
+
+    if (proc.stdout) proc.stdout.on("data", function(d) { resultado += d.toString(); });
+    if (proc.stderr) proc.stderr.on("data", function(){}); // drena para não travar o pipe
+
+    proc.on("error", function(e) {
+        _chamarCb({ ok: false, erro: "PowerShell não disponível: " + e.message });
+    });
+
+    proc.on("close", function(code) {
+        var caminho = resultado.trim().replace(/\r?\n[\s\S]*$/, "").trim();
+        if (!caminho || caminho === "__CANCELADO__") {
+            _chamarCb({ ok: false, cancelado: true });
+        } else {
+            _chamarCb({ ok: true, caminho: caminho });
+        }
+    });
+};
+
+// ---------------------------------------------------------------------------
+// Aplica novo caminho FDB em memória e reinicia conexão com o banco.
+// Salva fdbPath e fbHost no config.json para persistir entre reinicializações.
+// ---------------------------------------------------------------------------
+// Uma troca de banco por vez: duas requisições simultâneas (duas abas, ou
+// api.ps1 + navegador) intercalavam testes e gravações de FDB_HOST/FDB_PATH.
+var _aplicandoFdb = false;
+var aplicarNovoFdb = function(caminhoBruto, cb) {
+    if (_aplicandoFdb) { cb({ ok: false, erro: "Já existe uma troca de banco em andamento. Aguarde e tente novamente." }); return; }
+    // Aceita formatos: "C:\...\SMALL.FDB" ou "192.168.1.10:C:\...\SMALL.FDB"
+    var parsed = parseFdb(caminhoBruto);
+    var novoHost = parsed.host;
+    var novoPath = parsed.dbPath;
+    if (_offline && _offline.ehCopia(novoPath)) {
+        cb({ ok: false, erro: "Esse arquivo é uma cópia offline gerenciada pelo sistema. Escolha o banco principal (SMALL.FDB do Small Commerce)." });
+        return;
+    }
+
+    // Validação: arquivo deve existir localmente se host for 127.0.0.1
+    if (novoHost === "127.0.0.1") {
+        try {
+            if (!fs.existsSync(novoPath)) {
+                cb({ ok: false, erro: "Arquivo não encontrado: " + novoPath });
+                return;
+            }
+        } catch(e) {
+            cb({ ok: false, erro: "Erro ao verificar arquivo: " + e.message });
+            return;
+        }
+    }
+
+    _aplicandoFdb = true;
+    logTs("[FDB Manual] Testando conexão em " + novoHost + ":" + novoPath + "...");
+
+    testarFdb(novoHost, novoPath, function(ok, erro) {
+        try {
+            if (!ok) {
+                // Avisa mas permite salvar mesmo assim (banco pode estar offline temporariamente)
+                logTs("[FDB Manual] Conexão de teste falhou (" + (erro||"timeout") + ") — salvando mesmo assim; reconexão automática a cada " + (_RECONEXAO_INTERVALO_MS/1000) + "s.");
+            }
+
+            // Para tudo o que ainda aponta para o banco anterior ANTES de trocar.
+            _pararPolling();
+            _reconexaoGen++; // cancela laço de reconexão do banco anterior
+
+            FDB_PATH = novoPath;
+            FDB_HOST = novoHost;
+            FDB      = novoHost + ":" + novoPath;
+
+            // Persiste no config.json (uma gravação só — antes eram duas seguidas)
+            saveConfig({ fdbPath: novoPath, fbHost: novoHost });
+
+            dbStatus = ok
+                ? { ok: true,  ip: novoHost, erro: null, scanCompleto: true, scanning: false }
+                : { ok: false, ip: novoHost, erro: erro || "Sem conexão no momento", scanCompleto: true, scanning: false };
+
+            // Desativa modo de seleção manual — servidor volta ao comportamento normal
+            _aguardandoFdbManual = false;
+
+            // Banco novo = numeração nova: linha de base das correções recomeça.
+            _resetarBaselineCorrecoes(false);
+
+            // Limpa cache (matando gerações do banco anterior) e regenera já.
+            _invalidarCache();
+            var dh = hoje();
+            gerarEmBackground(dh, dh, dh);
+
+            logTs("[FDB Manual] Banco configurado: " + FDB + " | Aguardando geração...");
+
+            if (Firebird) {
+                if (ok) _iniciarPolling(3000);
+                else    _agendarReconexaoFdb();
+            }
+        } catch(e) {
+            logTs("ERRO aplicarNovoFdb: " + (e && e.stack || e));
+            _aplicandoFdb = false;
+            cb({ ok: false, erro: "Erro interno ao aplicar o banco: " + (e && e.message || e) });
+            return;
+        }
+        _aplicandoFdb = false;
+        cb({ ok: true });
+    });
+};
+
+// ---------------------------------------------------------------------------
+// Selo "Offline" no relatório (v3.0.0). Script independente, injetado antes de
+// </body>: mostra de quando são os dados, se o banco principal está no ar e
+// permite pedir uma cópia nova. Escrito em ES5 (navegadores antigos de caixa).
+// ---------------------------------------------------------------------------
+var _offlineSeloCliente = function() {
+    try {
+        if (window.__offlineSelo) return; window.__offlineSelo = true;
+        var css = "#__off_box{position:fixed;left:12px;bottom:12px;z-index:2147483000;display:flex;gap:8px;align-items:center;max-width:calc(100vw - 24px)}" +
+            "#__est_chip{display:flex;align-items:center;gap:6px;padding:6px 11px;border-radius:999px;border:1px solid rgba(148,163,184,.35);background:rgba(15,23,42,.88);color:#e2e8f0;" +
+            "font:600 12px/1.25 Inter,'Segoe UI',Arial,sans-serif;text-decoration:none;box-shadow:0 4px 18px rgba(0,0,0,.35);white-space:nowrap}#__est_chip:hover,#__off_chip:hover{border-color:#3b82f6}" +
+            "#__off_chip{display:flex;align-items:center;gap:7px;max-width:calc(100vw - 24px);" +
+            "padding:6px 11px;border-radius:999px;border:1px solid rgba(148,163,184,.35);background:rgba(15,23,42,.88);color:#e2e8f0;" +
+            "font:600 12px/1.25 Inter,'Segoe UI',Arial,sans-serif;cursor:pointer;box-shadow:0 4px 18px rgba(0,0,0,.35);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}" +
+            "#__off_chip .d{width:8px;height:8px;border-radius:50%;background:#22c55e;flex:0 0 auto}" +
+            "#__off_chip.av .d{background:#f59e0b}#__off_chip.er .d{background:#ef4444}#__off_chip.at .d{animation:__offp 1s infinite}" +
+            "#__off_chip .t{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}" +
+            "@keyframes __offp{50%{opacity:.25}}" +
+            "#__off_pop{position:fixed;left:12px;bottom:52px;z-index:2147483001;width:min(360px,calc(100vw - 24px));max-height:70vh;overflow:auto;padding:14px;border-radius:14px;" +
+            "border:1px solid rgba(148,163,184,.35);background:#0f172a;color:#e2e8f0;font:13px/1.45 Inter,'Segoe UI',Arial,sans-serif;box-shadow:0 10px 40px rgba(0,0,0,.5)}" +
+            "#__off_pop h4{margin:0 0 8px;font-size:14px}#__off_pop .l{display:flex;justify-content:space-between;gap:12px;padding:3px 0;border-bottom:1px dashed rgba(148,163,184,.2)}" +
+            "#__off_pop .l b{font-weight:600;text-align:right;word-break:break-word}#__off_pop .m{margin:8px 0 0;padding:8px;border-radius:8px;background:rgba(245,158,11,.12);color:#fcd34d;word-break:break-word}" +
+            "#__off_pop .ok{background:rgba(34,197,94,.12);color:#86efac}#__off_pop button,#__off_pop select,#__off_pop input{font:inherit}" +
+            "#__off_pop .bt{margin-top:10px;width:100%;padding:8px;border:0;border-radius:9px;background:#2563eb;color:#fff;font-weight:600;cursor:pointer}" +
+            "#__off_pop .bt[disabled]{opacity:.6;cursor:default}#__off_pop .cf{margin-top:10px;display:grid;grid-template-columns:1fr auto;gap:6px;align-items:center}" +
+            "#__off_pop .cf select,#__off_pop .cf input{background:#1e293b;color:#e2e8f0;border:1px solid rgba(148,163,184,.35);border-radius:7px;padding:4px 6px;max-width:150px}" +
+            "@media (max-width:680px){#__off_box{bottom:calc(76px + env(safe-area-inset-bottom,0px))}#__off_pop{bottom:calc(116px + env(safe-area-inset-bottom,0px))}}" +
+            "@media print{#__off_box,#__off_pop{display:none!important}}";
+        var estilo = document.createElement("style"); estilo.textContent = css; (document.head || document.documentElement).appendChild(estilo);
+        var chip = document.createElement("button"); chip.type = "button"; chip.id = "__off_chip"; chip.style.display = "none";
+        chip.setAttribute("aria-haspopup", "dialog"); chip.title = "Cópia offline do banco";
+        chip.innerHTML = "<span class=\"d\"></span><span class=\"t\"></span>";
+        var pop = document.createElement("div"); pop.id = "__off_pop"; pop.setAttribute("role", "dialog"); pop.style.display = "none";
+        var caixa = document.createElement("div"); caixa.id = "__off_box";
+        var est = document.createElement("a"); est.id = "__est_chip"; est.href = "/estoque"; est.title = "Consultar todo o estoque (nome, código, código de barras...)";
+        est.innerHTML = "<svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M21 8l-9-5-9 5 9 5 9-5z\"/><path d=\"M3 8v8l9 5 9-5V8\"/><path d=\"M12 13v8\"/></svg>Estoque";
+        caixa.appendChild(chip); caixa.appendChild(est);
+        document.body.appendChild(caixa); document.body.appendChild(pop);
+        var ult = null, msgAcao = "", editando = false;
+        var p2 = function(n) { return (n < 10 ? "0" : "") + n; };
+        var quando = function(ts) {
+            if (!ts) return "—";
+            var d = new Date(ts), h = new Date();
+            var dia = d.toDateString() === h.toDateString() ? "" : p2(d.getDate()) + "/" + p2(d.getMonth() + 1) + " ";
+            return dia + p2(d.getHours()) + ":" + p2(d.getMinutes());
+        };
+        var ha = function(ts) {
+            if (!ts) return "";
+            var m = Math.max(0, Math.round((Date.now() - ts) / 60000));
+            return m < 1 ? "agora" : m < 60 ? "há " + m + " min" : m < 1440 ? "há " + Math.floor(m / 60) + " h " + p2(m % 60) + " min" : "há " + Math.floor(m / 1440) + " dia(s)";
+        };
+        var esc = function(v) { return String(v == null ? "" : v).replace(/[&<>"]/g, function(c) { return c === "&" ? "&amp;" : c === "<" ? "&lt;" : c === ">" ? "&gt;" : "&quot;"; }); };
+        var linha = function(k, v) { return "<div class=\"l\"><span>" + esc(k) + "</span><b>" + esc(v) + "</b></div>"; };
+        var nomeModo = { copia: "Cópia offline (sempre)", hibrido: "Híbrido (ao vivo + cópia de reserva)", desligado: "Desligado (banco principal direto)" };
+        var desenharChip = function(s) {
+            if (!s || s.modo === "desligado") { chip.style.display = "none"; return; }
+            var cls = "", txt = "";
+            var dados = s.copia ? quando(s.copia.dadosDe) : "";
+            if (s.lendo === "copia" && s.copia) {
+                if (s.fonteOk === false) { cls = "av"; txt = "Banco principal indisponível · dados de " + dados; }
+                else txt = "Offline · dados de " + dados;
+            } else if (s.modo === "hibrido" && s.fonteOk !== false) {
+                txt = "Ao vivo" + (s.copia ? " · reserva de " + dados : "");
+            } else if (s.emAndamento && !s.copia) { cls = "av"; txt = "Preparando a cópia offline..."; }
+            else if (!s.disponivel) { cls = "er"; txt = "Lendo o banco principal (cópia indisponível)"; }
+            else { cls = "av"; txt = "Lendo o banco principal · cópia em preparo"; }
+            if (s.emAndamento && (s.copia || s.lendo === "copia")) { txt += " · atualizando..."; cls += " at"; }
+            chip.className = cls;
+            chip.querySelector(".t").textContent = txt;
+            chip.style.display = "";
+        };
+        var desenharPop = function(s) {
+            if (pop.style.display === "none" || editando) return;
+            var h = "<h4>Cópia offline do banco</h4>";
+            h += linha("Modo", nomeModo[s.modo] || s.modo);
+            h += linha("O relatório lê", s.lendo === "copia" ? "a cópia offline" : "o banco principal");
+            if (s.copia) {
+                h += linha("Dados da cópia", quando(s.copia.dadosDe) + " (" + ha(s.copia.dadosDe) + ")");
+                h += linha("Origem", s.copia.origem === "fbk" ? "arquivo de backup (.fbk)" : "banco principal");
+                if (s.copia.duracaoS) h += linha("Última cópia levou", s.copia.duracaoS + " s");
+                if (s.copia.tamanhoMB) h += linha("Tamanho", s.copia.tamanhoMB + " MB");
+            } else h += linha("Dados da cópia", "ainda não há cópia");
+            h += linha("Banco principal", s.fonteOk === true ? "no ar" : s.fonteOk === false ? "indisponível desde " + quando(s.fonteDesde) : "verificando...");
+            h += linha("Verifica mudanças a cada", (s.verificarSeg || "?") + " s");
+            h += linha("Intervalo mínimo entre cópias", (s.intervaloMinMin || "?") + " min");
+            if (s.emAndamento) h += "<div class=\"m ok\">Fazendo a cópia agora: " + esc(s.etapa || "") + "...</div>";
+            if (s.fonteOk === false && s.fonteErro) h += "<div class=\"m\">" + esc(s.fonteErro) + (s.copia ? "<br>O relatório continua com a cópia de " + esc(quando(s.copia.dadosDe)) + "." : "") + "</div>";
+            if (s.indisponivel) h += "<div class=\"m\">" + esc(s.indisponivel) + "</div>";
+            else if (s.ultimoErro && !s.emAndamento) h += "<div class=\"m\">Última tentativa falhou: " + esc(s.ultimoErro) + "</div>";
+            if (msgAcao) h += "<div class=\"m ok\">" + esc(msgAcao) + "</div>";
+            if (s.podeAtualizar && s.modo !== "desligado") h += "<button type=\"button\" class=\"bt\" id=\"__off_at\"" + (s.emAndamento ? " disabled" : "") + ">" + (s.emAndamento ? "Cópia em andamento..." : "Atualizar cópia agora") + "</button>";
+            if (s.podeConfigurar) {
+                h += "<div class=\"cf\"><label for=\"__off_md\">Modo</label><select id=\"__off_md\">" +
+                    ["copia", "hibrido", "desligado"].map(function(m) { return "<option value=\"" + m + "\"" + (m === s.modo ? " selected" : "") + ">" + esc(nomeModo[m]) + "</option>"; }).join("") + "</select>" +
+                    "<label for=\"__off_iv\">Intervalo mínimo (min)</label><input id=\"__off_iv\" type=\"number\" min=\"1\" max=\"1440\" value=\"" + esc(s.intervaloMinMin || 5) + "\"></div>" +
+                    "<button type=\"button\" class=\"bt\" id=\"__off_sv\" style=\"background:#475569\">Salvar</button>";
+            }
+            pop.innerHTML = h;
+            var bAt = document.getElementById("__off_at");
+            if (bAt) bAt.onclick = function() {
+                bAt.disabled = true; bAt.textContent = "Pedindo...";
+                fetch("/api/offline/atualizar", { method: "POST", cache: "no-store" }).then(function(r) { return r.json().catch(function() { return {}; }); })
+                    .then(function(r) { msgAcao = r && (r.msg || r.erro) || "Pedido enviado."; buscar(); })
+                    .catch(function() { msgAcao = "Sem resposta do servidor."; buscar(); });
+            };
+            var bSv = document.getElementById("__off_sv");
+            if (bSv) {
+                var foco = function() { editando = true; }, solta = function() { setTimeout(function() { editando = false; }, 300); };
+                ["__off_md", "__off_iv"].forEach(function(id) { var el = document.getElementById(id); if (el) { el.onfocus = foco; el.onblur = solta; } });
+                bSv.onclick = function() {
+                    var md = document.getElementById("__off_md"), iv = document.getElementById("__off_iv");
+                    var corpo = { offlineModo: md ? md.value : s.modo, offlineIntervaloMin: iv ? parseInt(iv.value, 10) : s.intervaloMinMin };
+                    bSv.disabled = true; bSv.textContent = "Salvando...";
+                    fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(corpo), cache: "no-store" })
+                        .then(function(r) { return r.json().catch(function() { return {}; }); })
+                        .then(function(r) { editando = false; msgAcao = r && r.ok ? "Configuração salva." : (r && r.erro) || "Não foi possível salvar."; buscar(); })
+                        .catch(function() { editando = false; msgAcao = "Sem resposta do servidor."; buscar(); });
+                };
+            }
+        };
+        var buscar = function() {
+            fetch("/api/offline", { cache: "no-store" }).then(function(r) { return r.ok ? r.json() : null; })
+                .then(function(s) { if (!s) return; ult = s; desenharChip(s); desenharPop(s); })
+                .catch(function() {});
+        };
+        chip.onclick = function(e) {
+            e.stopPropagation();
+            if (pop.style.display === "none") { pop.style.display = ""; msgAcao = ""; if (ult) desenharPop(ult); buscar(); }
+            else pop.style.display = "none";
+        };
+        document.addEventListener("click", function(e) { if (pop.style.display !== "none" && !pop.contains(e.target) && e.target !== chip) pop.style.display = "none"; });
+        document.addEventListener("keydown", function(e) { if (e.key === "Escape" && pop.style.display !== "none") pop.style.display = "none"; });
+        buscar();
+        setInterval(function() { if (!document.hidden) buscar(); }, 10000);
+    } catch (e) {}
+};
+var _OFFLINE_SNIP = "<script>(" + _offlineSeloCliente.toString() + ")();<\/script>";
+// Grava fbHost no config.json só quando é o banco PRINCIPAL que respondeu —
+// nunca o endereço da cópia offline (senão o próximo início procuraria o
+// banco principal no lugar errado).
+var _salvarFbHost = function(h) {
+    if (_offline && _offline.ehCopia(FDB_PATH)) return false;
+    return updateConfigKey("fbHost", h);
+};
+
+// ---------------------------------------------------------------------------
+// CÓPIA OFFLINE — troca do que o relatório lê (v3.0.0)
+// Chamada por offline-copia.js quando uma cópia nova fica pronta, quando o
+// banco principal cai/volta (modo híbrido) ou quando o modo muda. Mesmo
+// roteiro de aplicarNovoFdb, mas sem gravar nada no config.json (a escolha do
+// banco principal continua sendo a do usuário).
+// ---------------------------------------------------------------------------
+var _trocarLeitura = function(host, caminho, info) {
+    info = info || {};
+    if (!host || !caminho) return;
+    if (FDB_HOST === host && FDB_PATH === caminho) return;
+    if (_aplicandoFdb) { setTimeout(function() { _trocarLeitura(host, caminho, info); }, 2000); return; }
+    _fonteAtual(); // guarda o banco principal antes de sair dele
+    var _de = FDB;
+    try {
+        _pararPolling();
+        _reconexaoGen++; // cancela laço de reconexão do alvo anterior
+        FDB_HOST = host; FDB_PATH = caminho; FDB = host + ":" + caminho;
+        dbStatus = { ok: true, ip: host, erro: null, scanCompleto: true, scanning: false };
+        _aguardandoFdbManual = false;
+        // Vendas que chegam pela cópia já têm alguns minutos: valem como já
+        // existentes (hora como está), não como "novas" para a correção de horário.
+        _resetarBaselineCorrecoes(false);
+        _invalidarCache();
+        var dh = hoje();
+        gerarEmBackground(dh, dh, dh);
+        if (Firebird) _iniciarPolling(1000);
+        logTs("Leitura: " + _de + " → " + FDB + " (" + (info.motivo || "troca") + (info.lendo === "copia" && info.dadosDe ? "; dados de " + new Date(info.dadosDe).toLocaleString("pt-BR") : "") + ").", "OFFLINE");
+        try { broadcastSSE({ type: "offline", lendo: info.lendo || null, dadosDe: info.dadosDe || null }); } catch (_) {}
+        // Estoque já consultado nesta sessão: relê em segundo plano para a próxima busca sair na hora.
+        try { if (_estoque && _estoque.status()) setTimeout(function() { _estoque.buscar({ q: "", limite: 1 }, function() {}); }, 3000); } catch (_) {}
+    } catch (e) {
+        logTs("ERRO ao trocar a leitura para " + host + ":" + caminho + ": " + (e && e.stack || e), "OFFLINE");
+    }
+};
+
+// Assinatura leve das vendas de HOJE no banco principal (somente leitura):
+// a mesma consulta do fast-poll completo (quantidade, total e hash por
+// registro, por tipo), numa conexão curta. Mudou → offline-copia.js faz cópia nova.
+var _assinEsquema = {}; // "host|caminho" → esquema sondado (uma vez por banco)
+var _assinaturaFonte = function(host, caminho, cb) {
+    if (!Firebird) { cb(new Error("node-firebird indisponível")); return; }
+    var fim = false, conexao = null;
+    var acabar = function(err, sig) {
+        if (fim) return; fim = true; clearTimeout(t);
+        if (conexao) { try { _matarConexao(conexao); } catch (_) {} conexao = null; }
+        cb(err, sig);
+    };
+    var t = setTimeout(function() { acabar(new Error("Timeout 10s")); }, 10000);
+    var opts = { host: host, port: FIREBIRD_PORT, database: caminho, user: USER, password: PASS, role: null, charset: FB_CHARSET, lowercase_keys: false };
+    var chave = host + "|" + caminho;
+    var dh = hoje();
+    var consultar = function(db, esq) {
+        var comp = esq ? _montarFpSqlCompleto(esq, null) : null;
+        var basico = function() {
+            var temV = !!(esq && esq.NFCE && esq.NFCE.VENDEDOR), pb = [];
+            for (var i = 0; i < _fpNumBlocos(temV); i++) pb.push(dh, dh);
+            db.query(_montarFpSql(temV), pb, function(e2, r2) {
+                if (e2 || !r2 || !r2[0]) { acabar(e2 || new Error("consulta sem resposta")); return; }
+                var x = r2[0];
+                acabar(null, dh + "|b|" + [x.FP_QT, x.FP_TOT, x.FP_PEND, x.FP_SVEND, x.FP_SFORMA].map(function(v) { return String(v == null ? "" : v); }).join("|"));
+            });
+        };
+        if (!comp || !comp.sql) { basico(); return; }
+        var pc = [];
+        for (var i = 0; i < comp.pares; i++) pc.push(dh, dh);
+        db.query(comp.sql, pc, function(e1, r1) {
+            if (fim) return;
+            if (e1 || !r1 || !r1[0]) { basico(); return; } // Firebird sem HASH etc.: modo básico
+            acabar(null, dh + "|c|" + JSON.stringify(_fpLerCompleto(r1[0])));
+        });
+    };
+    try {
+        Firebird.attach(opts, function(err, db) {
+            if (fim) { if (!err && db) { try { _matarConexao(db); } catch (_) {} } return; }
+            if (err || !db) { acabar(err || new Error("sem conexão")); return; }
+            conexao = db;
+            if (_assinEsquema[chave]) { consultar(db, _assinEsquema[chave]); return; }
+            db.query("SELECT TRIM(RDB$RELATION_NAME) AS T, TRIM(RDB$FIELD_NAME) AS C FROM RDB$RELATION_FIELDS WHERE TRIM(RDB$RELATION_NAME) IN ('NFCE','PAGAMENT','VENDAS')", [], function(eE, rows) {
+                if (fim) return;
+                if (eE || !rows) { consultar(db, null); return; }
+                var esq = { NFCE: {}, PAGAMENT: {}, VENDAS: {} };
+                rows.forEach(function(r) {
+                    var tb = String(r.T || r.t || "").trim().toUpperCase(), c = String(r.C || r.c || "").trim().toUpperCase();
+                    if (esq[tb] && c) esq[tb][c] = true;
+                });
+                _assinEsquema[chave] = esq;
+                consultar(db, esq);
+            });
+        });
+    } catch (e) { acabar(e); }
+};
+
+// Status da cópia para a tela/bandeja/API. Caminhos só para a rede local.
+var _offlineStatusPara = function(req) {
+    if (!_offline) return { ok: true, modo: "desligado", disponivel: false, indisponivel: "Módulo de cópia offline não carregado.", lendo: "fonte" };
+    var s = _offline.status();
+    s.ok = true;
+    s.leitura = { host: FDB_HOST, arquivo: FDB_PATH };
+    s.podeConfigurar = !!(req && _ehComputadorServidor(req));
+    s.podeAtualizar = !!(req && _requisicaoDaRedeLocal(req));
+    if (req && !_requisicaoDaRedeLocal(req)) { delete s.pasta; delete s.fonte; delete s.gbak; delete s.leitura; }
+    return s;
+};
+
+// ---------------------------------------------------------------------------
+// Servidor HTTP
+// ---------------------------------------------------------------------------
+// IP de origem da requisição, sem o prefixo IPv4-mapeado-em-IPv6.
+var _ipDaRequisicao = function(req) {
+    return String((req.socket && req.socket.remoteAddress) || "local").replace(/^::ffff:/, "");
+};
+// Rede local (ou a própria máquina). Endereços de fora da rede local não
+// podem reiniciar nem encerrar o servidor.
+var _requisicaoDaRedeLocal = function(req) {
+    if (_viaProxy(req)) return false;   // v2.20.0: túnel/proxy = internet
+    var bruto = (req.socket && req.socket.remoteAddress) || "";
+    var ip = bruto.replace(/^::ffff:/, "");
+    var local = /^(10\.|127\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.)/.test(ip) || bruto === "::1" || _ehIPTailscale(ip);
+    return local || !_maquinaIP || BIND_ADDR !== "0.0.0.0";
+};
+
+// ── QR CODE (v2.18.0) ──────────────────────────────────────────────────────
+// Gerador de QR code próprio (sem biblioteca, funciona sem internet): modo byte
+// (UTF-8), correção de erros nível M (~15% do código pode estar danificado),
+// versões 1 a 10 (até 213 bytes — sobra para qualquer endereço de rede), máscara
+// escolhida pela menor penalidade (norma ISO/IEC 18004). Usado em /qr e /qr.svg
+// para abrir o relatório no celular.
+var _QR_TOTAL = [0, 26, 44, 70, 100, 134, 172, 196, 242, 292, 346];
+var _QR_ECC_M = [0, 10, 16, 26, 18, 24, 16, 18, 22, 22, 26];
+var _QR_BLOCOS_M = [null, [[1, 16]], [[1, 28]], [[1, 44]], [[2, 32]], [[2, 43]], [[4, 27]], [[4, 31]],
+                    [[2, 38], [2, 39]], [[3, 36], [2, 37]], [[4, 43], [1, 44]]];
+var _QR_ALINHA = [null, [], [6, 18], [6, 22], [6, 26], [6, 30], [6, 34], [6, 22, 38], [6, 24, 42], [6, 26, 46], [6, 28, 50]];
+var _qrGf = (function() {
+    var exp = new Array(512), log = new Array(256), x = 1;
+    for (var i = 0; i < 255; i++) { exp[i] = x; log[x] = i; x <<= 1; if (x & 0x100) x ^= 0x11D; }
+    for (var j = 255; j < 512; j++) exp[j] = exp[j - 255];
+    return { exp: exp, log: log };
+})();
+var _qrMul = function(a, b) { return (a === 0 || b === 0) ? 0 : _qrGf.exp[_qrGf.log[a] + _qrGf.log[b]]; };
+// Reed-Solomon: n codewords de correção para os dados.
+var _qrRs = function(dados, n) {
+    var gen = [1];
+    for (var i = 0; i < n; i++) {
+        var novo = new Array(gen.length + 1).fill(0);
+        for (var j = 0; j < gen.length; j++) { novo[j] ^= gen[j]; novo[j + 1] ^= _qrMul(gen[j], _qrGf.exp[i]); }
+        gen = novo;
+    }
+    var resto = new Array(n).fill(0);
+    for (var k = 0; k < dados.length; k++) {
+        var f = dados[k] ^ resto[0];
+        resto.shift(); resto.push(0);
+        for (var m = 0; m < n; m++) resto[m] ^= _qrMul(gen[m + 1], f);
+    }
+    return resto;
+};
+var _qrBch = function(valor, gen, bitsGen) {
+    var v = valor << (bitsGen - 1);
+    var grau = function(x) { var g = -1; while (x) { g++; x >>>= 1; } return g; };
+    while (grau(v) >= bitsGen - 1) v ^= gen << (grau(v) - (bitsGen - 1));
+    return (valor << (bitsGen - 1)) | v;
+};
+// Devolve { tam, m } (m[linha][coluna] = true para módulo escuro) ou null se não couber.
+var _qrMatriz = function(texto, mascaraFixa) {
+    var bytes = Array.prototype.slice.call(Buffer.from(String(texto), "utf8"));
+    var ver = 0;
+    for (var v = 1; v <= 10; v++) {
+        var cap = 0; _QR_BLOCOS_M[v].forEach(function(g) { cap += g[0] * g[1]; });
+        var bitsCont = v < 10 ? 8 : 16;
+        if (4 + bitsCont + bytes.length * 8 <= cap * 8) { ver = v; break; }
+    }
+    if (!ver) return null;
+    // Bits: modo byte (0100), contagem, dados, terminador, preenchimento.
+    var capBytes = 0; _QR_BLOCOS_M[ver].forEach(function(g) { capBytes += g[0] * g[1]; });
+    var bits = [];
+    var por = function(val, n) { for (var i = n - 1; i >= 0; i--) bits.push((val >>> i) & 1); };
+    por(4, 4); por(bytes.length, ver < 10 ? 8 : 16);
+    bytes.forEach(function(b) { por(b, 8); });
+    for (var t = 0; t < 4 && bits.length < capBytes * 8; t++) bits.push(0);
+    while (bits.length % 8) bits.push(0);
+    var cw = [];
+    for (var i = 0; i < bits.length; i += 8) { var b = 0; for (var j = 0; j < 8; j++) b = (b << 1) | bits[i + j]; cw.push(b); }
+    for (var p = 0; cw.length < capBytes; p++) cw.push(p % 2 ? 0x11 : 0xEC);
+    // Blocos + correção, depois intercalados.
+    var blocos = [], eccs = [], pos = 0, nEcc = _QR_ECC_M[ver];
+    _QR_BLOCOS_M[ver].forEach(function(g) {
+        for (var q = 0; q < g[0]; q++) { var bl = cw.slice(pos, pos + g[1]); pos += g[1]; blocos.push(bl); eccs.push(_qrRs(bl, nEcc)); }
+    });
+    var final = [], maxDados = Math.max.apply(null, blocos.map(function(x) { return x.length; }));
+    for (var a = 0; a < maxDados; a++) blocos.forEach(function(bl) { if (a < bl.length) final.push(bl[a]); });
+    for (var e = 0; e < nEcc; e++) eccs.forEach(function(ec) { final.push(ec[e]); });
+    // Matriz: padrões fixos.
+    var tam = ver * 4 + 17;
+    var m = [], reservado = [];
+    for (var r = 0; r < tam; r++) { m.push(new Array(tam).fill(false)); reservado.push(new Array(tam).fill(false)); }
+    var pino = function(r, c, escuro) { if (r >= 0 && r < tam && c >= 0 && c < tam) { m[r][c] = !!escuro; reservado[r][c] = true; } };
+    var localizador = function(r0, c0) {
+        for (var dr = -1; dr <= 7; dr++) for (var dc = -1; dc <= 7; dc++) {
+            var dentro = dr >= 0 && dr <= 6 && dc >= 0 && dc <= 6;
+            var escuro = dentro && (dr === 0 || dr === 6 || dc === 0 || dc === 6 || (dr >= 2 && dr <= 4 && dc >= 2 && dc <= 4));
+            pino(r0 + dr, c0 + dc, escuro);
+        }
+    };
+    localizador(0, 0); localizador(0, tam - 7); localizador(tam - 7, 0);
+    for (var k = 8; k < tam - 8; k++) { pino(6, k, k % 2 === 0); pino(k, 6, k % 2 === 0); }
+    var al = _QR_ALINHA[ver];
+    al.forEach(function(ar) { al.forEach(function(ac) {
+        if ((ar === 6 && ac === 6) || (ar === 6 && ac === tam - 7) || (ar === tam - 7 && ac === 6)) return;
+        for (var dr = -2; dr <= 2; dr++) for (var dc = -2; dc <= 2; dc++) pino(ar + dr, ac + dc, Math.max(Math.abs(dr), Math.abs(dc)) !== 1);
+    }); });
+    pino(tam - 8, 8, true);                                    // módulo escuro fixo
+    for (var f = 0; f < 9; f++) { if (!reservado[8][f]) reservado[8][f] = true; if (!reservado[f][8]) reservado[f][8] = true; }
+    for (var g2 = 0; g2 < 8; g2++) { reservado[8][tam - 1 - g2] = true; reservado[tam - 1 - g2][8] = true; }
+    if (ver >= 7) for (var vi = 0; vi < 6; vi++) for (var vj = 0; vj < 3; vj++) { reservado[vi][tam - 11 + vj] = true; reservado[tam - 11 + vj][vi] = true; }
+    // Dados em ziguezague (de baixo para cima, pares de colunas, pulando a coluna 6).
+    var bitsDados = [];
+    final.forEach(function(b) { for (var i = 7; i >= 0; i--) bitsDados.push((b >>> i) & 1); });
+    var idx = 0, subindo = true;
+    for (var col = tam - 1; col > 0; col -= 2) {
+        if (col === 6) col--;
+        for (var n = 0; n < tam; n++) {
+            var lin = subindo ? tam - 1 - n : n;
+            for (var d = 0; d < 2; d++) {
+                var cc = col - d;
+                if (reservado[lin][cc]) continue;
+                m[lin][cc] = idx < bitsDados.length ? bitsDados[idx] === 1 : false;
+                idx++;
+            }
+        }
+        subindo = !subindo;
+    }
+    var regra = [
+        function(r, c) { return (r + c) % 2 === 0; }, function(r) { return r % 2 === 0; },
+        function(r, c) { return c % 3 === 0; }, function(r, c) { return (r + c) % 3 === 0; },
+        function(r, c) { return (Math.floor(r / 2) + Math.floor(c / 3)) % 2 === 0; },
+        function(r, c) { return (r * c) % 2 + (r * c) % 3 === 0; },
+        function(r, c) { return ((r * c) % 2 + (r * c) % 3) % 2 === 0; },
+        function(r, c) { return ((r + c) % 2 + (r * c) % 3) % 2 === 0; }
+    ];
+    var aplicar = function(mask) {
+        var q = m.map(function(l) { return l.slice(); });
+        for (var r = 0; r < tam; r++) for (var c = 0; c < tam; c++) if (!reservado[r][c] && regra[mask](r, c)) q[r][c] = !q[r][c];
+        // Informação de formato: nível M = 00, máscara; BCH(15,5) com 0x537, XOR 0x5412.
+        var fmt = _qrBch((0 << 3) | mask, 0x537, 11) ^ 0x5412;
+        var bit = function(i) { return ((fmt >>> i) & 1) === 1; };
+        for (var i = 0; i <= 5; i++) q[8][i] = bit(14 - i);
+        q[8][7] = bit(8); q[8][8] = bit(7); q[7][8] = bit(6);
+        for (var i2 = 9; i2 < 15; i2++) q[14 - i2][8] = bit(14 - i2);
+        for (var i3 = 0; i3 < 8; i3++) q[tam - 1 - i3][8] = bit(14 - i3);
+        for (var i4 = 0; i4 < 8; i4++) q[8][tam - 1 - i4] = bit(i4);
+        q[tam - 8][8] = true;
+        if (ver >= 7) {
+            var vinfo = _qrBch(ver, 0x1F25, 13);
+            for (var b = 0; b < 18; b++) {
+                var on = ((vinfo >>> b) & 1) === 1, a = Math.floor(b / 3), c2 = b % 3;
+                q[a][tam - 11 + c2] = on; q[tam - 11 + c2][a] = on;
+            }
+        }
+        return q;
+    };
+    var penalidade = function(q) {
+        var p = 0, r, c;
+        for (var eixo = 0; eixo < 2; eixo++) for (r = 0; r < tam; r++) {
+            var corrida = 1;
+            for (c = 1; c < tam; c++) {
+                var x = eixo ? q[c][r] : q[r][c], y = eixo ? q[c - 1][r] : q[r][c - 1];
+                if (x === y) { corrida++; if (corrida === 5) p += 3; else if (corrida > 5) p++; } else corrida = 1;
+            }
+        }
+        for (r = 0; r < tam - 1; r++) for (c = 0; c < tam - 1; c++) if (q[r][c] === q[r][c + 1] && q[r][c] === q[r + 1][c] && q[r][c] === q[r + 1][c + 1]) p += 3;
+        var padA = [true, false, true, true, true, false, true, false, false, false, false], padB = padA.slice().reverse();
+        for (var e2 = 0; e2 < 2; e2++) for (r = 0; r < tam; r++) for (c = 0; c + 11 <= tam; c++) {
+            var okA = true, okB = true;
+            for (var k = 0; k < 11; k++) { var v2 = e2 ? q[c + k][r] : q[r][c + k]; if (v2 !== padA[k]) okA = false; if (v2 !== padB[k]) okB = false; }
+            if (okA) p += 40; if (okB) p += 40;
+        }
+        var escuros = 0; for (r = 0; r < tam; r++) for (c = 0; c < tam; c++) if (q[r][c]) escuros++;
+        p += Math.floor(Math.abs(escuros * 20 - tam * tam * 10) / (tam * tam)) * 10;
+        return p;
+    };
+    var melhor = null, melhorP = Infinity, melhorMask = 0;
+    for (var mk = 0; mk < 8; mk++) {
+        if (mascaraFixa !== undefined && mascaraFixa !== mk) continue;
+        var cand = aplicar(mk), pen = penalidade(cand);
+        if (pen < melhorP) { melhorP = pen; melhor = cand; melhorMask = mk; }
+    }
+    return { tam: tam, m: melhor, versao: ver, mascara: melhorMask };
+};
+// SVG do QR code (com margem de 4 módulos, exigida pelos leitores).
+var _qrSvg = function(texto, px) {
+    var q = _qrMatriz(texto);
+    if (!q) return null;
+    var borda = 4, n = q.tam + borda * 2, d = "";
+    for (var r = 0; r < q.tam; r++) for (var c = 0; c < q.tam; c++) if (q.m[r][c]) d += "M" + (c + borda) + " " + (r + borda) + "h1v1h-1z";
+    var lado = px || n * 8;
+    return '<svg xmlns="http://www.w3.org/2000/svg" width="' + lado + '" height="' + lado + '" viewBox="0 0 ' + n + ' ' + n + '" shape-rendering="crispEdges">' +
+           '<rect width="' + n + '" height="' + n + '" fill="#fff"/><path d="' + d + '" fill="#000"/></svg>';
+};
+// Endereço que o celular deve abrir: IP da máquina na rede (nunca "localhost", que
+// no celular apontaria para o próprio celular). Sem IP detectado: o endereço pelo qual
+// a pessoa acessou (se não for local) ou o 1º IPv4 de rede desta máquina.
+var _qrEndereco = function(req) {
+    var ip = _maquinaIP || "";
+    if (!ip) {
+        var host = String((req && req.headers && req.headers.host) || "").replace(/:\d+$/, "");
+        if (host && !/^(localhost|127\.|\[?::1\]?$)/i.test(host) && /^[\w.\-]+$/.test(host)) ip = host;
+    }
+    if (!ip) {
+        try {
+            var ifs = os.networkInterfaces();
+            Object.keys(ifs).some(function(k) { return (ifs[k] || []).some(function(a) { if (a && a.family === "IPv4" && !a.internal) { ip = a.address; return true; } return false; }); });
+        } catch (_) {}
+    }
+    return "http://" + (ip || "127.0.0.1") + ":" + PORT + "/";
+};
+
+// ── DISPOSITIVOS CONECTADOS (v2.17.0) ──────────────────────────────────────
+// Registra no log (categoria CONEXAO) cada celular/computador da rede que abre o
+// relatório: tipo, modelo, sistema e navegador (do User-Agent), IP e o NOME do
+// aparelho. O navegador nunca envia o nome de "Ajustes → Geral → Sobre"; ele é
+// perguntado ao próprio aparelho pela rede, em paralelo e sem travar nada:
+//   1. Bonjour/mDNS (iPhone, iPad, Mac e muitos Android): o nome local que o
+//      aparelho anuncia na rede — no iPhone, derivado do nome em "Sobre"
+//      (ex.: "iPhone do Caixa" → "iPhone-do-Caixa").
+//   2. NetBIOS (computadores Windows): o nome do computador.
+//   3. DNS reverso do roteador (o nome que o aparelho informou ao pegar o IP).
+// Também registra cada rota acessada (página e /api) com resultado e tempo, as
+// telas abertas/fechadas (tempo real/SSE), um resumo periódico das chamadas
+// automáticas (status, pronto…) e a saída do aparelho. A própria máquina do
+// servidor fica de fora (é o funcionamento interno normal).
+// Não envolve o banco — nada aqui lê ou grava no Firebird.
+var dns   = require("dns");
+var dgram = require("dgram");
+var _DISP_INATIVO_MS  = 3 * 60 * 1000;   // sem requisições e sem tela aberta → saiu
+var _DISP_RESUMO_MS   = 10 * 60 * 1000;  // resumo das chamadas automáticas
+var _DISP_NOME_TTL_MS = 10 * 60 * 1000;  // cache do nome por IP
+var _DISP_NOME_ESPERA = 1600;            // tempo máximo procurando o nome
+var _DISP_MAX         = 200;             // teto de aparelhos acompanhados
+var _DISP_RECARGA_MS  = 8000;            // tela fecha e reabre dentro disto = recarregamento
+var _ROTAS_BATIMENTO  = ["/api/status","/api/pronto","/api/events","/api/db-status","/api/hora-usuario","/pronto","/api/offline","/api/estoque","/api/estoque/item"];
+var _dispositivos = {};   // ip → registro
+var _dispNomes    = {};   // ip → { nome, fonte, ts } | { pend: [callbacks] }
+// Só para os testes automáticos: inclui a própria máquina (127.0.0.1).
+var _DISP_INCLUIR_LOCAL = process.env.RELATORIO_DISP_LOCAL === "1";
+
+var _dispEhEstaMaquina = function(ip) {
+    if (_DISP_INCLUIR_LOCAL) return false;
+    return /^127\./.test(ip) || ip === "::1" || ip === "local" || !!(_maquinaIP && ip === _maquinaIP) || (_ehIPTailscale(ip) && ip === _ipTailscaleCache());
+};
+
+// User-Agent → tipo, modelo, sistema e navegador (só para exibição).
+var _dispDescrever = function(uaBruto) {
+    var ua = String(uaBruto || "");
+    var tipo = "Computador", modelo = "", so = "", nav = "";
+    var m;
+    if (/iPhone/.test(ua))      { tipo = "Celular"; modelo = "iPhone"; }
+    else if (/iPad/.test(ua))   { tipo = "Tablet";  modelo = "iPad"; }
+    else if (/Android/.test(ua)) {
+        tipo = /Mobile/.test(ua) ? "Celular" : "Tablet";
+        m = ua.match(/Android[^;)]*;\s*(?:[a-z]{2}[-_][A-Za-z]{2};\s*)?([^;)]+?)(?:\s+Build\/|\))/);
+        if (m && m[1] && !/^(K|wv|Linux|U)$/.test(m[1].trim())) modelo = m[1].trim();
+    }
+    if ((m = ua.match(/(?:iPhone|CPU) OS (\d+)[_.](\d+)/))) so = "iOS " + m[1] + "." + m[2];
+    else if ((m = ua.match(/Android (\d+(?:\.\d+)?)/))) so = "Android " + m[1];
+    else if (/Windows NT 10/.test(ua)) so = "Windows 10/11";
+    else if ((m = ua.match(/Windows NT (\d+\.\d+)/))) so = "Windows NT " + m[1];
+    else if (/Mac OS X/.test(ua)) so = "macOS";   // iPad com iPadOS 13+ também se apresenta assim
+    else if (/CrOS/.test(ua)) so = "ChromeOS";
+    else if (/Linux/.test(ua)) so = "Linux";
+    if ((m = ua.match(/Edg(?:A|iOS)?\/(\d+)/)))            nav = "Edge " + m[1];
+    else if ((m = ua.match(/OPR\/(\d+)/)))                 nav = "Opera " + m[1];
+    else if ((m = ua.match(/SamsungBrowser\/(\d+)/)))      nav = "Samsung Internet " + m[1];
+    else if ((m = ua.match(/CriOS\/(\d+)/)))               nav = "Chrome " + m[1];
+    else if ((m = ua.match(/FxiOS\/(\d+)/)))               nav = "Firefox " + m[1];
+    else if ((m = ua.match(/Firefox\/(\d+)/)))             nav = "Firefox " + m[1];
+    else if ((m = ua.match(/Chrome\/(\d+)/)))              nav = "Chrome " + m[1];
+    else if (/Safari\//.test(ua) && (m = ua.match(/Version\/(\d+(?:\.\d+)?)/))) nav = "Safari " + m[1];
+    else if (/PowerShell/i.test(ua))                       nav = "PowerShell (api.ps1)";
+    else if (ua)                                           nav = ua.split(/[\s(]/)[0].slice(0, 30);
+    var partes = [so, nav].filter(Boolean).join(", ");
+    return { tipo: tipo, modelo: modelo, so: so, navegador: nav,
+             texto: tipo + (modelo ? " " + modelo : "") + (partes ? " (" + partes + ")" : "") };
+};
+
+var _dispLimparNome = function(n) {
+    var s = String(n || "").trim().replace(/\.$/, "");
+    if (!s || /^\d+\.\d+\.\d+\.\d+$/.test(s) || /in-addr\.arpa$/i.test(s)) return "";
+    s = s.split(".")[0];                       // "iPhone-do-Caixa.local" → "iPhone-do-Caixa"
+    s = s.replace(/[^\w\-À-ÿ ]/g, "").slice(0, 60);
+    return /^(localhost|_gateway|gateway|router)$/i.test(s) ? "" : s;
+};
+
+// DNS: lê um nome (com ponteiros de compressão) a partir de off. Nunca lança.
+var _dnsLerNome = function(buf, off) {
+    var rotulos = [], saltos = 0, pos = off, fim = -1;
+    while (pos < buf.length && saltos < 20) {
+        var len = buf[pos];
+        if (len === 0) { if (fim < 0) fim = pos + 1; break; }
+        if ((len & 0xC0) === 0xC0) {
+            if (pos + 1 >= buf.length) break;
+            if (fim < 0) fim = pos + 2;
+            pos = ((len & 0x3F) << 8) | buf[pos + 1]; saltos++; continue;
+        }
+        if (pos + 1 + len > buf.length) break;
+        rotulos.push(buf.toString("utf8", pos + 1, pos + 1 + len));
+        pos += 1 + len;
+    }
+    return { nome: rotulos.join("."), fim: fim < 0 ? buf.length : fim };
+};
+// mDNS: pergunta "quem é este IP?" (PTR em x.x.x.x.in-addr.arpa) ao grupo 224.0.0.251.
+// Porta de origem aleatória ⇒ o aparelho responde direto para nós (unicast).
+var _dispNomeMdns = function(ip, cb) {
+    var feito = false, sock = null, tm = null;
+    var acabar = function(nome) {
+        if (feito) return; feito = true;
+        clearTimeout(tm); try { if (sock) sock.close(); } catch (_) {}
+        cb(nome || "");
+    };
+    try {
+        if (!/^\d+\.\d+\.\d+\.\d+$/.test(ip)) return acabar("");
+        var alvo = ip.split(".").reverse().join(".") + ".in-addr.arpa";
+        var partes = [Buffer.from([0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0])];
+        alvo.split(".").forEach(function(l) { partes.push(Buffer.from([l.length])); partes.push(Buffer.from(l, "ascii")); });
+        partes.push(Buffer.from([0, 0, 12, 0x80, 1]));   // fim do nome, tipo PTR, classe IN + "resposta direta"
+        var pacote = Buffer.concat(partes);
+        sock = dgram.createSocket({ type: "udp4", reuseAddr: true });
+        sock.on("error", function() { acabar(""); });
+        sock.on("message", function(msg) {
+            try {
+                if (msg.length < 12) return;
+                var qd = msg.readUInt16BE(4), an = msg.readUInt16BE(6) + msg.readUInt16BE(8) + msg.readUInt16BE(10);
+                var off = 12;
+                for (var q = 0; q < qd; q++) off = _dnsLerNome(msg, off).fim + 4;
+                for (var a = 0; a < an && off + 10 <= msg.length; a++) {
+                    var dono = _dnsLerNome(msg, off); off = dono.fim;
+                    if (off + 10 > msg.length) break;
+                    var tipo = msg.readUInt16BE(off), rdlen = msg.readUInt16BE(off + 8);
+                    var ini = off + 10; off = ini + rdlen;
+                    if (tipo === 12 && dono.nome.toLowerCase() === alvo.toLowerCase()) {
+                        var n = _dispLimparNome(_dnsLerNome(msg, ini).nome);
+                        if (n) return acabar(n);
+                    }
+                }
+            } catch (_) {}
+        });
+        sock.bind(0, function() {
+            try { sock.setMulticastTTL(1); } catch (_) {}
+            sock.send(pacote, 5353, "224.0.0.251", function(err) { if (err) acabar(""); });
+            // Alguns aparelhos só respondem a perguntas diretas: manda também para o IP dele.
+            sock.send(pacote, 5353, ip, function() {});
+        });
+        tm = setTimeout(function() { acabar(""); }, _DISP_NOME_ESPERA - 100);
+    } catch (_) { acabar(""); }
+};
+// NetBIOS (UDP 137): nome do computador Windows.
+var _dispNomeNetbios = function(ip, cb) {
+    var feito = false, sock = null, tm = null;
+    var acabar = function(nome) {
+        if (feito) return; feito = true;
+        clearTimeout(tm); try { if (sock) sock.close(); } catch (_) {}
+        cb(nome || "");
+    };
+    try {
+        if (!/^\d+\.\d+\.\d+\.\d+$/.test(ip)) return acabar("");
+        var nomeCod = [0x20], bruto = Buffer.alloc(16, 0); bruto[0] = 0x2A; // "*"
+        for (var i = 0; i < 16; i++) { nomeCod.push(0x41 + (bruto[i] >> 4)); nomeCod.push(0x41 + (bruto[i] & 0x0F)); }
+        nomeCod.push(0);
+        var pacote = Buffer.concat([Buffer.from([0x52, 0x47, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0]), Buffer.from(nomeCod), Buffer.from([0, 0x21, 0, 1])]);
+        sock = dgram.createSocket("udp4");
+        sock.on("error", function() { acabar(""); });
+        sock.on("message", function(msg) {
+            try {
+                var off = _dnsLerNome(msg, 12).fim + 10;      // nome + tipo/classe/ttl/tamanho
+                var qtd = msg[off]; off += 1;
+                for (var k = 0; k < qtd && off + 18 <= msg.length; k++, off += 18) {
+                    var nome = msg.toString("latin1", off, off + 15).trim();
+                    var suf = msg[off + 15], grupo = (msg.readUInt16BE(off + 16) & 0x8000) !== 0;
+                    if (suf === 0x00 && !grupo && nome) return acabar(_dispLimparNome(nome));
+                }
+                acabar("");
+            } catch (_) { acabar(""); }
+        });
+        sock.send(pacote, 137, ip, function(err) { if (err) acabar(""); });
+        tm = setTimeout(function() { acabar(""); }, _DISP_NOME_ESPERA - 100);
+    } catch (_) { acabar(""); }
+};
+// Nome do aparelho: as três buscas em paralelo; vale a primeira na ordem de
+// preferência (Bonjour > NetBIOS > DNS do roteador). Cache por IP.
+var _dispNome = function(ip, cb) {
+    var c = _dispNomes[ip];
+    if (c && c.pend) { c.pend.push(cb); return; }
+    if (c && Date.now() - c.ts < _DISP_NOME_TTL_MS) { cb(c.nome, c.fonte); return; }
+    var reg = _dispNomes[ip] = { pend: [cb] };
+    var res = { mdns: null, netbios: null, dns: null }, entregue = false;
+    var decidir = function(forcar) {
+        if (entregue) return;
+        var pronto = res.mdns !== null && res.netbios !== null && res.dns !== null;
+        if (!pronto && !forcar && !res.mdns) return;   // Bonjour respondeu: já basta
+        entregue = true; clearTimeout(tmGeral);
+        var nome = res.mdns || res.netbios || res.dns || "";
+        var fonte = res.mdns ? "Bonjour" : res.netbios ? "NetBIOS" : res.dns ? "DNS do roteador" : "";
+        _dispNomes[ip] = { nome: nome, fonte: fonte, ts: Date.now() };
+        reg.pend.forEach(function(f) { try { f(nome, fonte); } catch (_) {} });
+    };
+    var tmGeral = setTimeout(function() { decidir(true); }, _DISP_NOME_ESPERA);
+    _dispNomeMdns(ip, function(n) { res.mdns = n; decidir(false); });
+    _dispNomeNetbios(ip, function(n) { res.netbios = n; decidir(false); });
+    try { dns.reverse(ip, function(err, nomes) { res.dns = (!err && nomes && nomes.length) ? _dispLimparNome(nomes[0]) : ""; decidir(false); }); }
+    catch (_) { res.dns = ""; decidir(false); }
+};
+
+// Apelido dado ao aparelho em "Minhas preferências" (v2.21.0) — só um nome para
+// reconhecer; o nome real (Bonjour/NetBIOS/DNS) continua igual, entre parênteses.
+var _dispApelido = function(d) {
+    try { var a = d && d.ap && typeof _prefsAparelhos === "object" && _prefsAparelhos ? _prefsAparelhos[d.ap] : null; return (a && a.apelido) || ""; } catch (_) { return ""; }
+};
+var _dispRotulo = function(d) {
+    var ap = _dispApelido(d), base = (d.nome ? d.nome + " (" + d.ip + ")" : d.ip);
+    return ap ? "\"" + ap + "\" — " + base : base;
+};
+var _dispHora = function(ts) { var x = new Date(ts); return padDois(x.getHours()) + ":" + padDois(x.getMinutes()) + ":" + padDois(x.getSeconds()); };
+var _dispDuracao = function(ms) {
+    var min = Math.round(ms / 60000);
+    return min < 1 ? "menos de 1 min" : min < 60 ? min + " min" : Math.floor(min / 60) + " h " + (min % 60) + " min";
+};
+// msg pode ser uma função: montada só na hora de gravar — as linhas que esperam o
+// nome do aparelho (até ~1,6 s) saem já com o nome, logo depois de "Novo dispositivo".
+var _dispLog = function(d, msg, cat) {
+    var texto = function() { return typeof msg === "function" ? msg() : msg; };
+    if (d.anunciado) logTs(texto(), cat || "CONEXAO");
+    else d.pend.push([texto, cat || "CONEXAO"]);
+};
+
+// Chamado no início de toda requisição (depois do favicon).
+var _dispRegistrar = function(req, res, rota, parsed) {
+    try {
+        var ip = _ipDaRequisicao(req);
+        if (_dispEhEstaMaquina(ip)) return;
+        var agora = Date.now(), ua = String(req.headers["user-agent"] || "");
+        var d = _dispositivos[ip];
+        if (!d) {
+            var ips = Object.keys(_dispositivos);
+            if (ips.length >= _DISP_MAX) {               // nunca cresce sem limite
+                ips.sort(function(a, b) { return _dispositivos[a].ultimo - _dispositivos[b].ultimo; });
+                delete _dispositivos[ips[0]];
+            }
+            d = _dispositivos[ip] = { ip: ip, ua: ua, desc: _dispDescrever(ua), nome: "", nomeFonte: "",
+                primeiro: agora, ultimo: agora, ultimoResumo: agora, total: 0, rotas: {}, batimento: {},
+                telas: 0, recargas: 0, fechouEm: 0, tmFechou: null, anunciado: false, pend: [] };
+            var cliente = String(req.headers["x-cliente"] || "").trim().slice(0, 40);
+            var anunciar = function(nome, fonte) {
+                if (d.anunciado) return;
+                if (cliente) { d.nome = cliente; d.nomeFonte = "api.ps1"; }
+                else { d.nome = nome || ""; d.nomeFonte = fonte || ""; }
+                d.anunciado = true;
+                logTs("Novo dispositivo conectado: " + d.desc.texto + " | IP " + ip + " | nome: " +
+                      (d.nome ? d.nome + " (" + d.nomeFonte + ")" : "não informado pelo aparelho") +
+                      (d.ua ? " | navegador: " + d.ua.slice(0, 180) : ""), "CONEXAO");
+                var p = d.pend; d.pend = [];
+                p.forEach(function(l) { try { logTs(l[0](), l[1]); } catch (_) {} });
+            };
+            if (cliente) anunciar("", "");
+            else _dispNome(ip, anunciar);
+        } else if (ua && ua !== d.ua) {
+            d.ua = ua; d.desc = _dispDescrever(ua);
+        }
+        d.ultimo = agora; d.total++;
+        if (_ROTAS_BATIMENTO.indexOf(rota) !== -1) {
+            d.batimento[rota] = (d.batimento[rota] || 0) + 1;
+            return;
+        }
+        d.rotas[rota] = (d.rotas[rota] || 0) + 1;
+        // Recarregamento automático da tela (venda nova → a página recarrega): a página
+        // pedida logo depois de a tela fechar não vira uma linha — conta no resumo.
+        if (req.method === "GET" && rota.indexOf("/api/") !== 0 && d.fechouEm && agora - d.fechouEm < _DISP_RECARGA_MS) return;
+        var t0 = agora, metodo = req.method;
+        var qs = parsed && parsed.search ? parsed.search : "";
+        if (qs.length > 120) qs = qs.slice(0, 117) + "...";
+        res.on("finish", function() {
+            try {
+                var fim = " → " + res.statusCode + " (" + (Date.now() - t0) + " ms)";
+                _dispLog(d, function() {
+                    return (rota.indexOf("/api/") === 0 ? "API: " : "Acesso: ") + metodo + " " + rota + qs + " ← " + _dispRotulo(d) + fim;
+                }, rota.indexOf("/api/") === 0 ? "API" : "CONEXAO");
+            } catch (_) {}
+        });
+    } catch (_) { /* registro é informativo — nunca atrapalha a requisição */ }
+};
+// Telas em tempo real (SSE): abertura e fechamento.
+// Fechar e reabrir em até 8 s é a tela recarregando (atualização automática a cada
+// venda): não gera "fechada"/"aberta" — só soma em "recarregamentos" no resumo.
+var _dispTela = function(req, delta) {
+    try {
+        var ip = _ipDaRequisicao(req);
+        var d = _dispositivos[ip]; if (!d) return;
+        var agora = Date.now();
+        d.telas = Math.max(0, d.telas + delta); d.ultimo = agora;
+        if (delta > 0 && d.fechouEm && agora - d.fechouEm < _DISP_RECARGA_MS) {
+            clearTimeout(d.tmFechou); d.tmFechou = null; d.fechouEm = 0; d.recargas++;
+            return;
+        }
+        var agoraTelas = d.telas;
+        var linha = function() {
+            return (delta > 0 ? "Tela aberta (tempo real) em " : "Tela fechada em ") + _dispRotulo(d) + " — telas abertas agora: " + agoraTelas;
+        };
+        if (delta > 0) { _dispLog(d, linha); return; }
+        clearTimeout(d.tmFechou);
+        d.fechouEm = agora;
+        d.tmFechou = setTimeout(function() {
+            try {
+                d.tmFechou = null; d.fechouEm = 0;
+                if (_dispositivos[ip] === d) _dispLog(d, linha);   // não reabriu: fechou mesmo
+            } catch (_) {}
+        }, _DISP_RECARGA_MS);
+        if (d.tmFechou && d.tmFechou.unref) d.tmFechou.unref();
+    } catch (_) {}
+};
+var _dispResumoBatimento = function(d) {
+    var ks = Object.keys(d.batimento);
+    var s = ks.map(function(k) { return k + " ×" + d.batimento[k]; }).join(", ");
+    if (d.recargas) s += (s ? ", " : "") + "recarregamentos automáticos da tela ×" + d.recargas;
+    d.batimento = {}; d.recargas = 0;
+    return s;
+};
+// Varredura: resumo periódico das chamadas automáticas e saída dos aparelhos.
+var _dispVarrer = function() {
+    try {
+        var agora = Date.now();
+        Object.keys(_dispositivos).forEach(function(ip) {
+            var d = _dispositivos[ip];
+            if (!d.anunciado) return;
+            if (d.telas <= 0 && !d.tmFechou && agora - d.ultimo > _DISP_INATIVO_MS) {
+                var rotas = Object.keys(d.rotas).map(function(k) { return k + " ×" + d.rotas[k]; }).join(", ");
+                var bat = _dispResumoBatimento(d);
+                logTs("Dispositivo saiu: " + _dispRotulo(d) + " — " + d.desc.texto + " | conectado das " + _dispHora(d.primeiro) +
+                      " às " + _dispHora(d.ultimo) + " (" + _dispDuracao(d.ultimo - d.primeiro) + "), " + d.total + " requisição(ões)" +
+                      (rotas ? " | rotas: " + rotas : "") + (bat ? " | automáticas: " + bat : ""), "CONEXAO");
+                delete _dispositivos[ip];
+                return;
+            }
+            if (agora - d.ultimoResumo >= _DISP_RESUMO_MS) {
+                var b = _dispResumoBatimento(d);
+                d.ultimoResumo = agora;
+                if (b) logTs("Atividade de " + _dispRotulo(d) + " nos últimos " + Math.round(_DISP_RESUMO_MS / 60000) +
+                             " min — telas abertas: " + d.telas + " | chamadas automáticas: " + b, "CONEXAO");
+            }
+        });
+    } catch (_) {}
+};
+setInterval(_dispVarrer, 30 * 1000).unref();
+// Lista para /api/dispositivos e o api.ps1.
+var _dispListar = function() {
+    var agora = Date.now();
+    return Object.keys(_dispositivos).map(function(ip) {
+        var d = _dispositivos[ip];
+        return { ip: ip, nome: d.nome || "", apelido: _dispApelido(d), nomeFonte: d.nomeFonte || "", tipo: d.desc.tipo, modelo: d.desc.modelo,
+                 sistema: d.desc.so, navegador: d.desc.navegador, telasAbertas: d.telas,
+                 conectadoDesde: _dispHora(d.primeiro), ultimaAtividade: _dispHora(d.ultimo),
+                 segundosSemAtividade: Math.round((agora - d.ultimo) / 1000), requisicoes: d.total, rotas: d.rotas };
+    }).sort(function(a, b) { return a.segundosSemAtividade - b.segundosSemAtividade; });
+};
+
+// ── PREFERÊNCIAS POR APARELHO (v2.19.0) ────────────────────────────────────
+// Cada aparelho da rede (celular, outro computador) tem as SUAS preferências do
+// relatório — duração dos avisos, termos proibidos e teclas de atalho: quando um
+// muda, os outros não são afetados. Só o computador do servidor (onde estão o
+// launcher e o servidor-relatorio.js) muda o padrão de todos e as configurações
+// do sistema (nome, intervalo, linhas do log, janela de correção, ícone) — e pode
+// editar as preferências de cada aparelho. Aparelho sem preferência própria segue
+// o padrão do servidor. Guardadas em preferencias-aparelhos.json, na pasta do
+// sistema (NUNCA no banco). O aparelho é identificado por um cookie próprio
+// (fdb_ap, gerado aqui); quem não guarda cookie (ex.: api.ps1) pelo IP.
+var _PREFS_ARQ    = path.join(__dirname, "preferencias-aparelhos.json");
+var _PREFS_CHAVES = ["toastDuration", "proibidos", "teclasPersonalizadas"];
+var _PREFS_ROTULO = { toastDuration: "duração dos avisos", proibidos: "termos proibidos", teclasPersonalizadas: "teclas de atalho", apelido: "nome do aparelho" };
+var _PREFS_MAX    = 300;                                   // aparelhos guardados (os mais antigos saem)
+var _COOKIE_AP    = "fdb_ap";
+var _COOKIE_AP_RE = /(?:^|;\s*)fdb_ap=([a-f0-9]{32})(?=;|$)/;
+
+var _prefsChaveValida = function(k) {
+    return typeof k === "string" && (/^[a-f0-9]{32}$/.test(k) || /^ip:[0-9A-Za-z.:%-]{2,60}$/.test(k));
+};
+// Só os campos conhecidos, validados com as mesmas regras do config.json.
+var _prefsSanitizar = function(p) {
+    var s = {};
+    if (!p || typeof p !== "object" || Array.isArray(p)) return s;
+    if (p.toastDuration !== undefined) { var td = parseInt(p.toastDuration, 10); if (td >= 500 && td <= 60000) s.toastDuration = td; }
+    if (Array.isArray(p.proibidos)) s.proibidos = _sanitizarProibidos(p.proibidos);
+    if (Array.isArray(p.teclasPersonalizadas)) s.teclasPersonalizadas = _sanitizarTeclas(p.teclasPersonalizadas);
+    return s;
+};
+// Apelido do aparelho (v2.21.0): texto curto, sem caracteres de controle nem aspas/<>.
+var _PREFS_APELIDO_MAX = 40;
+var _prefsApelido = function(v) {
+    return String(v == null ? "" : v).replace(/[\x00-\x1F\x7F"<>]+/g, " ").replace(/\s+/g, " ").trim().slice(0, _PREFS_APELIDO_MAX);
+};
+var _prefsAparelhos = Object.create(null);
+(function _prefsCarregar() {
+    var raw = "";
+    try { raw = fs.readFileSync(_PREFS_ARQ, "utf8").replace(/^﻿/, "").trim(); }
+    catch (e) { if (e.code !== "ENOENT") logTs("AVISO: não foi possível ler preferencias-aparelhos.json (" + e.message + ") — os aparelhos usam o padrão do servidor.", "CONFIG"); return; }
+    if (!raw) return;
+    try {
+        var o = JSON.parse(raw), ap = o && o.aparelhos;
+        if (!ap || typeof ap !== "object" || Array.isArray(ap)) return;
+        Object.keys(ap).slice(0, _PREFS_MAX).forEach(function(k) {
+            var a = ap[k];
+            if (!_prefsChaveValida(k) || !a || typeof a !== "object") return;
+            _prefsAparelhos[k] = { ip: _textoSeguroLog(a.ip, 64), nome: _textoSeguroLog(a.nome, 80), desc: _textoSeguroLog(a.desc, 80),
+                                   apelido: _prefsApelido(a.apelido), atualizado: Number(a.atualizado) || 0, prefs: _prefsSanitizar(a.prefs) };
+        });
+    } catch (e) {
+        logTs("AVISO: preferencias-aparelhos.json inválido (" + e.message + ") — os aparelhos usam o padrão do servidor até alguém salvar de novo.", "CONFIG");
+    }
+})();
+var _prefsGravar = function() {
+    var chaves = Object.keys(_prefsAparelhos);
+    if (chaves.length > _PREFS_MAX) {
+        chaves.sort(function(a, b) { return _prefsAparelhos[a].atualizado - _prefsAparelhos[b].atualizado; });
+        chaves.slice(0, chaves.length - _PREFS_MAX).forEach(function(k) { delete _prefsAparelhos[k]; });
+    }
+    var ok = _gravarArquivoAtomico(_PREFS_ARQ, JSON.stringify({ versao: 1, aparelhos: _prefsAparelhos }, null, 2));
+    if (!ok) logTs("ERRO: falha ao gravar preferencias-aparelhos.json em disco.", "CONFIG");
+    return ok;
+};
+
+// Cookie do aparelho (só o identificador aleatório; nenhum dado pessoal).
+var _cookieAparelho = function(req) {
+    var m = String((req && req.headers && req.headers.cookie) || "").match(_COOKIE_AP_RE);
+    return m ? m[1] : "";
+};
+// A requisição veio do computador do servidor? (localhost ou o IP desta máquina)
+var _ehComputadorServidor = function(req) { return !_viaProxy(req) && _dispEhEstaMaquina(_ipDaRequisicao(req)); };
+// Chave das preferências de quem pediu: cookie; sem cookie, o IP.
+var _prefsChaveDe = function(req) { return req._apCookie || ("ip:" + _ipDaRequisicao(req)); };
+// Padrão do servidor (config.json) — vale para todo aparelho sem preferência própria.
+var _prefsPadrao = function() {
+    return { toastDuration: TOAST_DURATION,
+             proibidos: Array.isArray(_config.proibidos) ? _config.proibidos : [],
+             teclasPersonalizadas: Array.isArray(_config.teclasPersonalizadas) ? _config.teclasPersonalizadas : [] };
+};
+// Preferências efetivas de um aparelho (as dele por cima do padrão do servidor).
+var _prefsEfetivas = function(chave) {
+    var g = _prefsPadrao(), a = chave ? _prefsAparelhos[chave] : null, p = (a && a.prefs) || {};
+    var r = { prefs: {}, personalizado: {} };
+    _PREFS_CHAVES.forEach(function(k) { var tem = p[k] !== undefined; r.prefs[k] = tem ? p[k] : g[k]; r.personalizado[k] = tem; });
+    return r;
+};
+// Descrição do aparelho dono da chave (para o log e para a tela do servidor).
+var _prefsDescreverChave = function(chave) {
+    var a = _prefsAparelhos[chave], d = null;
+    Object.keys(_dispositivos).some(function(ip) { if (_dispositivos[ip].ap === chave) { d = _dispositivos[ip]; return true; } return false; });
+    if (!d && /^ip:/.test(chave)) d = _dispositivos[chave.slice(3)] || null;
+    var ip = d ? d.ip : (a ? a.ip : (/^ip:/.test(chave) ? chave.slice(3) : ""));
+    var nome = d ? (d.nome || "") : (a ? a.nome : "");
+    var desc = d ? d.desc.texto : (a ? a.desc : "");
+    var apelido = a ? (a.apelido || "") : "";
+    return { ip: ip, nome: nome, desc: desc, apelido: apelido,
+             texto: (apelido ? "\"" + apelido + "\" — " : "") + (nome ? nome + " " : "") + (ip ? "(" + ip + ")" : "") + (desc ? " — " + desc : "") };
+};
+// Grava as preferências de um aparelho. "restaurar" apaga as dele (volta ao padrão).
+// Retorna a lista de campos alterados.
+// apelido: undefined = não mexe; "" = tira o apelido. "Voltar ao padrão" mantém o apelido
+// (ele não é preferência do relatório, é só o nome para reconhecer o aparelho).
+var _prefsSalvarAparelho = function(chave, novas, restaurar, apelido) {
+    var info = _prefsDescreverChave(chave), alterados = [];
+    var ant = _prefsAparelhos[chave];
+    var atual = ant ? ant.prefs : {};
+    var apAtual = ant ? (ant.apelido || "") : "";
+    var apNovo = apelido === undefined ? apAtual : _prefsApelido(apelido);
+    if (apNovo !== apAtual) alterados.push("apelido");
+    if (restaurar) {
+        alterados = alterados.concat(Object.keys(atual));
+        if (apNovo) _prefsAparelhos[chave] = { ip: info.ip, nome: info.nome, desc: info.desc, apelido: apNovo, atualizado: Date.now(), prefs: {} };
+        else delete _prefsAparelhos[chave];
+    } else {
+        var san = _prefsSanitizar(novas), soma = Object.assign({}, atual);
+        Object.keys(san).forEach(function(k) {
+            if (JSON.stringify(atual[k]) !== JSON.stringify(san[k])) alterados.push(k);
+            soma[k] = san[k];
+        });
+        if (!apNovo && !Object.keys(soma).length) delete _prefsAparelhos[chave];
+        else _prefsAparelhos[chave] = { ip: info.ip, nome: info.nome, desc: info.desc, apelido: apNovo, atualizado: Date.now(), prefs: soma };
+    }
+    if (!_prefsGravar()) return null;
+    return alterados;
+};
+// Avisa as telas abertas (do aparelho, ou de todos) para recarregar as preferências.
+var _prefsAvisarTelas = function(chave) {
+    var msg = "data: " + JSON.stringify({ type: "prefs" }) + "\n\n", n = 0;
+    sseClients.forEach(function(c) {
+        if (chave && c.ap !== chave) return;
+        try { if (!c.res.destroyed && c.res.writable !== false) { c.res.write(msg); n++; } } catch (_) {}
+    });
+    return n;
+};
+// Script injetado no <head> da página de cada aparelho: diz se é o computador do
+// servidor e já traz as preferências dele (sem "piscar" o padrão antes).
+var _prefsScriptPagina = function(req) {
+    var srv = _ehComputadorServidor(req), chave = srv ? "" : _prefsChaveDe(req);
+    var ef = _prefsEfetivas(chave);
+    return "<script>window.__APARELHO__=" + _jsonParaScript({ servidor: srv, prefs: ef.prefs, personalizado: ef.personalizado }) + ";<\/script>";
+};
+var _htmlComAparelho = function(html, req) {
+    try {
+        var i = html.lastIndexOf("</head>");
+        if (i < 0) return html;
+        return html.slice(0, i) + _prefsScriptPagina(req) + html.slice(i);
+    } catch (e) { return html; }
+};
+
+
+// ── CONTROLE REMOTO (v2.16.0): temas e programas ───────────────────────────
+// Temas: lidos do TEMAS_RELATORIO do gerador (fonte única — o servidor nunca
+// oferece um id que a página não conheça). Reserva fixa se a leitura falhar.
+var _TEMAS_RESERVA = [{id:"ultra-dark",nome:"Escuro"},{id:"light",nome:"Claro"}];
+var _temasCache = null, _temasCacheMtime = 0;
+var _temasDoGerador = function() {
+    try {
+        var arq = path.join(__dirname, "gerar-relatorio-html.js");
+        var mt = fs.statSync(arq).mtimeMs;
+        if (_temasCache && mt === _temasCacheMtime) return _temasCache;
+        var txt = fs.readFileSync(arq, "utf8");
+        var ini = txt.indexOf("const TEMAS_RELATORIO = [");
+        var fim = ini >= 0 ? txt.indexOf("];", ini) : -1;
+        var lista = [];
+        if (ini >= 0 && fim > ini) {
+            var re = /\{\s*id:\s*"([a-z0-9-]+)",\s*nome:\s*"([^"]+)"/g, m;
+            var bloco = txt.slice(ini, fim);
+            while ((m = re.exec(bloco))) lista.push({ id: m[1], nome: m[2] });
+        }
+        _temasCache = lista.length ? lista : _TEMAS_RESERVA;
+        _temasCacheMtime = mt;
+        return _temasCache;
+    } catch (e) { return _TEMAS_RESERVA; }
+};
+
+// Programas: "programas" do config.json DESTA máquina (relido a cada pedido —
+// editar o arquivo vale na hora) + 2 fixos. Validação: nome até 60, caminho
+// até 260, args string ou lista; no máximo 30 itens.
+var _programasDisponiveis = function() {
+    var cfgPg = {};
+    try { cfgPg = JSON.parse(fs.readFileSync(CONFIG, "utf8").replace(/^﻿/, "")) || {}; } catch (e) { cfgPg = {}; }
+    var lista = [];
+    var ehWin = process.platform === "win32";
+    lista.push({ nome: "Pasta do sistema", caminho: ehWin ? "explorer.exe" : "xdg-open", args: [__dirname], fixo: true, existe: true });
+    lista.push({ nome: "Log do servidor", caminho: ehWin ? "notepad.exe" : "xdg-open", args: [LOG_PATH], fixo: true, existe: true });
+    var brutos = Array.isArray(cfgPg.programas) ? cfgPg.programas.slice(0, 30) : [];
+    brutos.forEach(function(p) {
+        if (!p || typeof p !== "object") return;
+        var nome = _textoSeguroLog(p.nome, 60);
+        var cam = String(p.caminho || "").trim();
+        if (!nome || !cam || cam.length > 260 || /[\x00-\x1F]/.test(cam)) return;
+        if (lista.some(function(x) { return x.nome.toLowerCase() === nome.toLowerCase(); })) return;
+        var args = Array.isArray(p.args) ? p.args.map(function(a) { return String(a); }).slice(0, 20)
+                 : (p.args ? [String(p.args)] : []);
+        var existe = false;
+        try { existe = fs.existsSync(cam); } catch (e) { existe = false; }
+        lista.push({ nome: nome, caminho: cam, args: args, existe: existe });
+    });
+    return lista;
+};
+
+// Abre desacoplado do servidor (fechar o servidor não fecha o programa).
+// .exe/.com: direto. Outros (.lnk, .bat, .url, documentos): via "start" do cmd.
+var _abrirPrograma = function(prog, cb) {
+    var feito = false;
+    var fim = function(err) { if (feito) return; feito = true; cb(err || null); };
+    try {
+        var ext = path.extname(prog.caminho).toLowerCase();
+        var direto = !(process.platform === "win32") || ext === ".exe" || ext === ".com" || prog.fixo;
+        var cwd;
+        try { if (path.isAbsolute(prog.caminho) && fs.existsSync(path.dirname(prog.caminho))) cwd = path.dirname(prog.caminho); } catch (e) {}
+        var filho;
+        if (direto) {
+            filho = spawn(prog.caminho, prog.args, { detached: true, stdio: "ignore", cwd: cwd });
+        } else {
+            // cmd interpreta " & | < > ^ % — recusados aqui (a lista vem só do
+            // config.json local, mas um erro de digitação não pode virar outro comando).
+            var _perigo = /["&|<>^%\r\n]/;
+            if (_perigo.test(prog.caminho) || prog.args.some(function(a) { return _perigo.test(a); })) {
+                return fim(new Error("caminho/argumentos com caractere não permitido (\" & | < > ^ %)"));
+            }
+            var linha = 'start "" "' + prog.caminho + '"' + prog.args.map(function(a) { return ' "' + a + '"'; }).join("");
+            filho = spawn("cmd.exe", ["/d", "/s", "/c", '"' + linha + '"'], { detached: true, stdio: "ignore", windowsHide: true, windowsVerbatimArguments: true, cwd: cwd });
+        }
+        filho.on("error", function(e) { fim(e); });
+        filho.on("spawn", function() { try { filho.unref(); } catch (e) {} fim(null); });
+        setTimeout(function() { try { filho.unref(); } catch (e) {} fim(null); }, 3000);
+    } catch (e) { fim(e); }
+};
+
+var server=http.createServer(function(req,res){
+    
+    if(/^\/(favicon\.(ico|png)|apple-touch-icon\.png)/.test(req.url)){
+        if(fs.existsSync(FAVICON)){
+            try{
+                // PERF FIX: favicon em memória — evita readFileSync a cada request.
+                // Cache invalidado quando mtime muda (upload de novo favicon).
+                var _fMtime = 0;
+                try { _fMtime = fs.statSync(FAVICON).mtimeMs; } catch(_sm) {}
+                if (!_FAVICON_CACHE || _fMtime !== _FAVICON_CACHE_MTIME) {
+                    _FAVICON_CACHE = fs.readFileSync(FAVICON);
+                    _FAVICON_CACHE_MTIME = _fMtime;
+                }
+                res.writeHead(200,{"Content-Type":"image/png","Cache-Control":"public,max-age=86400"});
+                res.end(_FAVICON_CACHE);
+            }
+            catch(e){ logTs("WARN favicon read: "+e.message); res.writeHead(204);res.end();}
+        }else{res.writeHead(204);res.end();}
+        return;
+    }
+
+    var parsed;
+    try{parsed=new URL(req.url,"http://localhost");}
+    catch(_){res.writeHead(400);res.end("URL invalida.");return;}
+    var rota=parsed.pathname||"/";
+
+    // LOG DE CONEXÕES (v2.17.0 — antes só /api/*, sem nome): cada aparelho da rede
+    // (celular, outro computador, api.ps1) aparece no log com tipo, modelo, IP e o
+    // nome do aparelho, e cada rota que ele acessa com resultado e tempo. As rotas de
+    // batimento (status/pronto/events/db-status/hora-usuario, várias por segundo) não
+    // geram uma linha cada: entram num resumo a cada 10 min. A própria máquina do
+    // servidor fica de fora. Ver _dispRegistrar.
+    // Aparelho (v2.19.0): cookie próprio com um identificador aleatório, para cada
+    // aparelho ter as suas preferências (ver _prefsAparelhos). O computador do
+    // servidor não precisa (ele usa e muda o padrão de todos).
+    req._apCookie = _cookieAparelho(req);
+    if (!req._apCookie && !_ehComputadorServidor(req)) {
+        try { res.setHeader("Set-Cookie", _COOKIE_AP + "=" + require("crypto").randomBytes(16).toString("hex") + "; Path=/; Max-Age=315360000; SameSite=Lax"); } catch (_ck) {}
+    }
+    _dispRegistrar(req, res, rota, parsed);
+    if (req._apCookie) { var _dAp = _dispositivos[_ipDaRequisicao(req)]; if (_dAp) _dAp.ap = req._apCookie; }
+
+    var sendJson = function(obj, code) {
+        res.writeHead(code||200,{"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store"});
+        res.end(JSON.stringify(obj||{}));
+    };
+
+    // /pronto
+    if(rota==="/pronto"){
+        var k=parsed.searchParams.get("k")||"",ek=cache[k];
+        var rk=!ek||ek.gerando
+            ?{pronto:false,erro:null,tentativa:ek?(ek.tentativa||1):1,matando:false}
+            :ek.matando
+            ?{pronto:false,erro:null,tentativa:ek.tentativa||1,matando:true}
+            :ek.erro
+            ?{pronto:false,erro:ek.erro,tentativa:1,matando:false}
+            :{pronto:true,erro:null,tentativa:1,matando:false};
+        res.writeHead(200,{"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-cache,no-store"});
+        res.end(JSON.stringify(rk));return;
+    }
+
+    // /api/status
+    if(rota==="/api/status"){
+        // BUG FIX (auditoria v2.5.0): splice(0) era "consume-once" GLOBAL — só a
+        // primeira aba/tela a chamar /api/status via de fato a notificação; as
+        // demais, mesmo conectadas e pollando normalmente, nunca a recebiam
+        // (ver _pushCorrecao acima para o detalhe completo). Agora é uma leitura
+        // NÃO destrutiva por janela de tempo: toda tela que fizer poll dentro de
+        // _CORRECOES_JANELA_MS após o evento recebe a notificação.
+        var _agoraStatus = Date.now();
+        var _corr = _correcoesPendentes.filter(function(c) { return (_agoraStatus - c.ts) < _CORRECOES_JANELA_MS; });
+        var _statusPayload = Object.assign({}, statusAtual,
+            {changeTs: _statusChangeTs},
+            _corr.length ? {correcoes: _corr} : {});
+        res.writeHead(200,{"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-cache,no-store"});
+        res.end(JSON.stringify(_statusPayload));return;
+    }
+
+    // /api/restart
+    if(rota==="/api/restart"){
+        // SEGURANÇA: /api/restart só aceita requisições do próprio localhost.
+        // Sem isso, qualquer host na rede local pode desligar o servidor.
+        // BUG FIX (usuário reportou 403 usando api.ps1 NA PRÓPRIA máquina do
+        // servidor): a checagem só reconhecia 127.0.0.1/::1 como "local" —
+        // mas api.ps1 monta a URL a partir do IP de rede da máquina
+        // (maquinaIP, ex: 192.168.1.33), não de localhost, mesmo quando
+        // roda no mesmo computador. O SO frequentemente entrega esse
+        // tráfego "auto-endereçado" com o IP de rede como remoteAddress em
+        // vez de 127.0.0.1, fazendo a própria máquina do servidor ser
+        // barrada como se fosse outro computador da rede. Corrigido para
+        // também aceitar quando o IP de origem é EXATAMENTE o IP que este
+        // servidor já reconhece como o seu próprio (_maquinaIP) — isso
+        // continua bloqueando qualquer OUTRA máquina da rede (cujo IP de
+        // origem seria o dela mesma, nunca igual a _maquinaIP), preservando
+        // a intenção original de segurança.
+        // ESCOPO (v2.7.8): passou a aceitar também a REDE LOCAL, além de
+        // localhost e da própria máquina do servidor. Motivo: reiniciar o
+        // servidor pelo api.ps1 a partir de outro PC da loja é justamente o
+        // uso previsto da ferramenta — e era bloqueado com 403, sem alternativa
+        // prática (o restart pela própria máquina exige ir até ela). Todo o
+        // resto do sistema (relatório, /api/config, proibidos, upload de
+        // favicon) já é aberto à rede local por design; manter só o restart
+        // fechado protegia pouco e atrapalhava muito.
+        // Endereços FORA da rede local continuam bloqueados: nenhuma máquina
+        // de outra rede consegue derrubar o servidor.
+        if (!_requisicaoDaRedeLocal(req)) {
+            res.writeHead(403, {"Content-Type":"application/json; charset=utf-8"});
+            res.end(JSON.stringify({ok:false,erro:"Acesso negado — restart disponível apenas a partir da rede local."}));
+            return;
+        }
+        res.writeHead(200,{"Content-Type":"application/json; charset=utf-8"});
+        res.end(JSON.stringify({ok:true,msg:"Servidor encerrando. O tray reiniciará em ~10s."}));
+        // Encerramento único (v2.11.0): registra no log, avisa as abas abertas
+        // e mata os subprocessos antes de sair.
+        _encerrarServidor("reinício solicitado via API por " + _ipDaRequisicao(req), 0, true);
+        return;
+    }
+
+    // /api/encerrar[?reiniciar=1&origem=texto] — encerramento ordenado (v2.11.0).
+    // Usado pelo tray em "Sair" e "Reiniciar servidor": antes ele matava o
+    // processo direto (taskkill /F), sem chance de o servidor registrar no log
+    // nem avisar as telas abertas — o relatório ficava parado na tela sem
+    // nenhuma indicação de que o servidor tinha sido encerrado.
+    if(rota==="/api/encerrar"){
+        if (!_requisicaoDaRedeLocal(req)) {
+            res.writeHead(403, {"Content-Type":"application/json; charset=utf-8"});
+            res.end(JSON.stringify({ok:false,erro:"Acesso negado — encerramento disponível apenas a partir da rede local."}));
+            return;
+        }
+        var _reiniciar = parsed.searchParams.get("reiniciar") === "1";
+        var _origem = _textoSeguroLog(parsed.searchParams.get("origem") || "", 40) || _ipDaRequisicao(req);
+        res.writeHead(200,{"Content-Type":"application/json; charset=utf-8"});
+        res.end(JSON.stringify({ok:true,msg:_reiniciar ? "Servidor reiniciando." : "Servidor encerrando."}));
+        _encerrarServidor((_reiniciar ? "reinício" : "encerramento") + " solicitado por " + _origem, 0, _reiniciar);
+        return;
+    }
+
+    // /estoque — consulta de estoque completa (v3.0.0)
+    if(rota==="/estoque" && req.method==="GET"){
+        var _htmlEst = "";
+        try { _htmlEst = fs.readFileSync(_ESTOQUE_HTML, "utf8"); }
+        catch (eH) { res.writeHead(500,{"Content-Type":"text/plain; charset=utf-8"}); res.end("estoque.html não encontrado na pasta do sistema."); return; }
+        _htmlEst = _htmlEst.split("{{APP}}").join(String(APP_NAME).replace(/[&<>"']/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]; }));
+        res.writeHead(200,{"Content-Type":"text/html; charset=utf-8","Cache-Control":"no-store"});
+        res.end(_htmlComAparelho ? _htmlComAparelho(_htmlEst, req) : _htmlEst); return;
+    }
+    if((rota==="/api/estoque" || rota==="/api/estoque/item" || rota==="/api/estoque/csv") && req.method==="GET"){
+        if (!_estoque) { sendJson({ok:false, erro:"Consulta de estoque indisponível nesta instalação."}, 503); return; }
+        var _sp = parsed.searchParams;
+        var _pe = {
+            q: String(_sp.get("q") || "").slice(0, 300),
+            estoque: ["todos","com","sem","negativo","abaixo"].indexOf(_sp.get("estoque")) >= 0 ? _sp.get("estoque") : "todos",
+            ordem: ["","descricao","codigo","qtd","qtdAsc","preco","precoAsc"].indexOf(_sp.get("ordem") || "") >= 0 ? (_sp.get("ordem") || "") : "",
+            ativos: _sp.get("ativos") === "1",
+            pagina: _sp.get("pagina"), limite: _sp.get("limite"),
+            recarregar: _sp.get("recarregar") === "1" && _requisicaoDaRedeLocal(req)
+        };
+        if (rota === "/api/estoque/item") {
+            _estoque.item(_sp.get("id"), function(e, r) { sendJson(e ? {ok:false, erro:String(e.message || e)} : r, e ? 404 : 200); });
+            return;
+        }
+        if (rota === "/api/estoque/csv") {
+            _estoque.csv(_pe, function(e, csv, n) {
+                if (e) { sendJson({ok:false, erro:String(e.message || e)}, 503); return; }
+                res.writeHead(200, {"Content-Type":"text/csv; charset=utf-8", "Cache-Control":"no-store",
+                    "Content-Disposition":"attachment; filename=\"estoque-" + hoje() + ".csv\""});
+                res.end(csv);
+                logTs("Estoque exportado (" + n + " itens) por " + _ipDaRequisicao(req) + ".", "ESTOQUE");
+            });
+            return;
+        }
+        _estoque.buscar(_pe, function(e, r) { sendJson(e ? {ok:false, erro:"Não foi possível ler o estoque: " + String(e.message || e)} : r, e ? 503 : 200); });
+        return;
+    }
+
+    // /api/offline — estado da cópia offline (v3.0.0)
+    if(rota==="/api/offline" && req.method==="GET"){
+        sendJson(_offlineStatusPara(req)); return;
+    }
+    // /api/offline/atualizar — faz uma cópia nova já (rede local)
+    if(rota==="/api/offline/atualizar"){
+        if (!_requisicaoDaRedeLocal(req)) { sendJson({ok:false, erro:"Disponível apenas a partir da rede local."}, 403); return; }
+        if (!_offline) { sendJson({ok:false, erro:"Módulo de cópia offline não carregado."}, 503); return; }
+        logTs("Cópia offline pedida por " + _ipDaRequisicao(req) + ".", "OFFLINE");
+        _offline.atualizarAgora(function(r) { sendJson(r, r && r.ok ? 200 : 409); });
+        return;
+    }
+    // /api/offline/importar — restaura um .fbk como cópia offline (computador do servidor)
+    if(rota==="/api/offline/importar" && req.method==="POST"){
+        if (!_ehComputadorServidor(req)) { sendJson({ok:false, erro:"Só no computador do servidor."}, 403); return; }
+        if (!_offline) { sendJson({ok:false, erro:"Módulo de cópia offline não carregado."}, 503); return; }
+        lerBodySeguro(req, function(eb, corpo) {
+            if (eb) { sendJson({ok:false, erro:eb.message}, 413); return; }
+            var arq = "";
+            try { arq = String((JSON.parse(corpo) || {}).caminho || "").trim(); } catch (_) {}
+            if (!arq || arq.length > 1024 || /[\x00-\x1F]/.test(arq)) { sendJson({ok:false, erro:"Caminho inválido."}, 400); return; }
+            logTs("Backup para importar: " + arq, "OFFLINE");
+            _offline.importarFbk(arq, function(r) { sendJson(r && r.ok ? {ok:true} : {ok:false, erro:(r && r.erro) || "Falha ao restaurar."}, r && r.ok ? 200 : 400); });
+        });
+        return;
+    }
+
+    // /api/db-status
+    if(rota==="/api/db-status"){
+        res.writeHead(200,{"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-cache,no-store"});
+        res.end(JSON.stringify(dbStatus));return;
+    }
+
+    // /api/proibidos GET
+    if(rota==="/api/proibidos" && req.method === "GET"){
+        // PERF FIX: usa _config em memória — /api/proibidos é chamado pelo poll do browser
+        // a cada POLL_INTERVAL; loadConfig() a cada request causava readFileSync excessivo.
+        // _config é atualizado via /api/config POST quando o usuário salva configurações.
+        // v2.19.0: cada aparelho recebe a SUA lista (ou o padrão do servidor, se não tiver).
+        // "efetivo": a lista vale mesmo vazia (o aparelho pode ter limpado a dele).
+        var _prSrv = _ehComputadorServidor(req);
+        var _prLista = _prSrv ? (_config.proibidos || []) : _prefsEfetivas(_prefsChaveDe(req)).prefs.proibidos;
+        res.writeHead(200,{"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-cache,no-store"});
+        res.end(JSON.stringify({proibidos: _prLista, efetivo: true, escopo: _prSrv ? "servidor" : "aparelho"}));
+        return;
+    }
+
+    // ---------------------------------------------------------------------------
+    // /api/itens-detalhe?data=YYYY-MM-DD&chave=PEDIDO
+    // Retorna os itens detalhados de uma venda diretamente do Firebird.
+    // Usado pelo modal de detalhes via lazy loading — itensDetalhe não é mais
+    // embutido no JSON inline do HTML, reduzindo drasticamente o tamanho da página.
+    // Formato de resposta: [ { desc, qtd, total, cancelado } ]
+    // ---------------------------------------------------------------------------
+    if (rota === "/api/itens-detalhe" && req.method === "GET") {
+        if (!Firebird || !dbStatus.ok) {
+            res.writeHead(503, {"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-cache,no-store"});
+            res.end(JSON.stringify({ok:false,erro:"Banco indisponivel.",itens:[]}));
+            return;
+        }
+        var _idData  = (parsed.searchParams.get("data")  || "").trim();
+        var _idChave = (parsed.searchParams.get("chave") || "").trim();
+
+        // Validações básicas para evitar injeção SQL via parâmetros
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(_idData) || !_idChave || _idChave.length > 60) {
+            res.writeHead(400, {"Content-Type":"application/json; charset=utf-8"});
+            res.end(JSON.stringify({ok:false,erro:"Parametros invalidos.",itens:[]}));
+            return;
+        }
+
+        var _idOpts = {host:FDB_HOST,port:FIREBIRD_PORT,database:FDB_PATH,user:USER,password:PASS,
+                       role:null,charset:FB_CHARSET};
+
+        // CRASH FIX (v2.4.1): antes existia apenas _idEncerrado, usado ao mesmo tempo
+        // como "já respondi" e como "já fechei a conexão". Quando o timeout de 8 s
+        // disparava, ele respondia 504 e marcava _idEncerrado=true; a callback tardia
+        // da query então chamava _idFechar() (que retornava sem fazer nada, vazando a
+        // conexão) e seguia para res.writeHead(200/500) — segunda resposta na mesma
+        // request → ERR_HTTP_HEADERS_SENT → uncaughtException no processo inteiro.
+        // Agora são dois estados independentes e uma referência externa da conexão.
+        var _idRespondido = false;   // resposta HTTP já enviada
+        var _idFechado    = false;   // conexão Firebird já encerrada
+        var _idDbRef      = null;    // referência acessível pelo timeout
+
+        var _idFechar = function(){
+            if (_idFechado) return;
+            _idFechado = true;
+            clearTimeout(_idTimer);
+            if (_idDbRef) { try { _idDbRef.detach(); } catch(_) { try { _matarConexao(_idDbRef); } catch(__) {} } }
+            _idDbRef = null;
+        };
+        var _idResponder = function(code, payload){
+            if (_idRespondido || res.headersSent) return;
+            _idRespondido = true;
+            try {
+                res.writeHead(code,{"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-cache,no-store"});
+                res.end(JSON.stringify(payload));
+            } catch(e) { logTs("WARN /api/itens-detalhe resposta: "+e.message); }
+        };
+
+        var _idTimer = setTimeout(function(){
+            _idResponder(504, {ok:false,erro:"Timeout ao consultar itens.",itens:[]});
+            _idFechar(); // fecha a conexão que ficou pendurada — antes vazava
+        }, 8000);
+
+        // Se o cliente abandonar a request, encerra a conexão sem tentar responder.
+        req.on("close", function(){ _idRespondido = true; _idFechar(); });
+
+        Firebird.attach(_idOpts, function(errConn, idDb){
+            if (_idFechado || _idRespondido) { if (idDb) { try{idDb.detach();}catch(_){} } return; }
+            if (errConn || !idDb) {
+                _idFechar();
+                _idResponder(503, {ok:false,erro:"Falha ao conectar ao banco.",itens:[]});
+                return;
+            }
+            _idDbRef = idDb;
+
+            // DADO ERRADO FIX (v2.4.1): o probe anterior era
+            //   SELECT FIRST 1 TOTAL, PRECO FROM ALTERACA WHERE 1=2
+            // "WHERE 1=2" nunca retorna linhas, então probeRows era [] e
+            // `"TOTAL" in rows[0]` avaliava sobre um objeto vazio → SEMPRE false.
+            // Resultado: _colTotal caía sempre em "cast(null as double precision)"
+            // e TODO item do modal de detalhes vinha com total = null.
+            // (A premissa do comentário antigo também estava errada: o Firebird
+            //  aborta a instrução inteira ao encontrar coluna inexistente, não
+            //  devolve o campo como null.)
+            // Correção: ler o catálogo do sistema — determinístico, 1 query, sem
+            // depender de existir linha na tabela.
+            idDb.query(
+                "SELECT TRIM(RDB$FIELD_NAME) AS COLUNA FROM RDB$RELATION_FIELDS " +
+                "WHERE TRIM(RDB$RELATION_NAME) = 'ALTERACA'",
+                [],
+                function(errProbe, probeRows){
+                var _cols = {};
+                if (!errProbe && Array.isArray(probeRows)) {
+                    probeRows.forEach(function(pr){
+                        if (!pr) return;
+                        var nome = pr.COLUNA || pr.coluna;
+                        if (Buffer.isBuffer(nome)) { try { nome = _win1252Decoder.decode(nome); } catch(_) { nome = ""; } }
+                        nome = String(nome || "").trim().toUpperCase();
+                        if (nome) _cols[nome] = true;
+                    });
+                }
+                var _temTotal = !!_cols.TOTAL;
+                var _temPreco = !!_cols.PRECO;
+                var _temQtd   = !!_cols.QUANTIDADE;
+                var _colQtd   = _temQtd ? "coalesce(QUANTIDADE,1)" : "1";
+                var _colTotal = _temTotal
+                    ? "cast(TOTAL as double precision)"
+                    : (_temPreco ? "cast(PRECO as double precision) * cast(" + _colQtd + " as double precision)" : "cast(null as double precision)");
+                if (errProbe) {
+                    logTs("WARN /api/itens-detalhe: falha ao ler colunas de ALTERACA (" + errProbe.message + ") — total virá nulo.");
+                }
+
+                // Normaliza o pedido: tenta com zeros e sem zeros para cobrir ambos os formatos
+                var _pedidos = [_idChave];
+                var _stripped = _idChave.replace(/^0+/, "") || _idChave;
+                if (_stripped !== _idChave) _pedidos.push(_stripped);
+                var _ph = _pedidos.map(function(){ return "?"; }).join(",");
+
+                // ROBUSTEZ: QUANTIDADE e ITEM só entram na SQL se existirem no
+                // catálogo — em bases antigas do Small Commerce a ausência de uma
+                // delas fazia a query inteira falhar com "column unknown".
+                // DESCRICAO como BYTES (OCTETS): coluna sem charset com acento chegava
+                // com "\uFFFD". Firebird que recusar a conversão: refeita sem ela.
+                var _sqlAlt =
+                    "SELECT cast(DESCRICAO as varchar(480) character set octets) as DESC_A," +
+                    "       cast(" + _colQtd + " as double precision) as QTD_A," +
+                    "       " + _colTotal + " as TOT_A " +
+                    "FROM ALTERACA " +
+                    "WHERE DATA >= cast(? as date) AND DATA < cast(? as date) + 1 " +
+                    "  AND cast(PEDIDO as varchar(60)) IN (" + _ph + ") " +
+                    (_cols.ITEM ? "ORDER BY ITEM" : "");
+
+                var _paramsAlt = [_idData, _idData].concat(_pedidos);
+                var _aoLerItens = function(errQ, rows){
+                    if (errQ && !_idRespondido && _sqlAlt.indexOf(" character set octets") >= 0 &&
+                        /octets|transliterat|character set|charset|malformed|conversion|truncation|arithmetic/i.test(String(errQ.message || errQ))) {
+                        _sqlAlt = _sqlAlt.replace("cast(DESCRICAO as varchar(480) character set octets)", "cast(DESCRICAO as varchar(120))");
+                        idDb.query(_sqlAlt, _paramsAlt, _aoLerItens);
+                        return;
+                    }
+                    // O cliente pode ter desconectado ou o timeout de 8s já pode ter
+                    // respondido enquanto esta query rodava — não processa nem responde de novo.
+                    if (_idRespondido) { _idFechar(); return; }
+
+                    if (errQ || !rows) {
+                        _idFechar();
+                        _idResponder(500, {ok:false,erro:"Erro na consulta: "+(errQ&&errQ.message||"desconhecido"),itens:[]});
+                        return;
+                    }
+
+                    // _win1252Decoder e _fmtQuantidade são constantes de módulo (topo do arquivo).
+                    // Evitam recriar TextDecoder e a função de formatação a cada request.
+                    var itens = [];
+                    for (var ri = 0; ri < rows.length; ri++) {
+                        var row = rows[ri];
+                        // Decodifica campos Buffer que possam vir como Windows-1252
+                        for (var k in row) {
+                            if (Buffer.isBuffer(row[k])) row[k] = _win1252Decoder.decode(row[k]);
+                        }
+                        var desc = String(row.DESC_A || row.desc_a || "").trim();
+                        if (!desc) continue;
+                        var isCancelado = /cancelad/i.test(desc) || desc === "<CANCELADO>";
+                        if (isCancelado) continue;
+                        var qtd    = _fmtQuantidade(row.QTD_A || row.qtd_a || 1);
+                        var totVal = (row.TOT_A !== null && row.TOT_A !== undefined) ? Number(row.TOT_A || row.tot_a || null) : null;
+                        itens.push({
+                            desc: desc,
+                            qtd: qtd,
+                            total: (totVal !== null && Number.isFinite(totVal)) ? totVal : null,
+                            cancelado: false
+                        });
+                    }
+
+                    _idFechar();
+                    _idResponder(200, {ok:true, itens:itens});
+                };
+                idDb.query(_sqlAlt, _paramsAlt, _aoLerItens);
+            });
+        });
+        return;
+    }
+
+    // /api/proibidos POST
+    if(rota==="/api/proibidos" && req.method === "POST"){
+        lerBodySeguro(req, function(err, body) {
+            if (err) { res.writeHead(413, {"Content-Type":"application/json; charset=utf-8"}); res.end(JSON.stringify({ok:false,erro:err.message})); return; }
+            try {
+                var payload = JSON.parse(body);
+                // VALIDAÇÃO FIX: aceita apenas arrays de strings — evita salvar tipos inválidos
+                // como [1, {}, null] que poderiam corromper config.json ou crashar o filtro de relatório.
+                if (!Array.isArray(payload)) {
+                    res.writeHead(400,{"Content-Type":"application/json; charset=utf-8"});
+                    res.end(JSON.stringify({ok:false,erro:"Payload deve ser um array de strings."}));
+                    return;
+                }
+                var proibidosLimpos = _sanitizarProibidos(payload);
+                // v2.19.0: de outro aparelho, a lista vale só para ele.
+                if (!_ehComputadorServidor(req)) {
+                    var _prChave = _prefsChaveDe(req);
+                    var _prAlt = _prefsSalvarAparelho(_prChave, { proibidos: proibidosLimpos }, false);
+                    if (_prAlt === null) { res.writeHead(500,{"Content-Type":"application/json; charset=utf-8"}); res.end(JSON.stringify({ok:false,erro:"Falha ao gravar preferencias-aparelhos.json em disco."})); return; }
+                    if (_prAlt.length) logTs("Termos proibidos do aparelho " + _prefsDescreverChave(_prChave).texto + " salvos (" + proibidosLimpos.length + " termo(s)) — vale só para ele.", "CONFIG");
+                    _prefsAvisarTelas(_prChave);
+                    res.writeHead(200,{"Content-Type":"application/json; charset=utf-8"});
+                    res.end(JSON.stringify({ok:true, escopo:"aparelho"}));
+                    return;
+                }
+                if (!updateConfigKey("proibidos", proibidosLimpos)) {
+                    res.writeHead(500,{"Content-Type":"application/json; charset=utf-8"});
+                    res.end(JSON.stringify({ok:false,erro:"Falha ao gravar config.json em disco."}));
+                    return;
+                }
+                appCfg.proibidos = proibidosLimpos;
+                _config.proibidos = proibidosLimpos;
+                _invalidarCache();
+                var dh = hoje();
+                gerarEmBackground(dh, dh, dh);
+                _prefsAvisarTelas("");   // aparelhos que seguem o padrão pegam a lista nova
+                res.writeHead(200,{"Content-Type":"application/json; charset=utf-8"});
+                res.end(JSON.stringify({ok:true, escopo:"servidor"}));
+            } catch(e) {
+                // CATCH FIX: catch silencioso → log + resposta estruturada de erro
+                logTs("ERRO /api/proibidos POST: "+e.message);
+                res.writeHead(400,{"Content-Type":"application/json; charset=utf-8"});
+                res.end(JSON.stringify({ok:false,erro:e.message}));
+            }
+        });
+        return;
+    }
+
+    // /api/config GET — usa _config em memória (sem readFileSync por request)
+    if(rota==="/api/config" && req.method==="GET"){
+        // v2.19.0: outro aparelho recebe as preferências DELE (duração dos avisos,
+        // proibidos, teclas) por cima do padrão; o computador do servidor recebe o
+        // padrão — ou, com ?aparelho=<chave>, as de um aparelho para editar.
+        var _cSrv = _ehComputadorServidor(req);
+        var _cAlvo = _cSrv ? String(parsed.searchParams.get("aparelho") || "") : "";
+        if (_cAlvo && !_prefsChaveValida(_cAlvo)) { sendJson({ok:false, erro:"Aparelho inválido."}, 400); return; }
+        var _cChave = _cSrv ? _cAlvo : _prefsChaveDe(req);
+        var _cOut = {
+            appName:               _config.appName              || "",
+            pollInterval:          POLL_INTERVAL,   // valores EFETIVOS (o config.json pode ter um fora da faixa)
+            maxLogLines:           MAX_LOG_LINES,
+            favicon:               _config.favicon              || "",
+            toastDuration:         _config.toastDuration        || 5000, // CONTRATO FIX: padrão unificado com filho (era 4000)
+            spawnTimeoutMs:        _SPAWN_TIMEOUT_MS,
+            janelaCorrecaoHoraMin: Math.round(_HORA_GERENCIAL_JANELA_MS / 60000),
+            offlineModo:           _offline ? _offline.modo() : "desligado",
+            offlineIntervaloMin:   Math.round(_offlineCfg(_config).intervaloMinMs / 60000),
+            offlineVerificarSeg:   Math.round(_offlineCfg(_config).verificarMs / 1000),
+            offlineMaxIdadeMin:    Math.round(_offlineCfg(_config).maxIdadeMs / 60000),
+            proibidos:             Array.isArray(_config.proibidos) ? _config.proibidos : [],
+            teclasPersonalizadas:  Array.isArray(_config.teclasPersonalizadas) ? _config.teclasPersonalizadas : []
+        };
+        _cOut.servidor = _cSrv;
+        _cOut.escopo = !_cSrv ? "aparelho" : (_cAlvo ? "aparelho-editado" : "servidor");
+        if (_cChave) {
+            var _cEf = _prefsEfetivas(_cChave);
+            _PREFS_CHAVES.forEach(function(k) { _cOut[k] = _cEf.prefs[k]; });
+            _cOut.personalizado = _cEf.personalizado;
+            var _cInfo = _prefsDescreverChave(_cChave);
+            _cOut.aparelho = { nome: _cInfo.nome, ip: _cInfo.ip, desc: _cInfo.desc, apelido: _cInfo.apelido, texto: _cInfo.texto };
+            if (_cSrv) _cOut.aparelho.chave = _cAlvo;
+        }
+        sendJson(_cOut);
+        return;
+    }
+
+    // /api/config POST
+    if(rota==="/api/config" && req.method==="POST"){
+        lerBodySeguro(req, function(errBody, cfgBody) {
+            if (errBody) { res.writeHead(413,{"Content-Type":"application/json; charset=utf-8"}); res.end(JSON.stringify({ok:false,erro:errBody.message})); return; }
+            try{
+                var p=JSON.parse(cfgBody);
+                if(!p||typeof p!=="object"||Array.isArray(p)){
+                    res.writeHead(400,{"Content-Type":"application/json; charset=utf-8"});
+                    res.end(JSON.stringify({ok:false,erro:"Payload deve ser um objeto JSON."}));
+                    return;
+                }
+                // v2.19.0: outro aparelho (ou o computador do servidor editando um aparelho
+                // com ?aparelho=<chave>) grava só as preferências DAQUELE aparelho; as
+                // configurações do sistema só mudam pelo computador do servidor.
+                var _cSrvP = _ehComputadorServidor(req);
+                var _cAlvoP = _cSrvP ? String(parsed.searchParams.get("aparelho") || "") : "";
+                if (_cAlvoP && !_prefsChaveValida(_cAlvoP)) { sendJson({ok:false, erro:"Aparelho inválido."}, 400); return; }
+                if (!_cSrvP || _cAlvoP) {
+                    var _chP = _cSrvP ? _cAlvoP : _prefsChaveDe(req);
+                    if (p.toastDuration !== undefined) {
+                        var _tdP = parseInt(p.toastDuration, 10);
+                        if (!(_tdP >= 500 && _tdP <= 60000)) { sendJson({ok:false, erro:"Duração dos avisos deve ficar entre 500 e 60000 ms."}, 400); return; }
+                    }
+                    var _ignP = _cSrvP ? [] : ["appName","pollInterval","maxLogLines","favicon","janelaCorrecaoHoraMin","aplicarTodos","offlineModo","offlineIntervaloMin","offlineVerificarSeg","offlineMaxIdadeMin"].filter(function(k){ return p[k] !== undefined; });
+                    var _novasP = {};
+                    _PREFS_CHAVES.forEach(function(k){ if (p[k] !== undefined) _novasP[k] = p[k]; });
+                    var _infoP = _prefsDescreverChave(_chP);
+                    var _altP = _prefsSalvarAparelho(_chP, _novasP, p.restaurar === true, p.apelido === undefined ? undefined : String(p.apelido == null ? "" : p.apelido));
+                    if (_altP === null) { sendJson({ok:false, erro:"Falha ao gravar preferencias-aparelhos.json em disco."}, 500); return; }
+                    logTs((_cSrvP ? "Computador do servidor alterou as preferências do aparelho " : "Preferências do aparelho ") + _infoP.texto +
+                          (p.restaurar === true ? " voltaram ao padrão do servidor" : ": " + (_altP.length ? _altP.map(function(k){ return _PREFS_ROTULO[k]; }).join(", ") : "nenhuma mudança")) +
+                          " — vale só para ele." + (_ignP.length ? " Ignorado (só no computador do servidor): " + _ignP.join(", ") + "." : ""), "CONFIG");
+                    _prefsAvisarTelas(_chP);
+                    var _infoD = _prefsDescreverChave(_chP);
+                    sendJson({ok:true, escopo:"aparelho", alterados:_altP, ignorados:_ignP, aparelho:{ nome:_infoD.nome, ip:_infoD.ip, apelido:_infoD.apelido, texto:_infoD.texto }});
+                    return;
+                }
+                var rawCfg="";
+                try{ rawCfg=fs.readFileSync(CONFIG,"utf8").replace(/^\uFEFF/,"").trim(); }catch(e){}
+                var obj={};
+                if(rawCfg){ try{ obj=JSON.parse(rawCfg); }catch(e){ res.writeHead(500,{"Content-Type":"application/json; charset=utf-8"}); res.end(JSON.stringify({ok:false,erro:"config.json corrompido"})); return; } }
+                if(typeof obj!=="object"||Array.isArray(obj)) obj={};
+
+                if(p.appName       !== undefined){ var n=_textoSeguroLog(p.appName, 80);    if(n) obj.appName=n; }
+                if(p.pollInterval  !== undefined){ var pi=parseInt(p.pollInterval,10);    if(pi>=POLL_INTERVAL_MIN&&pi<=POLL_INTERVAL_MAX) obj.pollInterval=pi; }
+                if(p.maxLogLines   !== undefined){ var ml=parseInt(p.maxLogLines,10);     if(ml>=MAX_LOG_LINES_MIN&&ml<=MAX_LOG_LINES_MAX) obj.maxLogLines=ml; }
+                if(p.favicon       !== undefined){
+                    // SEGURANÇA FIX (v2.5.0): ver _faviconCaminhoSeguro — rejeita caminhos
+                    // fora da pasta do app e caminhos UNC, em vez de aceitar qualquer string.
+                    var _favChk = _faviconCaminhoSeguro(p.favicon);
+                    if (!_favChk.ok) {
+                        res.writeHead(400,{"Content-Type":"application/json; charset=utf-8"});
+                        res.end(JSON.stringify({ok:false,erro:"Favicon inválido: " + _favChk.motivo}));
+                        return;
+                    }
+                    obj.favicon = _favChk.valor;
+                }
+                if(p.toastDuration !== undefined){ var td=parseInt(p.toastDuration,10);   if(td>=500&&td<=60000) obj.toastDuration=td; }
+                if(p.janelaCorrecaoHoraMin !== undefined){
+                    var jh=parseInt(p.janelaCorrecaoHoraMin,10);
+                    if(!(jh>=JANELA_HORA_MIN_MIN && jh<=JANELA_HORA_MAX_MIN)){
+                        res.writeHead(400,{"Content-Type":"application/json; charset=utf-8"});
+                        res.end(JSON.stringify({ok:false,erro:"Janela de correção de horário deve ficar entre "+JANELA_HORA_MIN_MIN+" e "+JANELA_HORA_MAX_MIN+" minutos."}));
+                        return;
+                    }
+                    obj.janelaCorrecaoHoraMin=jh;
+                }
+                // Cópia offline (v3.0.0): valida e grava; aplicado em memória mais abaixo.
+                if(p.offlineModo !== undefined){
+                    var _om = String(p.offlineModo||"").toLowerCase();
+                    if(["copia","hibrido","desligado"].indexOf(_om) < 0){ sendJson({ok:false, erro:"offlineModo deve ser copia, hibrido ou desligado."}, 400); return; }
+                    obj.offlineModo = _om;
+                }
+                var _offFaixas = [["offlineIntervaloMin",1,1440,"Intervalo mínimo entre cópias (min)"],["offlineVerificarSeg",5,3600,"Verificação do banco principal (s)"],["offlineMaxIdadeMin",5,10080,"Idade máxima da cópia (min)"]];
+                for (var _of = 0; _of < _offFaixas.length; _of++) {
+                    var _fx = _offFaixas[_of];
+                    if (p[_fx[0]] === undefined) continue;
+                    var _vx = parseInt(p[_fx[0]], 10);
+                    if (!(_vx >= _fx[1] && _vx <= _fx[2])) { sendJson({ok:false, erro:_fx[3] + " deve ficar entre " + _fx[1] + " e " + _fx[2] + "."}, 400); return; }
+                    obj[_fx[0]] = _vx;
+                }
+                // VALIDAÇÃO FIX (v2.9.0): antes qualquer array era gravado como veio
+                // (inclusive [1,{},null]); teclas exigiam "comando" mesmo quando o
+                // modal envia só "acao". Mesma regra de /api/proibidos agora.
+                if(p.proibidos            !== undefined && Array.isArray(p.proibidos)){ obj.proibidos=_sanitizarProibidos(p.proibidos); }
+                if(p.teclasPersonalizadas !== undefined && Array.isArray(p.teclasPersonalizadas)){
+                    obj.teclasPersonalizadas = _sanitizarTeclas(p.teclasPersonalizadas);
+                }
+
+                // PRECISÃO FIX (v2.6.7): gravação atômica do config.json. Este
+                // arquivo já era gravado direto (writeFileSync no destino),
+                // enquanto o hora-fixada-cache.json — MUITO menos crítico — já
+                // usava _gravarArquivoAtomico neste mesmo arquivo. A assimetria
+                // era perigosa porque o tray encerra este processo com
+                // "taskkill /F /T" (kill imediato, sem chance de terminar a
+                // escrita) sempre que o usuário clica em "Reiniciar servidor" ou
+                // o watchdog detecta travamento. Um kill no meio do writeFileSync
+                // deixava config.json truncado — e como loadConfig() descarta JSON
+                // inválido e volta aos padrões, a loja perderia de uma vez
+                // appName, porta, lista de proibidos e, o pior de tudo, fdbPath:
+                // sem ele o servidor não acha o banco e o relatório para de
+                // funcionar até alguém reconfigurar na mão.
+                if (!_gravarArquivoAtomico(CONFIG, JSON.stringify(obj,null,2))) {
+                    logTs("ERRO /api/config: falha ao gravar config.json em disco.");
+                    res.writeHead(500,{"Content-Type":"application/json; charset=utf-8"});
+                    res.end(JSON.stringify({ok:false,erro:"Falha ao gravar config.json em disco."}));
+                    return;
+                }
+
+                // CONFIG RELOAD FIX: não relê o arquivo que acabou de escrever.
+                // Usa diretamente o objeto 'obj' já construído em memória — uma única operação.
+                if(obj.appName&&obj.appName.trim()) APP_NAME=obj.appName.trim();
+                if(_naFaixa(obj.pollInterval, POLL_INTERVAL_MIN, POLL_INTERVAL_MAX)){
+                    POLL_INTERVAL=_naFaixa(obj.pollInterval, POLL_INTERVAL_MIN, POLL_INTERVAL_MAX);
+                    // PRECISÃO FIX (v2.6.5): a janela de entrega das notificações de
+                    // correção de hora é derivada do POLL_INTERVAL — sem recalcular
+                    // aqui, alterar o intervalo na tela de configurações deixava a
+                    // janela com o valor ANTIGO até o servidor reiniciar, e um
+                    // intervalo novo maior que a janela antiga faria os toasts serem
+                    // perdidos silenciosamente. Mantido em sincronia com a fórmula
+                    // usada na inicialização (procure por "_CORRECOES_JANELA_MS").
+                    _CORRECOES_JANELA_MS = Math.max(3000, POLL_INTERVAL * 3);
+                    _CORRECOES_TTL_MS    = _CORRECOES_JANELA_MS + 5000;
+                    // BUG FIX (v2.4.1): o setInterval de pollStatus é criado uma única
+                    // vez no boot com o valor original de POLL_INTERVAL×POLL_RETRY_MULTIPLIER.
+                    // Sem recriá-lo aqui, alterar o intervalo de polling na tela de
+                    // configurações não tinha efeito nenhum até o servidor reiniciar —
+                    // o campo "salvava" mas o comportamento real não mudava.
+                    if (Firebird && dbStatus.ok) {
+                        if (_pollIntervalId) clearInterval(_pollIntervalId);
+                        _pollIntervalId = setInterval(pollStatus, _intervaloPollStatus());
+                    }
+                }
+                if(_naFaixa(obj.maxLogLines, MAX_LOG_LINES_MIN, MAX_LOG_LINES_MAX)){
+                    MAX_LOG_LINES=_naFaixa(obj.maxLogLines, MAX_LOG_LINES_MIN, MAX_LOG_LINES_MAX);
+                    if(_logBuffer.length>MAX_LOG_LINES) _logBuffer.splice(0, _logBuffer.length - MAX_LOG_LINES);
+                    // PRECISÃO FIX (v2.6.5): com o logger append-only (v2.6.2), podar
+                    // apenas o buffer em memória não encolhe mais o ARQUIVO — ele só
+                    // seria cortado na próxima rotação natural, que pode demorar
+                    // MAX_LOG_LINES linhas. Quem acabou de REDUZIR o limite espera
+                    // ver efeito agora, não daqui a milhares de linhas. Força a
+                    // rotação imediata zerando o contador (a própria função relê o
+                    // arquivo do disco e grava de forma atômica).
+                    _logLinhasDesdeRotacao = MAX_LOG_LINES;
+                    _rotacionarLogSeNecessario();
+                }
+                if(p.favicon !== undefined){
+                    // BUG FIX (v2.5.0): antes, só um valor NÃO-VAZIO atualizava FAVICON —
+                    // limpar o campo (voltar ao padrão, exatamente como a própria tela de
+                    // configurações promete: "vazio para padrão") não tinha efeito nenhum
+                    // em memória (o config.json salvava vazio, mas o ícone servido
+                    // continuava sendo o customizado anterior até reiniciar o servidor).
+                    // obj.favicon já foi validado acima por _faviconCaminhoSeguro.
+                    FAVICON = obj.favicon ? obj.favicon : path.join(__dirname, "favicon.png");
+                    _FAVICON_CACHE = null; // invalida o cache em memória do favicon servido
+                }
+                if(obj.toastDuration&&parseInt(obj.toastDuration,10)>=500) TOAST_DURATION=parseInt(obj.toastDuration,10);
+                // Vale já no próximo ciclo de correção — sem reiniciar o servidor.
+                var _janelaAnteriorMin = Math.round(_HORA_GERENCIAL_JANELA_MS / 60000);
+                _HORA_GERENCIAL_JANELA_MS = _normalizarJanelaHoraMin(obj.janelaCorrecaoHoraMin) * 60000;
+                if (Math.round(_HORA_GERENCIAL_JANELA_MS / 60000) !== _janelaAnteriorMin) {
+                    logTs("Janela de correção de horário alterada: " + _janelaAnteriorMin + " → " + Math.round(_HORA_GERENCIAL_JANELA_MS / 60000) + " min.");
+                }
+
+                // Sincroniza _config em memória com o objeto já processado (sem novo readFileSync).
+                try { Object.assign(_config, obj); appCfg = _config; cfg = _config; } catch(_sc) {}
+                if (_offline && (p.offlineModo !== undefined || p.offlineIntervaloMin !== undefined || p.offlineVerificarSeg !== undefined || p.offlineMaxIdadeMin !== undefined)) {
+                    try { _offline.configurar(_offlineCfg(_config)); } catch (_oc) { logTs("ERRO ao aplicar a configuração da cópia offline: " + _oc.message, "OFFLINE"); }
+                }
+
+                _invalidarCache();
+                var dh=hoje(); gerarEmBackground(dh,dh,dh);
+
+                // "Aplicar a todos os aparelhos" (v2.19.0): apaga dos aparelhos as
+                // preferências próprias dos campos enviados — todos passam a seguir o padrão.
+                if (p.aplicarTodos === true) {
+                    var _apTodosN = 0;
+                    Object.keys(_prefsAparelhos).forEach(function(k) {
+                        var pr = _prefsAparelhos[k].prefs, mudou = false;
+                        _PREFS_CHAVES.forEach(function(c) { if (p[c] !== undefined && pr[c] !== undefined) { delete pr[c]; mudou = true; } });
+                        if (mudou) _apTodosN++;
+                        if (!Object.keys(pr).length && !_prefsAparelhos[k].apelido) delete _prefsAparelhos[k];
+                    });
+                    if (_apTodosN) _prefsGravar();
+                    logTs("Padrão aplicado a todos os aparelhos pelo computador do servidor (" + _apTodosN + " aparelho(s) tinham preferências próprias).", "CONFIG");
+                }
+                _prefsAvisarTelas("");
+                logTs("Configurações salvas via modal.");
+                res.writeHead(200,{"Content-Type":"application/json; charset=utf-8"});
+                res.end(JSON.stringify({ok:true}));
+            }catch(e){
+                logTs("ERRO /api/config POST: "+e.message);
+                res.writeHead(400,{"Content-Type":"application/json; charset=utf-8"});
+                res.end(JSON.stringify({ok:false,erro:e.message}));
+            }
+        });
+        return;
+    }
+
+    // /config — página HTML
+    if(rota==="/config"){
+        var SC3="</"+"script>";
+        var cfgHtml=(function(){
+            // Usa _config em memória — sem readFileSync por request de página
+            var cc=_config;
+            var _pn=escH(APP_NAME);
+            var _pi=POLL_INTERVAL;  // valores efetivos
+            var _ml=MAX_LOG_LINES;
+            var _td=parseInt(cc.toastDuration||TOAST_DURATION||5000,10);
+            var _jh=Math.round(_HORA_GERENCIAL_JANELA_MS/60000);
+            var _fv=escH(cc.favicon||"");
+            // XSS FIX (v2.9.0): JSON.stringify não escapa "</script>" — um termo
+            // proibido com esse texto executava código nesta página.
+            var _pr=_jsonParaScript(Array.isArray(cc.proibidos)?cc.proibidos:[]);
+            return "<!doctype html><html lang=\"pt-br\"><head><meta charset=\"utf-8\">"+htmlFavicon+"<title>Configuracoes</title>"+
+            "<script>(function(){try{var t=localStorage.getItem('fdb_theme')||(document.cookie.match(/fdb_theme=([^;]+)/)||[])[1]||'ultra-dark';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();"+SC3+
+            "<style>"+
+            "*{box-sizing:border-box}"+
+            "body{margin:0;background:#000;display:flex;align-items:flex-start;justify-content:center;min-height:100vh;font-family:Inter,Arial,sans-serif;color:#ededed;padding:40px 16px}"+
+            ".box{background:#0a0a0a;border:1px solid rgba(255,255,255,.12);border-radius:16px;padding:36px 40px;width:100%;max-width:520px}"+
+            "h2{margin:0 0 6px;font-size:20px;font-weight:700}"+
+            ".sub{color:#71717a;font-size:13px;margin-bottom:15px}"+
+            ".field{margin-bottom:15px}"+
+            "label{display:block;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#a1a1aa;margin-bottom:7px}"+
+            ".hint{font-size:12px;color:#52525b;margin-top:5px}"+
+            "input[type=text],input[type=number]{display:block;width:100%;background:#000;color:#ededed;border:1px solid rgba(255,255,255,.14);border-radius:8px;padding:10px 14px;font-size:14px;outline:none}"+
+            "input:focus{border-color:#0ea5e9}"+
+            "textarea{display:block;width:100%;background:#000;color:#ededed;border:1px solid rgba(255,255,255,.14);border-radius:8px;padding:10px 14px;font-size:13px;font-family:monospace;outline:none;resize:vertical;min-height:90px}"+
+            "textarea:focus{border-color:#0ea5e9}"+
+            ".row{display:flex;gap:12px}.row .field{flex:1}"+
+            ".btn{width:100%;padding:14px;background:#0ea5e9;color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;margin-top:8px}"+
+            ".btn:hover{background:#0284c7}.btn:disabled{opacity:.5;cursor:not-allowed}"+
+            ".btn-sec{background:rgba(255,255,255,.07);color:#ededed}.btn-sec:hover{background:rgba(255,255,255,.13)}"+
+            "#msg{display:none;padding:12px 16px;border-radius:8px;font-size:14px;margin-bottom:16px}"+
+            ".ok{background:rgba(34,197,94,.12);color:#4ade80;border:1px solid rgba(34,197,94,.25)}"+
+            ".er{background:rgba(248,113,113,.12);color:#f87171;border:1px solid rgba(248,113,113,.25)}"+
+            ".sep{border:none;border-top:1px solid rgba(255,255,255,.07);margin:12px 0}"+
+            "</style></head><body><div class=\"box\">"+
+            "<h2>Configuracoes</h2><p class=\"sub\">Apenas campos editaveis pelo painel. Outras opcoes: edite config.json diretamente.</p>"+
+            "<div id=\"msg\"></div>"+
+            "<div class=\"field\"><label>Nome do sistema (appName)</label><input type=\"text\" id=\"appName\" value=\""+_pn+"\"><p class=\"hint\">Exibido no titulo da pagina e no icone da bandeja.</p></div>"+
+            "<div class=\"row\">"+
+            "<div class=\"field\"><label>Intervalo de polling (ms)</label><input type=\"number\" id=\"pollInterval\" value=\""+_pi+"\" min=\"100\" max=\"60000\" step=\"50\"><p class=\"hint\">De 100 ms a 60000 ms</p></div>"+
+            "<div class=\"field\"><label>Maximo de linhas de log</label><input type=\"number\" id=\"maxLogLines\" value=\""+_ml+"\" min=\"100\" max=\"100000\" step=\"100\"><p class=\"hint\">De 100 a 100000 linhas</p></div>"+
+            "</div>"+
+            "<div class=\"field\"><label>Janela de correcao de horario (min)</label><input type=\"number\" id=\"janelaHora\" value=\""+_jh+"\" min=\""+JANELA_HORA_MIN_MIN+"\" max=\""+JANELA_HORA_MAX_MIN+"\" step=\"5\"><p class=\"hint\">Vendas gerenciais com hora no futuro ou entre 3 min e este tempo atras passam a usar a hora atual; mais antigas sao ignoradas. Padrao: 180 (3 horas). Minimo "+JANELA_HORA_MIN_MIN+", maximo "+JANELA_HORA_MAX_MIN+".</p></div>"+
+            "<div class=\"field\"><label>Duracao do toast (ms)</label><input type=\"number\" id=\"toastDuration\" value=\""+_td+"\" min=\"500\" max=\"60000\" step=\"500\"><p class=\"hint\">Tempo que a notificacao de mudanca fica visivel. Minimo: 500 ms, maximo: 60 000 ms.</p></div>"+
+            "<div class=\"field\">"+
+              "<label>Ícone (favicon)</label>"+
+              "<div style=\"display:flex;gap:2px;align-items:center;flex-wrap:wrap\">"+
+                "<input type=\"text\" id=\"favicon\" placeholder=\"Caminho do arquivo ou vazio para usar favicon na mesma pasta\" value=\""+_fv+"\" style=\"flex:1;min-width:0\">"+
+                "<button class=\"btn btn-sec\" type=\"button\" id=\"favPick\" style=\"white-space:nowrap;height:38px;padding:0 14px\" title=\"Selecionar arquivo do computador\">" + SVG_FOLDER + "Procurar</button>"+
+                "<input type=\"file\" id=\"favFile\" accept=\".png,.ico,.jpg,.jpeg\" style=\"display:none\">"+
+              "</div>"+
+              "<p class=\"hint\" id=\"favHint\">"+(_fv?"Atual: "+_fv:"Usando favicon.png padrao na mesma pasta dos arquivos")+"</p>"+
+            "</div>"+
+            "<hr class=\"sep\">"+
+            "<div class=\"field\"><label>Proibidos (um por linha)</label>"+
+            "<textarea id=\"proibidos\" placeholder=\"Nome1\nNome2\nProduto A\"></textarea>"+
+            "<p class=\"hint\">Vendas com esses termos serao ocultadas do relatorio.</p></div>"+
+            "<button class=\"btn\" id=\"salvarBtn\" onclick=\"salvar()\">Salvar configuracoes</button>"+
+            "<button class=\"btn btn-sec\" style=\"margin-top:10px\" onclick=\"window.location.href='/'\">Voltar para o relatorio</button>"+
+            "</div>"+
+            "<script>"+
+            "(function(){"+
+            "var pr="+_pr+";"+
+            "document.getElementById('proibidos').value=Array.isArray(pr)?pr.join('\\n'):'';"+
+            "var _fi=document.getElementById('favFile');"+
+            "document.getElementById('favPick').addEventListener('click',function(){_fi.click();});"+
+            "_fi.addEventListener('change',function(){"+
+            "var f=_fi.files&&_fi.files[0];"+
+            "if(!f)return;"+
+            "var h=document.getElementById('favHint');"+
+            "if(h)h.textContent='Arquivo selecionado: '+f.name+' ('+Math.round(f.size/1024)+' KB) — sera enviado ao salvar.';"+
+            "document.getElementById('favicon').value='';"+
+            "});"+
+            "})();"+
+            "function salvar(){"+
+            "var btn=document.getElementById('salvarBtn'),msg=document.getElementById('msg');"+
+            "btn.disabled=true;btn.textContent='Salvando...';msg.style.display='none';"+
+            "var an=document.getElementById('appName').value.trim();"+
+            "var pi=parseInt(document.getElementById('pollInterval').value,10)||100;"+
+            "var ml=parseInt(document.getElementById('maxLogLines').value,10)||1000;"+
+            "var td=parseInt(document.getElementById('toastDuration').value,10)||4000;"+
+            "var jh=parseInt(document.getElementById('janelaHora').value,10);"+
+            "var fv=document.getElementById('favicon').value.trim();"+
+            "var praw=document.getElementById('proibidos').value;"+
+            "var pr=praw.split('\\n').map(function(s){return s.trim();}).filter(function(s){return s.length>0;});"+
+            "var favFile=document.getElementById('favFile').files&&document.getElementById('favFile').files[0];"+
+            "if(!an){showMsg('O nome do sistema nao pode estar vazio.','er');btn.disabled=false;btn.textContent='Salvar configuracoes';return;}"+
+            // BUG FIX (v2.20.0): exigia 200 ms, mas o servidor aceita a partir de POLL_INTERVAL_MIN
+            // (100) e a própria página diz "De 100 ms" — salvar 100 dava "Intervalo mínimo é 200 ms".
+            "if(!(pi>="+POLL_INTERVAL_MIN+"&&pi<="+POLL_INTERVAL_MAX+")){showMsg('Intervalo deve ficar entre "+POLL_INTERVAL_MIN+" e "+POLL_INTERVAL_MAX+" ms.','er');btn.disabled=false;btn.textContent='Salvar configuracoes';return;}"+
+            "if(ml<100){showMsg('Maximo de linhas minimo e 100.','er');btn.disabled=false;btn.textContent='Salvar configuracoes';return;}"+
+            "if(td<500||td>60000){showMsg('Duracao do toast deve estar entre 500 e 60 000 ms.','er');btn.disabled=false;btn.textContent='Salvar configuracoes';return;}"+
+            "if(!(jh>="+JANELA_HORA_MIN_MIN+"&&jh<="+JANELA_HORA_MAX_MIN+")){showMsg('Janela de correcao de horario deve ficar entre "+JANELA_HORA_MIN_MIN+" e "+JANELA_HORA_MAX_MIN+" minutos.','er');btn.disabled=false;btn.textContent='Salvar configuracoes';return;}"+
+            "var doSave=function(){"+
+            "fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},"+
+            "body:JSON.stringify({appName:an,pollInterval:pi,maxLogLines:ml,toastDuration:td,janelaCorrecaoHoraMin:jh,favicon:fv,proibidos:pr})})"+
+            ".then(function(r){return r.json();})"+
+            ".then(function(d){"+
+            "if(d.ok&&d.escopo==='aparelho'){showMsg('Salvo so para este aparelho (duracao dos avisos e proibidos).'+(d.ignorados&&d.ignorados.length?' Nome, intervalo, log, janela e icone so podem ser alterados no computador do servidor.':''),'ok');}"+
+            "else if(d.ok){showMsg('Configuracoes salvas com sucesso! O relatorio sera atualizado.','ok');}"+
+            "else{showMsg('Erro: '+(d.erro||'Falha desconhecida'),'er');}"+
+            "btn.disabled=false;btn.textContent='Salvar configuracoes';"+
+            "})"+
+            ".catch(function(e){showMsg('Erro de rede: '+e.message,'er');btn.disabled=false;btn.textContent='Salvar configuracoes';});"+
+            "};"+
+            "if(favFile){"+
+            "var reader=new FileReader();"+
+            "reader.onload=function(ev){"+
+            "fetch('/api/upload-favicon',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:ev.target.result})"+
+            ".then(function(r){return r.json();})"+
+            ".then(function(d){"+
+            "if(d.ok){fv='';var h=document.getElementById('favHint');if(h)h.textContent='Favicon atualizado com sucesso!';}"+
+            "else{showMsg('Aviso favicon: '+(d.erro||'Falha no upload'),'er');}"+
+            "doSave();"+
+            "}).catch(function(){showMsg('Aviso: falha no upload do favicon — salvando demais configuracoes.','er');doSave();});"+
+            "};"+
+            "reader.readAsArrayBuffer(favFile);"+
+            "}else{doSave();}"+
+            "}"+
+            "function showMsg(t,cls){var m=document.getElementById('msg');m.textContent=t;m.className=cls;m.style.display='block';window.scrollTo({top:0,behavior:'smooth'});}"+
+            SC3+
+            "</body></html>";
+        })();
+        res.writeHead(200,{"Content-Type":"text/html; charset=utf-8","Cache-Control":"no-store"});
+        res.end(cfgHtml);
+        return;
+    }
+
+    // /api/log-error
+    if(rota==="/api/log-error" && req.method==="POST"){
+        // v2.15.5: no máximo _LOG_ERRO_MAX_MIN registros por minuto — um script
+        // quebrado numa aba (ou um laço vindo da rede) empurrava todo o log útil
+        // para fora em segundos. O excedente é descartado e contado.
+        var _agoraLe = Date.now();
+        if (_agoraLe - _logErroJanela >= 60000) {
+            if (_logErroDescartados) logTs("Erros da tela descartados no último minuto (excesso): " + _logErroDescartados + ".", "NAVEGADOR");
+            _logErroJanela = _agoraLe; _logErroQtd = 0; _logErroDescartados = 0;
+        }
+        if (++_logErroQtd > _LOG_ERRO_MAX_MIN) {
+            _logErroDescartados++;
+            req.resume(); res.writeHead(204); res.end(); return;
+        }
+        lerBodySeguro(req, function(err, errBody) {
+            if (!err) {
+                try{
+                    var e=JSON.parse(errBody);
+                    // RUÍDO FIX (v2.7.2): descarta erros originados de EXTENSÕES DO
+                    // NAVEGADOR. O filtro principal fica no cliente
+                    // (gerar-relatorio-html.js v2.6.7), mas esta segunda camada é
+                    // necessária porque abas já abertas continuam rodando o HTML
+                    // ANTIGO, sem o filtro, até serem recarregadas — e um relatório
+                    // costuma ficar aberto o dia inteiro numa tela de loja. Caso
+                    // real: uma extensão do Chrome falhando ~1x/s gerou 92% de todo
+                    // o relatorio.log (1360 de 1478 linhas), empurrando para fora a
+                    // informação de diagnóstico útil pela rotação do arquivo.
+                    var _stackTxt = String(e.stack||"") + " " + String(e.src||"");
+                    if(/(?:chrome|moz|safari|ms-browser)-extension:\/\//i.test(_stackTxt)){
+                        res.writeHead(204);res.end();return;
+                    }
+                    if(!e||typeof e!=="object"){res.writeHead(204);res.end();return;}
+                    // SEGURANÇA (v2.9.0): todo texto vindo da rede passa por
+                    // _textoSeguroLog (sem \r/\n) — antes um POST podia forjar
+                    // linhas inteiras do relatorio.log. O stack continua
+                    // multilinha, mas cada linha é indentada com "    | " para
+                    // nunca se passar por uma linha legítima do log.
+                    var _ln = parseInt(e.line,10), _cl = parseInt(e.col,10);
+                    var _stackSeguro = e.stack
+                        ? String(e.stack).slice(0, 4000).split(/\r?\n/).slice(0, 30)
+                            .map(function(l){ return "    | " + _textoSeguroLog(l, 300); }).join("\n")
+                        : "";
+                    logTs("[BROWSER-ERROR] "+_textoSeguroLog(e.msg, 500)+
+                          (e.src?" | "+_textoSeguroLog(e.src, 300):"")+
+                          (_ln>0?" L"+_ln:"")+(_cl>0?":"+_cl:"")+
+                          (_stackSeguro?"\n"+_stackSeguro:""));
+                }catch(_){}
+            }
+            res.writeHead(204);res.end();
+        });
+        return;
+    }
+
+    // /api/hora-usuario POST — browser envia Date.now() para sincronizar relógio.
+    if(rota==="/api/hora-usuario" && req.method==="POST"){
+        lerBodySeguro(req, function(errHora, _horaBody) {
+            if (errHora) { res.writeHead(413); res.end(); return; }
+            try{
+                var _hp=JSON.parse(_horaBody);
+                // tzOffsetMs = browser.getTimezoneOffset() * 60000
+                // Válido entre -720 min (UTC+12) e +840 min (UTC-14)
+                var tzMs=Number(_hp.tzOffsetMs);
+                if(!isNaN(tzMs) && tzMs >= -720*60000 && tzMs <= 840*60000){
+                    var mudou = Math.abs(tzMs - _clientTzOffsetMs) > 60000; // >1 min de diferença
+                    if(mudou){
+                        var h = Math.abs(Math.round(tzMs/3600000));
+                        var sinal = tzMs >= 0 ? "-" : "+";
+                        logDebug("Fuso do usuário sincronizado: UTC"+sinal+h+"h (tzOffsetMs="+tzMs+").");
+                    }
+                    _clientTzOffsetMs = tzMs;
+                }
+                res.writeHead(204);res.end();
+            }catch(e){
+                res.writeHead(400);res.end();
+            }
+        });
+        return;
+    }
+
+    // /api/sse-clients
+    if(rota==="/api/sse-clients"){
+        sendJson({clients: sseClients.length});return;
+    }
+
+    // -----------------------------------------------------------------------
+    // /selecionar-fdb — página HTML de seleção manual do FDB
+    // Acessível sempre (mesmo quando dbStatus.ok=true) para reconfiguração.
+    // -----------------------------------------------------------------------
+    if(rota==="/selecionar-fdb"){
+        res.writeHead(200,{"Content-Type":"text/html; charset=utf-8","Cache-Control":"no-store"});
+        res.end(paginaEscolherFdb());
+        return;
+    }
+
+    // -----------------------------------------------------------------------
+    // /api/abrir-picker-fdb GET — abre OpenFileDialog nativo do Windows
+    // Responde: { ok:true, caminho:"C:\..." } | { ok:false, cancelado:true } | { ok:false, erro:"..." }
+    // -----------------------------------------------------------------------
+    if(rota==="/api/abrir-picker-fdb" && req.method==="GET"){
+        // Uma janela por vez: cada chamada abria um diálogo novo na tela do
+        // servidor (cliques repetidos ou chamadas da rede empilhavam janelas).
+        if (_pickerAberto) { sendJson({ok:false, erro:"O seletor de arquivos já está aberto na máquina do servidor."}); return; }
+        _pickerAberto = true;
+        abrirPickerFdbWindows(function(resultado) {
+            _pickerAberto = false;
+            if (res.headersSent || res.destroyed) return;
+            res.writeHead(200,{"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store"});
+            res.end(JSON.stringify(resultado));
+        });
+        return;
+    }
+
+    // -----------------------------------------------------------------------
+    // /api/salvar-fdb POST — recebe { caminho } e aplica o novo FDB
+    // Valida existência do arquivo, testa conexão, persiste e limpa cache.
+    // Responde: { ok:true } | { ok:false, erro:"..." }
+    // -----------------------------------------------------------------------
+    if(rota==="/api/salvar-fdb" && req.method==="POST"){
+        // v2.19.0: o banco vale para todos — só o computador do servidor troca.
+        if (!_ehComputadorServidor(req)) { sendJson({ok:false, erro:"O banco de dados só pode ser alterado no computador do servidor (onde está o servidor-relatorio.js)."}, 403); return; }
+        lerBodySeguro(req, function(errFdb, fdbBody) {
+            if (errFdb) { sendJson({ok:false, erro:errFdb.message}); return; }
+            try{
+                var payload = JSON.parse(fdbBody);
+                var caminho = String(payload.caminho||"").trim();
+                if(!caminho){
+                    sendJson({ok:false, erro:"Caminho não informado."}); return;
+                }
+                if(caminho.length>1024 || /[\x00-\x1F]/.test(caminho)){
+                    sendJson({ok:false, erro:"Caminho inválido."}); return;
+                }
+                // Backup do Firebird (.fbk/.gbk): vira a cópia offline (o banco principal não muda).
+                if(/\.(fbk|gbk)$/i.test(caminho)){
+                    if(!_offline){ sendJson({ok:false, erro:"A cópia offline não está disponível nesta instalação."}); return; }
+                    logTs("Backup escolhido pelo usuário: "+caminho, "OFFLINE");
+                    _offline.importarFbk(caminho, function(r){ sendJson(r && r.ok ? {ok:true, msg:"Backup restaurado como cópia offline."} : {ok:false, erro:(r && r.erro) || "Falha ao restaurar o backup."}); });
+                    return;
+                }
+                if(!/\.fdb$/i.test(caminho)){
+                    sendJson({ok:false, erro:"O arquivo deve ter extensão .fdb (banco) ou .fbk (backup)."}); return;
+                }
+                logTs("[FDB Manual] Caminho recebido: "+caminho);
+                aplicarNovoFdb(caminho, function(r){
+                    sendJson(r);
+                });
+            }catch(e){
+                logTs("ERRO /api/salvar-fdb: "+e.message);
+                sendJson({ok:false, erro:e.message});
+            }
+        });
+        return;
+    }
+
+    // /api/events — SSE stream
+    if(rota==="/api/events"){
+        var clientId = ++sseIdCounter;
+        res.writeHead(200,{
+            "Content-Type":"text/event-stream",
+            "Cache-Control":"no-cache, no-transform",
+            "Connection":"keep-alive",
+            "X-Accel-Buffering":"no",
+            "X-Content-Type-Options":"nosniff"
+        });
+        res.flushHeaders();
+        res.write(": connected\n\n");
+        res.write("retry: 5000\n");
+        res.write("data: "+JSON.stringify({type:"connected",id:clientId})+"\n\n");
+        try{if(res.socket){res.socket.setNoDelay(true);}}catch(_){}
+
+        var clientObj = {res:res, id:clientId, hb:null, servidor:_ehComputadorServidor(req), ap:_prefsChaveDe(req)};
+        sseClients.push(clientObj);
+        _dispTela(req, +1);
+
+        // PRECISÃO FIX (v2.6.6): o heartbeat detectava o socket morto e limpava
+        // o próprio timer, mas NÃO removia o cliente de sseClients — dependia de
+        // broadcastSSE varrer a lista ou do evento "close" disparar. Numa loja
+        // parada (sem vendas novas, logo sem broadcast) e com um socket que
+        // morreu sem emitir "close" (queda de rede, notebook suspenso, aba
+        // congelada), a entrada ficava na lista indefinidamente: contagem errada
+        // em /api/sse-clients e a referência ao res segurada na memória para
+        // sempre. Agora o próprio heartbeat também se desregistra.
+        var _sseEncerrado = false;
+        var _encerrarSse = function(){
+            clearInterval(clientObj.hb);
+            sseClients = sseClients.filter(function(c){return c.id!==clientId;});
+            if (!_sseEncerrado) { _sseEncerrado = true; _dispTela(req, -1); }  // close + error: conta 1 vez
+        };
+
+        var hb = setInterval(function(){
+            try{
+                if (res.destroyed || res.writable === false) { _encerrarSse(); return; }
+                res.write(": ping\n\n");
+            }catch(e){ _encerrarSse(); }
+        }, TIMEOUT_SSE_HEARTBEAT_MS);
+        // Guarda o timer no objeto para que broadcastSSE consiga limpá-lo ao
+        // descartar um cliente morto (ver LEAK FIX em broadcastSSE).
+        clientObj.hb = hb;
+
+        req.on("close", _encerrarSse);
+        req.on("error", _encerrarSse);
+        res.on("error", _encerrarSse);
+        return;
+    }
+
+    // /api/navigate/hoje
+    if(rota==="/api/navigate/hoje"){
+        var sent = broadcastSSE({type:"navigate", url:"/"});
+        sendJson({ok:true, clients:sent});return;
+    }
+
+    // /api/navigate/config
+    if(rota==="/api/navigate/config"){
+        // v2.19.0: as configurações do sistema abrem só nas telas do computador do
+        // servidor (antes abriam também nos celulares e nos outros computadores).
+        var sentCfg = _broadcastSoServidor({type:"navigate-hash", hash:"config"});
+        sendJson({ok:true, clients:sentCfg});return;
+    }
+
+    // /api/navigate/hash/{config|periodo} — abre o modal correspondente na aba
+    // aberta. BUG FIX (v2.9.0): o tray chamava /api/navigate/hash/periodo
+    // ("Gerar por período...") mas a rota não existia (404 silencioso) — com
+    // o relatório aberto, o clique no menu não fazia nada.
+    var mHash = rota.match(/^\/api\/navigate\/hash\/(config|periodo)$/);
+    if(mHash){
+        var sentHash = mHash[1] === "config" ? _broadcastSoServidor({type:"navigate-hash", hash:"config"}) : broadcastSSE({type:"navigate-hash", hash:mHash[1]});
+        sendJson({ok:true, clients:sentHash});return;
+    }
+
+    // /api/navigate/foco — pede à aba aberta que traga a janela para frente.
+    // Também era chamada pelo tray sem existir. O navegador pode ignorar o
+    // pedido (política de foco), por isso é best-effort.
+    if(rota==="/api/navigate/foco"){
+        var sentFoco = broadcastSSE({type:"foco"});
+        sendJson({ok:true, clients:sentFoco});return;
+    }
+
+    // /api/navigate/selecionar-fdb
+    // Navega a aba aberta para a pagina de selecao manual do FDB.
+    // Usado pelo item "Selecionar banco (FDB)..." do menu de bandeja.
+    if(rota==="/api/navigate/selecionar-fdb"){
+        var sentFdb = broadcastSSE({type:"navigate", url:"/selecionar-fdb"});
+        sendJson({ok:true, clients:sentFdb});return;
+    }
+
+    // /api/navigate/periodo/YYYY-MM-DD/YYYY-MM-DD
+    var mNav = rota.match(/^\/api\/navigate\/periodo\/(\d{4}-\d{2}-\d{2})\/(\d{4}-\d{2}-\d{2})$/);
+    if(mNav && (!_ehDataISOValida(mNav[1]) || !_ehDataISOValida(mNav[2]) || mNav[1] > mNav[2])){
+        sendJson({ok:false, erro:"Período inválido."}, 400);return;
+    }
+    if(mNav){
+        var navUrl = "/periodo?i="+mNav[1]+"&f="+mNav[2];
+        var sentNav = broadcastSSE({type:"navigate", url:navUrl});
+        sendJson({ok:true, clients:sentNav});return;
+    }
+
+    // ── CONTROLE REMOTO (v2.16.0) — usado pelo api.ps1 ─────────────────────
+    // Tema das abas abertas, aviso nas telas, recarregar abas, informações do
+    // servidor, log e programas. Nada disso toca no banco (somente leitura).
+
+    // /api/temas — temas disponíveis (lidos do próprio gerador: fonte única).
+    if(rota==="/api/temas" && req.method==="GET"){
+        sendJson({ok:true, temas:_temasDoGerador(), padrao:"ultra-dark"});return;
+    }
+    // /api/navigate/tema/<id> — troca o tema nas abas abertas (e fica salvo
+    // no navegador de cada uma, como se o usuário tivesse escolhido no menu).
+    var mTema = rota.match(/^\/api\/navigate\/tema\/([a-z0-9-]{1,40})$/);
+    if(mTema){
+        var _temas = _temasDoGerador();
+        var _tm = _temas.filter(function(t){ return t.id === mTema[1]; })[0];
+        if(!_tm){ sendJson({ok:false, erro:"Tema desconhecido: " + mTema[1] + ". Disponíveis: " + _temas.map(function(t){return t.id;}).join(", ")}, 400); return; }
+        var sentTema = broadcastSSE({type:"tema", id:_tm.id, nome:_tm.nome});
+        logTs("Tema das abas alterado remotamente para \"" + _tm.nome + "\" (" + sentTema + " aba(s)).");
+        sendJson({ok:true, tema:_tm, clients:sentTema, obs: sentTema ? undefined : "Nenhuma tela do relatório de hoje está aberta agora — nada foi alterado. Repita com o relatório aberto."});
+        return;
+    }
+    // /api/navigate/aviso (POST {msg}) — mostra um aviso em todas as abas abertas.
+    if(rota==="/api/navigate/aviso" && req.method==="POST"){
+        lerBodySeguro(req, function(errAv, corpoAv){
+            if (errAv) { sendJson({ok:false, erro:errAv.message}, 413); return; }
+            var pAv = null; try { pAv = JSON.parse(corpoAv); } catch(_) {}
+            var msgAv = _textoSeguroLog(pAv && pAv.msg, 300);
+            if (!msgAv) { sendJson({ok:false, erro:"Informe o texto do aviso em 'msg'."}, 400); return; }
+            var segAv = parseInt(pAv && pAv.segundos, 10);
+            segAv = (segAv >= 3 && segAv <= 120) ? segAv : 12;
+            var sentAv = broadcastSSE({type:"aviso", msg:msgAv, segundos:segAv});
+            logTs("Aviso enviado às telas (" + sentAv + " aba(s)): " + msgAv);
+            sendJson({ok:true, clients:sentAv});
+        });
+        return;
+    }
+    // /api/navigate/recarregar — recarrega todas as abas abertas.
+    if(rota==="/api/navigate/recarregar"){
+        var sentRel = broadcastSSE({type:"reload"});
+        sendJson({ok:true, clients:sentRel});return;
+    }
+    // /api/info — versões, máquina, banco e uso de memória.
+    if(rota==="/api/info" && req.method==="GET"){
+        var _mem = process.memoryUsage();
+        var _up = Math.round(process.uptime());
+        sendJson({
+            ok: true,
+            servidor: "v" + SERVER_VERSION, gerador: _versaoGerador(), node: process.version,
+            computador: os.hostname(), sistema: os.type() + " " + os.release() + " (" + os.arch() + ")",
+            ligadoHa: Math.floor(_up / 3600) + "h " + Math.floor((_up % 3600) / 60) + "min",
+            memoriaMB: Math.round(_mem.rss / 1048576),
+            pid: process.pid, porta: PORT, ip: _maquinaIP || "127.0.0.1",
+            banco: { host: FDB_HOST, caminho: FDB_PATH },
+            bancoPrincipal: _fonteAtual(),
+            offline: _offlineStatusPara(req),
+            abasConectadas: sseClients.length,
+            pasta: __dirname
+        });
+        return;
+    }
+    // /api/log?linhas=N — últimas linhas do relatorio.log (máx. 1000). Só da rede local.
+    // QR CODE (v2.18.0): /qr (página para mostrar na tela e escanear com o celular),
+    // /qr.svg (só a imagem) e /api/qr (endereço em texto). Sempre o endereço desta
+    // máquina na rede — o celular precisa estar no mesmo Wi-Fi.
+    if((rota==="/qr.svg" || rota==="/qr" || rota==="/api/qr") && req.method==="GET"){
+        var _qrUrl = _qrEndereco(req);
+        var _qrTs = _ipTailscale();
+        var _qrExt = _qrTs ? "http://" + _qrTs + ":" + PORT + "/" : "";
+        if (rota === "/api/qr") { sendJson({ok:true, url:_qrUrl, externo:_qrExt || null}); return; }
+        if (rota === "/qr.svg" && parsed.searchParams.get("externo") === "1") {
+            var _qrImgExt = _qrExt ? _qrSvg(_qrExt, 0) : "";
+            if (!_qrImgExt) { sendJson({ok:false, erro:"Tailscale não está conectado nesta máquina."}, 404); return; }
+            res.writeHead(200, {"Content-Type":"image/svg+xml; charset=utf-8", "Cache-Control":"no-store"});
+            res.end(_qrImgExt); return;
+        }
+        var _qrImg = _qrSvg(_qrUrl, rota === "/qr" ? 300 : 0);
+        if (!_qrImg) { sendJson({ok:false, erro:"Endereço longo demais para o QR code."}, 500); return; }
+        if (rota === "/qr.svg") {
+            res.writeHead(200, {"Content-Type":"image/svg+xml; charset=utf-8", "Cache-Control":"no-store"});
+            res.end(_qrImg); return;
+        }
+        var _qrNome = escH(String((_config && _config.appName) || "Relatórios"));
+        res.writeHead(200, {"Content-Type":"text/html; charset=utf-8", "Cache-Control":"no-store"});
+        res.end('<!doctype html><html lang="pt-br"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
+            '<title>' + _qrNome + ' — abrir no celular</title><style>' +
+            'html,body{margin:0;min-height:100%;background:#0f172a;color:#e2e8f0;font-family:Inter,Segoe UI,Arial,sans-serif}' +
+            'body{display:flex;align-items:center;justify-content:center;padding:24px;box-sizing:border-box;min-height:100vh}' +
+            '.c{background:#111c33;border:1px solid #1e2b47;border-radius:20px;padding:28px 32px;text-align:center;max-width:420px;box-shadow:0 30px 60px -20px rgba(0,0,0,.6)}' +
+            'h1{font-size:20px;margin:0 0 6px}p{margin:6px 0;color:#94a3b8;font-size:14px;line-height:1.5}' +
+            '.q{background:#fff;border-radius:14px;padding:10px;display:inline-block;margin:16px 0 12px}.q svg{display:block;width:280px;height:280px;max-width:70vw;max-height:70vw}' +
+            '.u{font:600 17px Consolas,monospace;color:#f8fafc;background:#0b1324;border:1px solid #1e2b47;border-radius:10px;padding:10px 12px;word-break:break-all;margin-top:6px}' +
+            'button{margin-top:14px;padding:10px 18px;border-radius:10px;border:1px solid #2563eb;background:#2563eb;color:#fff;font:600 14px inherit;cursor:pointer}' +
+            '</style></head><body><div class="c"><h1>' + _qrNome + ' no celular</h1>' +
+            '<p>Aponte a câmera do celular para o código.</p>' +
+            '<div class="q">' + _qrImg + '</div>' +
+            '<div class="u" id="u">' + escH(_qrUrl) + '</div>' +
+            '<p>O celular precisa estar no <b>mesmo Wi-Fi</b> desta máquina.</p>' +
+            '<button type="button" onclick="try{navigator.clipboard.writeText(document.getElementById(\'u\').textContent);this.textContent=\'Copiado!\'}catch(e){}">Copiar endereço</button>' +
+            // Fora da loja (v2.20.0): QR do endereço do Tailscale, ou como ativar.
+            '<hr style="border:0;border-top:1px solid #1e2b47;margin:22px 0 14px">' +
+            '<h1 style="font-size:17px">Fora da loja (qualquer lugar)</h1>' +
+            (_qrExt
+                ? '<p>Com o app <b>Tailscale</b> ligado no celular (mesma conta desta máquina):</p>' +
+                  '<div class="q">' + _qrSvg(_qrExt, 300) + '</div>' +
+                  '<div class="u" id="u2">' + escH(_qrExt) + '</div>' +
+                  '<button type="button" onclick="try{navigator.clipboard.writeText(document.getElementById(\'u2\').textContent);this.textContent=\'Copiado!\'}catch(e){}">Copiar endereço</button>'
+                : '<p style="text-align:left">1. Instale o <b>Tailscale</b> nesta máquina (tailscale.com/download) e entre com uma conta.<br>' +
+                  '2. Instale o app <b>Tailscale</b> no celular e entre com a <b>mesma conta</b>.<br>' +
+                  '3. Recarregue esta página: aparece aqui o QR code para usar em qualquer lugar (4G, outro Wi-Fi).</p>' +
+                  '<p>Grátis, criptografado e sem abrir porta no roteador — só os seus aparelhos entram.</p>') +
+            '</div></body></html>');
+        return;
+    }
+    // /api/dispositivos — aparelhos da rede com o relatório aberto agora (v2.17.0). Só rede local.
+    if(rota==="/api/dispositivos" && req.method==="GET"){
+        if (!_requisicaoDaRedeLocal(req)) { sendJson({ok:false, erro:"Disponível apenas a partir da rede local."}, 403); return; }
+        var _lista = _dispListar();
+        // v2.19.0: o computador do servidor vê a chave das preferências de cada aparelho
+        // (para editá-las) e se ele tem preferências próprias. Os outros não veem a chave.
+        if (_ehComputadorServidor(req)) {
+            _lista.forEach(function(d) {
+                var reg = _dispositivos[d.ip];
+                d.chavePreferencias = (reg && reg.ap) || ("ip:" + d.ip);
+                var pr = _prefsAparelhos[d.chavePreferencias];
+                d.preferenciasProprias = pr ? Object.keys(pr.prefs).map(function(k){ return _PREFS_ROTULO[k]; }) : [];
+            });
+        }
+        sendJson({ok:true, total:_lista.length, dispositivos:_lista});
+        return;
+    }
+    // /api/proibidos-servidor — a lista PADRÃO do servidor (config.json), para um
+    // aparelho importar para a lista dele ("Importar do servidor"). v2.19.1.
+    if(rota==="/api/proibidos-servidor" && req.method==="GET"){
+        sendJson({ok:true, proibidos: Array.isArray(_config.proibidos) ? _config.proibidos : []});
+        return;
+    }
+    // /api/preferencias — preferências efetivas de quem pede (a página recarrega
+    // depois de um aviso "prefs" pelo SSE). v2.19.0.
+    if(rota==="/api/preferencias" && req.method==="GET"){
+        var _pfSrv = _ehComputadorServidor(req);
+        var _pfEf = _pfSrv ? { prefs: _prefsPadrao(), personalizado: {} } : _prefsEfetivas(_prefsChaveDe(req));
+        sendJson({ok:true, servidor:_pfSrv, prefs:_pfEf.prefs, personalizado:_pfEf.personalizado});
+        return;
+    }
+    if(rota==="/api/log" && req.method==="GET"){
+        if (!_requisicaoDaRedeLocal(req)) { sendJson({ok:false, erro:"Disponível apenas a partir da rede local."}, 403); return; }
+        var nLog = parseInt(parsed.searchParams.get("linhas"), 10);
+        nLog = (nLog >= 1 && nLog <= 1000) ? nLog : 50;
+        var filtroLog = String(parsed.searchParams.get("filtro") || "").trim().slice(0, 60).toLowerCase();
+        fs.readFile(LOG_PATH, "utf8", function(errLog, txtLog){
+            if (errLog) { sendJson({ok:false, erro:"Não foi possível ler o relatorio.log: " + errLog.message}, 500); return; }
+            var linhasLog = String(txtLog || "").split(/\r?\n/).filter(function(l){ return l.trim(); });
+            if (filtroLog) linhasLog = linhasLog.filter(function(l){ return l.toLowerCase().indexOf(filtroLog) >= 0; });
+            sendJson({ok:true, total:linhasLog.length, linhas:linhasLog.slice(-nLog)});
+        });
+        return;
+    }
+    // /api/programas — programas que este servidor pode abrir. A LISTA SÓ É
+    // DEFINIDA no config.json desta máquina ("programas": [{nome, caminho,
+    // args}]) — pela rede só se escolhe um item dela pelo nome, nunca um
+    // caminho/comando livre. Mais 2 fixos: pasta do sistema e o log.
+    if(rota==="/api/programas" && req.method==="GET"){
+        sendJson({ok:true, programas:_programasDisponiveis().map(function(p){
+            return { nome:p.nome, caminho:p.caminho, existe:p.existe, fixo:!!p.fixo };
+        })});
+        return;
+    }
+    // /api/programas/abrir (POST {nome}) — abre na máquina do servidor, na
+    // sessão de quem está logado nela. Só da rede local.
+    if(rota==="/api/programas/abrir" && req.method==="POST"){
+        if (!_requisicaoDaRedeLocal(req)) { sendJson({ok:false, erro:"Disponível apenas a partir da rede local."}, 403); return; }
+        lerBodySeguro(req, function(errPg, corpoPg){
+            if (errPg) { sendJson({ok:false, erro:errPg.message}, 413); return; }
+            var pPg = null; try { pPg = JSON.parse(corpoPg); } catch(_) {}
+            var nomePg = String((pPg && pPg.nome) || "").trim().toLowerCase();
+            var progs = _programasDisponiveis();
+            var prog = progs.filter(function(p){ return p.nome.toLowerCase() === nomePg; })[0];
+            if (!prog) { sendJson({ok:false, erro:"Programa não está na lista. Disponíveis: " + progs.map(function(p){return p.nome;}).join(", ")}, 404); return; }
+            if (!prog.existe) { sendJson({ok:false, erro:"Arquivo não encontrado nesta máquina: " + prog.caminho}, 404); return; }
+            _abrirPrograma(prog, function(errAb){
+                if (errAb) { logTs("ERRO ao abrir programa \"" + prog.nome + "\": " + errAb.message); sendJson({ok:false, erro:"Falha ao abrir: " + errAb.message}, 500); return; }
+                logTs("Programa aberto remotamente: \"" + prog.nome + "\" (" + prog.caminho + ").");
+                sendJson({ok:true, msg:"Abrindo \"" + prog.nome + "\" na máquina do servidor."});
+            });
+        });
+        return;
+    }
+
+    // /api/upload-favicon POST
+    if(rota==="/api/upload-favicon" && req.method==="POST"){
+        // v2.19.0: o ícone vale para todos — só o computador do servidor troca.
+        if (!_ehComputadorServidor(req)) { sendJson({ok:false, erro:"O ícone só pode ser alterado no computador do servidor (onde está o servidor-relatorio.js)."}, 403); return; }
+        var favChunks=[], favBytes=0, favAbortado=false;
+        var FAV_MAX_BYTES = 2 * 1024 * 1024; // 2 MB — suficiente para qualquer favicon
+        req.on("data",function(c){
+            if(favAbortado)return;
+            favBytes+=c.length;
+            if(favBytes>FAV_MAX_BYTES){
+                favAbortado=true;
+                try{req.destroy();}catch(_){}
+                if(!res.headersSent){
+                    res.writeHead(413,{"Content-Type":"application/json; charset=utf-8"});
+                    res.end(JSON.stringify({ok:false,erro:"Favicon muito grande (máx 2 MB)."}));
+                }
+                return;
+            }
+            favChunks.push(c);
+        });
+        req.on("error",function(e){
+            if(favAbortado)return; favAbortado=true;
+            logTs("ERRO /api/upload-favicon (req): "+e.message);
+            if(!res.headersSent){
+                res.writeHead(500,{"Content-Type":"application/json; charset=utf-8"});
+                res.end(JSON.stringify({ok:false,erro:e.message}));
+            }
+        });
+        req.on("end",function(){
+            if(favAbortado)return;
+            try{
+                var buf=Buffer.concat(favChunks);
+                var isPng =buf.length>4&&buf[0]===0x89&&buf[1]===0x50&&buf[2]===0x4E&&buf[3]===0x47;
+                var isIco =buf.length>4&&buf[0]===0x00&&buf[1]===0x00&&buf[2]===0x01&&buf[3]===0x00;
+                var isJpeg=buf.length>3&&buf[0]===0xFF&&buf[1]===0xD8&&buf[2]===0xFF;
+                if(!isPng&&!isIco&&!isJpeg){
+                    res.writeHead(400,{"Content-Type":"application/json; charset=utf-8"});
+                    res.end(JSON.stringify({ok:false,erro:"Formato inválido. Use PNG, ICO ou JPEG."}));
+                    return;
+                }
+                var favDest=path.join(__dirname,"favicon.png");
+                // PRECISÃO FIX (v2.6.7): gravação atômica também aqui. Não dá para
+                // reusar _gravarArquivoAtomico: ele grava string em UTF-8 e isso
+                // corromperia os bytes da imagem — favicon é binário (Buffer), então
+                // a versão atômica precisa ser feita à parte, sem encoding.
+                // Um favicon truncado não é só cosmético: iniciar-tray.ps1 carrega
+                // esse arquivo com Bitmap::FromFile para montar o ícone da bandeja,
+                // e um PNG pela metade faz esse carregamento falhar — a loja fica
+                // sem o ícone de acesso ao sistema.
+                var _favTmp = favDest + ".tmp" + process.pid;
+                try {
+                    fs.writeFileSync(_favTmp, buf);
+                    fs.renameSync(_favTmp, favDest);
+                } catch(_eFav) {
+                    // Fallback: destino pode estar travado (antivírus/indexador do
+                    // Windows, ou o próprio tray com o arquivo aberto). Melhor gravar
+                    // de forma não-atômica que não gravar.
+                    try { if (fs.existsSync(_favTmp)) fs.unlinkSync(_favTmp); } catch(_) {}
+                    fs.writeFileSync(favDest, buf);
+                }
+                FAVICON=favDest;
+                // Invalida cache em memória para que próximo request leia o novo arquivo
+                _FAVICON_CACHE = null;
+                _FAVICON_CACHE_MTIME = 0;
+                logTs("Favicon atualizado via modal ("+buf.length+" bytes).");
+                res.writeHead(200,{"Content-Type":"application/json; charset=utf-8"});
+                res.end(JSON.stringify({ok:true}));
+            }catch(e){
+                logTs("ERRO /api/upload-favicon: "+e.message);
+                if(!res.headersSent){
+                    res.writeHead(500,{"Content-Type":"application/json; charset=utf-8"});
+                    res.end(JSON.stringify({ok:false,erro:e.message}));
+                }
+            }
+        });
+        return;
+    }
+
+    // /
+    if(rota==="/"){
+        // Se FDB não encontrado automaticamente, exibe picker manual
+        if(_aguardandoFdbManual){
+            res.writeHead(200,{"Content-Type":"text/html; charset=utf-8"});
+            res.end(paginaEscolherFdb());
+            return;
+        }
+        var dh=hoje(),ent=cache[dh];
+        if(!ent){gerarEmBackground(dh,dh,dh);ent=cache[dh];}
+        // ROBUSTEZ FIX (v2.4.1): gerarEmBackground é síncrono até o spawn/callback
+        // ser agendado, então ent deveria sempre existir aqui — mas se algum erro
+        // inesperado escapou sem popular o cache, exibir undefined.html quebrava
+        // a página sem nenhuma mensagem. Trata como erro recuperável.
+        if(!ent){res.writeHead(200,{"Content-Type":"text/html; charset=utf-8"});res.end(paginaLoading("Gerando relatorio de hoje...",isoParaBR(dh),dh,"/"));return;}
+        if(ent.gerando||ent.matando){res.writeHead(200,{"Content-Type":"text/html; charset=utf-8"});res.end(paginaLoading("Gerando relatorio de hoje...",isoParaBR(dh),dh,"/"));return;}
+        if(ent.erro){var em=ent.erro;delete cache[dh];res.writeHead(500,{"Content-Type":"text/html; charset=utf-8"});res.end(paginaErro("Erro ao gerar relatorio de "+isoParaBR(dh),em,"/"));return;}
+        if(!ent.html){delete cache[dh];res.writeHead(500,{"Content-Type":"text/html; charset=utf-8"});res.end(paginaErro("Erro ao gerar relatorio de "+isoParaBR(dh),"Conteúdo não disponível — tente novamente.","/"));return;}
+        res.writeHead(200,{"Content-Type":"text/html; charset=utf-8"});res.end(_htmlComAparelho(ent.html, req));return;
+    }
+
+    // /atualizar
+    if(rota==="/atualizar"){
+        logDebug("Atualizando "+isoParaBR(hoje())+"...");
+        var _dhAtual = hoje();
+        delete cache[_dhAtual];
+        _gerarTentativas[_dhAtual] = 0; // reseta contador para a nova geração começar limpa
+        res.writeHead(302,{"Location":"/"});res.end();return;
+    }
+
+    // /periodo
+    if(rota==="/periodo"){
+        // Se FDB não encontrado automaticamente, exibe picker manual
+        if(_aguardandoFdbManual){
+            res.writeHead(200,{"Content-Type":"text/html; charset=utf-8"});
+            res.end(paginaEscolherFdb());
+            return;
+        }
+        var inicio = parsed.searchParams.get("i") || parsed.searchParams.get("inicio") || "";
+        var fim    = parsed.searchParams.get("f") || parsed.searchParams.get("fim")    || "";
+        inicio = String(inicio).trim();
+        fim = String(fim).trim();
+        if (!inicio && !fim) {res.writeHead(200,{"Content-Type":"text/html; charset=utf-8"});res.end(paginaFormPeriodo(hoje()));return;}
+        if (!inicio && fim) inicio = fim;
+        if (inicio && !fim) fim = inicio;
+        var fixISO=function(s){
+            var m2=String(s||"").match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+            return m2?m2[3]+"-"+m2[2].padStart(2,"0")+"-"+m2[1].padStart(2,"0"):s;
+        };
+        inicio=fixISO(inicio);fim=fixISO(fim);
+        var isoRe=/^\d{4}-\d{2}-\d{2}$/;
+        // Valida também o CALENDÁRIO (2026-02-30 passava no regex e só falhava
+        // no processo filho, com "Script terminou com codigo 1").
+        if(!isoRe.test(inicio)||!isoRe.test(fim)||!_ehDataISOValida(inicio)||!_ehDataISOValida(fim)||inicio>fim){
+            logTs("Periodo invalido ("+_textoSeguroLog(inicio,40)+"/"+_textoSeguroLog(fim,40)+"). Redirecionando para formulario.");
+            res.writeHead(302,{"Location":"/periodo"});res.end();return;
+        }
+        var chave=inicio+"|"+fim;
+        var label=(inicio===fim)?isoParaBR(inicio):(isoParaBR(inicio)+" a "+isoParaBR(fim));
+        var urlDest="/periodo?i="+encodeURIComponent(inicio)+"&f="+encodeURIComponent(fim);
+        var ep=cache[chave];
+        // v2.15.5: no máximo _MAX_PERIODOS_SIMULTANEOS períodos gerando ao mesmo
+        // tempo — cada um é um processo e conexões próprias no banco do caixa;
+        // sem limite, várias abas/pedidos com períodos diferentes subiam N.
+        if(!ep){
+            var _gerandoPeriodos=Object.keys(cache).filter(function(k){return k.indexOf("|")>0&&cache[k]&&cache[k].gerando;}).length;
+            if(_gerandoPeriodos>=_MAX_PERIODOS_SIMULTANEOS){
+                res.writeHead(503,{"Content-Type":"text/html; charset=utf-8","Retry-After":"5"});
+                res.end(paginaErro("Muitos relatórios de período sendo gerados agora","Aguarde alguns segundos e tente de novo.",urlDest));
+                return;
+            }
+            gerarEmBackground(inicio,fim,chave);ep=cache[chave];
+        }
+        if(!ep){res.writeHead(200,{"Content-Type":"text/html; charset=utf-8"});res.end(paginaLoading("Gerando relatorio...",label,chave,urlDest));return;}
+        if(ep.gerando||ep.matando){res.writeHead(200,{"Content-Type":"text/html; charset=utf-8"});res.end(paginaLoading("Gerando relatorio...",label,chave,urlDest));return;}
+        if(ep.erro){var em2=ep.erro;delete cache[chave];res.writeHead(500,{"Content-Type":"text/html; charset=utf-8"});res.end(paginaErro("Erro ao gerar relatorio de "+label,em2,"/"));return;}
+        if(!ep.html){delete cache[chave];res.writeHead(500,{"Content-Type":"text/html; charset=utf-8"});res.end(paginaErro("Erro ao gerar relatorio de "+label,"Conteúdo não disponível — tente novamente.","/"));return;}
+        res.writeHead(200,{"Content-Type":"text/html; charset=utf-8"});res.end(_htmlComAparelho(ep.html, req));return;
+    }
+
+    res.writeHead(404,{"Content-Type":"text/plain; charset=utf-8"});res.end("Rota nao encontrada.");
+});
+
+// ---------------------------------------------------------------------------
+// Inicia
+// ---------------------------------------------------------------------------
+server.listen(PORT, BIND_ADDR, function(){
+    var addr = _maquinaIP
+        ? "http://" + _maquinaIP + ":" + PORT + "  (acesso externo habilitado)"
+        : "http://localhost:" + PORT;
+    // "=== Servidor iniciado ===" já foi logado como primeiro log protegido
+    // (antes da detecção de FDB). Aqui apenas registra o endereço de acesso.
+    logProtegido(APP_NAME+" | "+addr);
+
+    // Cópia offline: começa já (não espera o banco principal — ele pode estar
+    // justamente em manutenção; a cópia existente é que mantém o relatório no ar).
+    try { if (_offline) _offline.iniciar(); } catch (eOff) { logTs("ERRO ao iniciar a cópia offline: " + (eOff && eOff.stack || eOff), "OFFLINE"); }
+
+    aguardarFDB(function(dbOk){
+        if(dbOk){
+            // Ordem correta: disponível → configurado (FDB pode ter mudado após scan)
+            logProtegido("Banco disponível em "+FDB_HOST+".");
+            logProtegido("Banco configurado: "+FDB);
+            _aguardandoFdbManual = false;
+        } else {
+            // FDB não encontrado após todas tentativas automáticas.
+            // Ativa modo de seleção manual — qualquer acesso a / ou /periodo
+            // exibirá a página paginaEscolherFdb() até o usuário configurar.
+            // Continua tentando em segundo plano: se o banco voltar sozinho
+            // (servidor da loja ligado depois), o relatório retoma sem intervenção.
+            logTs("AVISO: Banco não encontrado. Aguardando seleção manual em http://localhost:"+PORT+"/selecionar-fdb");
+            _aguardandoFdbManual = true;
+            if (Firebird) _agendarReconexaoFdb();
+        }
+
+        var dh=hoje();
+        // Gera relatório mesmo sem banco — resultado mostrará mensagem de erro adequada
+        gerarEmBackground(dh,dh,dh);
+
+        // Fast-poll (50ms) trata detecção; pollStatus só para correções + fallback.
+        if(Firebird&&dbOk) _iniciarPolling(5000);
+
+        agendarRegen();
+        // BUG FIX (v2.4.1): mensagem tinha "200ms" fixo no texto, mas a constante
+        // real do fast-poll (_FP_INTERVAL_MS) é 50ms — o log mentia sobre o próprio
+        // comportamento do servidor, confundindo qualquer debug futuro.
+        // Intervalo REAL do pollStatus (mesma fórmula de _iniciarPolling) — o
+        // log anterior mostrava POLL_INTERVAL, 10× menor que o valor efetivo.
+        setImmediate(_prepararReserva); // gerador pré-aquecido já para a 1ª venda
+        logTs("Fast-poll: a partir de " + _FP_INTERVAL_MS + " ms (adaptativo: no máximo 1/3 do tempo do banco) | gerador pré-aquecido | pollStatus fallback: " + (_intervaloPollStatus()/1000) + "s | browser poll: " + POLL_INTERVAL + "ms | spawnTimeout: " + (_SPAWN_TIMEOUT_MS/1000) + "s. Servidor pronto.");
+    });
+});
+
+server.on("error",function(err){
+    if(err.code==="EADDRINUSE"){
+        logTs("Servidor ja rodando na porta "+PORT+". Encerrando.");
+        setTimeout(function(){process.exit(0);},300);
+    } else {
+        logTs("ERRO ao iniciar o servidor HTTP: "+err.message);process.exit(1);
+    }
+});
+
+// INTEGRIDADE FIX (v2.4.1): garante que a última janela de correções de horário
+// (até 500ms de debounce) seja gravada em disco antes do processo morrer, e que
+// a conexão Firebird persistente do fast-poll não fique pendurada no SO após o
+// Node encerrar (no Windows, o processo Firebird do lado servidor pode manter
+// o handle da conexão TCP em CLOSE_WAIT por um tempo se não for fechada).
+process.on("exit", function() {
+    try { if (_offline) _offline.parar(); } catch(_) {}
+    try { if (typeof _salvarHoraFixadaCache === "function" && _salvarHoraFixadaCache.flush) _salvarHoraFixadaCache.flush(); } catch(_) {}
+    try { if (typeof _fpDb !== "undefined" && _fpDb) _matarConexao(_fpDb); } catch(_) {}
+});
+
+// ---------------------------------------------------------------------------
+// Encerramento único (v2.11.0)
+// Antes, cada caminho de saída fazia uma coisa diferente — Ctrl+C só imprimia
+// no console, /api/restart saía em silêncio, e o tray matava o processo à
+// força. Ninguém (log, abas abertas, operador) ficava sabendo com clareza
+// que o servidor tinha parado. Agora todo encerramento passa por aqui:
+//   1. registra "=== Servidor encerrado: motivo ===" no relatorio.log;
+//   2. avisa as abas abertas via SSE (o relatório mostra um aviso fixo e
+//      recarrega sozinho quando o servidor voltar);
+//   3. para de aceitar conexões, mata os subprocessos e sai.
+// ---------------------------------------------------------------------------
+var _encerrando = false;
+function _encerrarServidor(motivo, codigoSaida, reiniciando) {
+    if (_encerrando) return;
+    _encerrando = true;
+    logTs("=== Servidor " + (reiniciando ? "reiniciando" : "encerrado") + ": " + motivo + " ===");
+    // Para a detecção já: sem isto, nos ~0,7 s até sair, o fast-poll (ou uma
+    // venda pendente esperando o pagamento) ainda registrava "→ regerando"
+    // DEPOIS da linha de encerramento.
+    try { if (_fpIntervalId) { clearInterval(_fpIntervalId); _fpIntervalId = null; } } catch(_) {}
+    try { _fpDescartarPendente(); } catch(_) {}
+    try { if (_offline) _offline.parar(); } catch(_) {}
+    try { broadcastSSE({ type: "encerrando", reiniciando: !!reiniciando }); } catch(_) {}
+    try { clearTimeout(_logFlushTimer); _flushLog(); } catch(_) {}
+    try { server.close(); } catch(_) {}
+    // Pequena espera para o aviso SSE sair pela rede antes de fechar tudo.
+    setTimeout(function() {
+        try { _matarTodosFilhos("no encerramento"); } catch(_) {}
+        setTimeout(function() { process.exit(codigoSaida || 0); }, 300);
+    }, 400);
+}
+
+// Sinais de encerramento: Ctrl+C (SIGINT), Ctrl+Break e fechamento da janela
+// do console no Windows (SIGBREAK/SIGHUP), e kill comum (SIGTERM).
+["SIGINT", "SIGTERM", "SIGBREAK", "SIGHUP"].forEach(function(sinal) {
+    try { process.on(sinal, function() { _encerrarServidor("sinal " + sinal + " recebido", 0, false); }); } catch(_) {}
+});
+
+// Saída por qualquer outro caminho (erro fatal, process.exit fora do
+// encerramento único): deixa registrado que o servidor parou e com qual código.
+// O kill forçado do sistema (taskkill /F) não passa por aqui — esse caso é
+// registrado pelo tray, que é quem o executa.
+process.on("exit", function(codigo) {
+    // Encerramento ordenado já registrou a linha; só garante que o que foi
+    // logado DEPOIS (ex.: aviso ao gravar o cache de hora) chegue ao disco.
+    if (_encerrando) { try { clearTimeout(_logFlushTimer); _flushLog(); } catch(_) {} return; }
+    try {
+        logTs("=== Servidor finalizado (código de saída " + codigo + ") ===");
+        clearTimeout(_logFlushTimer); _flushLog();
+    } catch(_) {}
+});
