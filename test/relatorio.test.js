@@ -26,6 +26,19 @@ const portaLivre = () => new Promise((resolve, reject) => {
     s.listen(0, "127.0.0.1", () => { const p = s.address().port; s.close(() => resolve(p)); });
 });
 
+// O sistema só lê a cópia offline: os testes já começam com uma cópia pronta
+// (o Firebird simulado responde igual para qualquer arquivo).
+function semearCopia(dir, fonte) {
+    const pasta = path.join(dir, "copias");
+    fs.mkdirSync(pasta, { recursive: true });
+    const arq = path.join(pasta, "SMALL_OFFLINE_20260101_000000.FDB");
+    fs.writeFileSync(arq, "COPIA");
+    fs.writeFileSync(path.join(pasta, "copia-offline.json"), JSON.stringify({ versao: 1, ativa: {
+        arquivo: arq, host: "127.0.0.1", dadosDe: Date.now(), criadaEm: Date.now(), origem: "fdb",
+        fonte: { host: "127.0.0.1", path: fonte }, sig: null } }));
+    return arq;
+}
+
 function montarPasta(config, estado) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "relatorio-teste-"));
     for (const f of ["servidor-relatorio.js", "gerar-relatorio-html.js", "offline-copia.js", "estoque-offline.js", "estoque.html"]) fs.copyFileSync(path.join(RAIZ_PROJETO, f), path.join(dir, f));
@@ -36,10 +49,10 @@ function montarPasta(config, estado) {
     fs.writeFileSync(path.join(dir, "config.json"), JSON.stringify(Object.assign({
         appName: "Teste", porta: 7734, pollInterval: 200, fbHost: "127.0.0.1", fdbPath: "/tmp/teste.fdb",
         proibidos: [], maxLogLines: 5000, logDebug: false, toastDuration: 5000, spawnTimeoutMs: 120000, teclasPersonalizadas: [],
-        // Testes herdados do sistema SSH: leitura direta do banco (a cópia offline
-        // tem os próprios testes em test/offline.test.js).
-        offlineModo: "desligado", offlinePasta: path.join(dir, "copias")
+        offlinePasta: path.join(dir, "copias"),
+        fastPollCopiaMs: 0 // os testes de tempo real mudam os dados "da cópia" a todo instante
     }, config || {}), null, 2));
+    semearCopia(dir, "/tmp/teste.fdb");
     fs.writeFileSync(path.join(dir, "estado.json"), JSON.stringify(Object.assign({ nfce: [], pag: [], ger: [] }, estado || {})));
     return dir;
 }
@@ -217,7 +230,7 @@ test("padrão de fábrica: config.json do repositório sem dados de loja e sem p
         t.diagnostic("git indisponível ou pasta fora do repositório: config.json de fábrica não conferido (o da pasta é o da loja).");
     } else {
         const cfg = JSON.parse(g.stdout.replace(/^\uFEFF/, ""));
-        assert.strictEqual(cfg.appName, "Relatorios");
+        assert.strictEqual(cfg.appName, "Relatorios SmallSoft Offline");
         assert.deepStrictEqual(cfg.proibidos, []);
         assert.deepStrictEqual(cfg.teclasPersonalizadas, []);
         for (const k of ["fbHost", "fdbPath", "maquinaIP", "fbUser", "fbPass", "favicon"]) assert.strictEqual(cfg[k], "", k + " deveria estar vazio");

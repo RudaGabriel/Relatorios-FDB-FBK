@@ -1216,7 +1216,7 @@ $subCopia.DropDownItems.Add((New-ItemMenu "Situa\u00e7\u00e3o da c\u00f3pia..." 
     $o = Invoke-Api "/api/offline" -Timeout 3
     if ($null -eq $o) { Show-Mensagem ((L "O servidor n\u00e3o respondeu: ") + $script:ultimoErroApi) "$APP_NAME" "Warning"; return }
     $quando = { param($ms) if ($ms) { try { return ([DateTimeOffset]::FromUnixTimeMilliseconds([int64]$ms)).LocalDateTime.ToString("dd/MM HH:mm") } catch {} } return "-" }
-    $t = (L "Modo: ") + [string]$o.modo + "`n" + (L "O relat\u00f3rio l\u00ea: ") + $(if ($o.lendo -eq "copia") { L "a c\u00f3pia offline" } else { L "o banco principal" })
+    $t = (L "O relat\u00f3rio l\u00ea s\u00f3 a c\u00f3pia (nunca o banco principal direto).") + "`n" + $(if ($o.lendo -eq "copia") { L "Situa\u00e7\u00e3o: lendo a c\u00f3pia offline." } else { L "Situa\u00e7\u00e3o: aguardando a primeira c\u00f3pia." })
     if ($o.copia) { $t += "`n" + (L "Dados da c\u00f3pia: ") + (& $quando $o.copia.dadosDe) + " (" + [string]$o.copia.tamanhoMB + " MB, " + [string]$o.copia.duracaoS + " s)" } else { $t += "`n" + (L "Ainda n\u00e3o h\u00e1 c\u00f3pia.") }
     $t += "`n" + (L "Banco principal: ") + $(if ($o.fonteOk -eq $true) { L "no ar" } elseif ($o.fonteOk -eq $false) { (L "indispon\u00edvel - ") + [string]$o.fonteErro } else { L "verificando..." })
     if ($o.emAndamento) { $t += "`n" + (L "Fazendo a c\u00f3pia agora: ") + [string]$o.etapa }

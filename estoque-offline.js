@@ -46,6 +46,17 @@ const PAPEIS = {
 const _semAcento = s => String(s == null ? "" : s).normalize("NFD").replace(/[̀-ͯ]/g, "");
 const normalizar = s => _semAcento(s).toUpperCase().replace(/\s+/g, " ").trim();
 const _soDigitos = s => String(s || "").replace(/\D+/g, "");
+const _RE_LETRA = /[A-Z0-9]/;
+// Acha "t" em "hs" só no COMEÇO de uma palavra (antes dele: início do campo,
+// espaço ou pontuação). Usado quando a busca "Contém" está desmarcada.
+const _noInicioDePalavra = (hs, t) => {
+    let i = hs.indexOf(t);
+    while (i >= 0) {
+        if (i === 0 || !_RE_LETRA.test(hs[i - 1])) return true;
+        i = hs.indexOf(t, i + 1);
+    }
+    return false;
+};
 // Tipos do Firebird (RDB$FIELD_TYPE).
 const T_TEXTO = { 14: "CHAR", 37: "VARCHAR", 40: "CSTRING" };
 const T_BLOB = 261;
@@ -189,7 +200,7 @@ function criarEstoque(opcoes) {
     /** Garante o cache do alvo atual (carrega uma vez; pedidos simultâneos esperam o mesmo). */
     const garantir = (forcar, cb) => {
         const a = typeof o.alvo === "function" ? o.alvo() : null;
-        if (!a || !a.path) { cb(new Error("Banco ainda não definido.")); return; }
+        if (!a || !a.path) { cb(new Error("A cópia offline do banco ainda não está pronta — o estoque aparece assim que ela terminar.")); return; }
         const ch = chaveAlvo(a);
         const copia = typeof o.ehCopia === "function" && o.ehCopia();
         const valido = cache && cache.chave === ch && (copia || Date.now() - cache.carregadoEm < ttlDireto);
@@ -242,14 +253,17 @@ function criarEstoque(opcoes) {
             const n = normalizar(t); if (n) termos.push(n);
         });
         const qNum = /^\d{3,}$/.test(bruto.trim()) ? bruto.trim() : "";
+        // "Contém" (padrão): o termo pode estar em qualquer parte do texto.
+        // Desmarcado: só no começo das palavras ("ATO" acha "ATOALHADO", mas não "GATO").
+        const tem = f.contem === false ? _noInicioDePalavra : (hs, t) => hs.indexOf(t) >= 0;
         const res = [];
         const N = c.linhas.length;
         for (let i = 0; i < N; i++) {
             const hs = c.busca[i];
             let ok = true;
-            for (let k = 0; k < termos.length && ok; k++) if (hs.indexOf(termos[k]) < 0 && !(qNum && c.digitos[i].indexOf(termos[k]) >= 0)) ok = false;
-            for (let k = 0; k < frases.length && ok; k++) if (hs.indexOf(frases[k]) < 0) ok = false;
-            for (let k = 0; k < excl.length && ok; k++) if (hs.indexOf(excl[k]) >= 0) ok = false;
+            for (let k = 0; k < termos.length && ok; k++) if (!tem(hs, termos[k]) && !(qNum && tem(c.digitos[i], termos[k]))) ok = false;
+            for (let k = 0; k < frases.length && ok; k++) if (!tem(hs, frases[k])) ok = false;
+            for (let k = 0; k < excl.length && ok; k++) if (tem(hs, excl[k])) ok = false;
             if (!ok) continue;
             if (f.estoque && f.estoque !== "todos" && c.idxPapel.qtd >= 0) {
                 const q = _num(valor(c, i, "qtd"));
