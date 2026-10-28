@@ -269,7 +269,7 @@ echo Exemplos: Farmacia Central, Loja Silva, Mercado XYZ
 echo.
 set "NOVO_NOME="
 set /p NOVO_NOME=Nome do sistema: 
-if "!NOVO_NOME!"=="" set "NOVO_NOME=Relatorios"
+if "!NOVO_NOME!"=="" set "NOVO_NOME=Relatorios SmallSoft Offline"
 
 :: NOVO_NOME e CFG vao ao PowerShell por VARIAVEL DE AMBIENTE (v1.13.1), e nao
 :: embutidos no texto do .ps1 temporario. Assim: (1) apostrofo no nome ("Bob's
@@ -291,7 +291,7 @@ set "_TMPPS=%TEMP%\_relcfgwrite_%RANDOM%.ps1"
     echo   $o = $raw ^| ConvertFrom-Json ^| ForEach-Object{$h=@{};$_.PSObject.Properties^|ForEach-Object{$h[$_.Name]=$_.Value};$h}
     echo }catch{}
     echo $o['appName'] = $n
-    echo if(-not $o.ContainsKey('porta')){$o['porta']=7734}
+    echo if(-not $o.ContainsKey('porta')){$o['porta']=7735}
     echo [System.IO.File]::WriteAllText($p,($o^|ConvertTo-Json -Depth 10 -Compress),(New-Object System.Text.UTF8Encoding($false)))
 ) > "!_TMPPS!"
 powershell -NoProfile -ExecutionPolicy Bypass -File "!_TMPPS!" 2>nul
@@ -338,7 +338,7 @@ if not exist "!LAUNCHER_PATH!" (
     timeout /t 8 >nul
 )
 set "TASK_NAME=!APP_NAME! - Relatorios"
-set "BOOTSTRAP_DIR=%LOCALAPPDATA%\RelatoriosBootstrap"
+set "BOOTSTRAP_DIR=%LOCALAPPDATA%\RelatoriosOfflineBootstrap"
 set "BOOTSTRAP_FILE=!BOOTSTRAP_DIR!\bootstrap.vbs"
 
 if not exist "!BOOTSTRAP_DIR!" md "!BOOTSTRAP_DIR!" >nul 2>&1
@@ -512,7 +512,7 @@ if defined APP_NAME_LEGADO if exist "!STARTUP!\!APP_NAME_LEGADO! Relatorios.vbs"
 (
     echo Dim sh
     echo Set sh = CreateObject^("WScript.Shell"^)
-    echo sh.Run "wscript.exe " ^& Chr^(34^) ^& sh.ExpandEnvironmentStrings^("%%LOCALAPPDATA%%"^) ^& "\RelatoriosBootstrap\bootstrap.vbs" ^& Chr^(34^), 0, False
+    echo sh.Run "wscript.exe " ^& Chr^(34^) ^& sh.ExpandEnvironmentStrings^("%%LOCALAPPDATA%%"^) ^& "\RelatoriosOfflineBootstrap\bootstrap.vbs" ^& Chr^(34^), 0, False
 ) > "!SHORTCUT!"
 
 if exist "!SHORTCUT!" (
@@ -541,8 +541,8 @@ if exist "!SHORTCUT!" (
 ::    perfis de rede (privada, dominio, publica) de proposito, para nunca
 ::    depender de qual perfil o Windows decidiu usar desta vez.
 :: ---------------------------------------------------------------------------
-set "PORTA=7734"
-for /f "usebackq delims=" %%P in (`powershell -NoProfile -Command "try{$p=(Get-Content '%~dp0config.json' -Raw -Encoding UTF8 | ConvertFrom-Json).porta; if($p -gt 0){[int]$p}else{7734}}catch{7734}" 2^>nul`) do set "PORTA=%%P"
+set "PORTA=7735"
+for /f "usebackq delims=" %%P in (`powershell -NoProfile -Command "try{$p=(Get-Content '%~dp0config.json' -Raw -Encoding UTF8 | ConvertFrom-Json).porta; if($p -gt 0){[int]$p}else{7735}}catch{7735}" 2^>nul`) do set "PORTA=%%P"
 
 echo Liberando porta !PORTA! no Firewall do Windows...
 set "FW_NOME=!APP_NAME! - Relatorios (porta !PORTA!)"

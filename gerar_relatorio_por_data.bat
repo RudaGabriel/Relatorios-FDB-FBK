@@ -81,7 +81,7 @@ exit /b 1
 :: -------------------------------------------------------
 :: Le a porta configurada em config.json (campo "porta").
 :: Le porta e nome do app/loja de config.json (campos "porta" e "appName").
-:: Fallback silencioso para 7734 / "Relatorios". Uma unica chamada
+:: Fallback silencioso para 7735 / "Relatorios SmallSoft Offline". Uma unica chamada
 :: powershell busca os dois valores. !APP_TITULO! (expansao adiada) no
 :: "title" abaixo evita risco de injecao caso o nome da loja contenha
 :: caractere especial de cmd.exe (& | < > ^) - ver comentario completo em
@@ -92,10 +92,10 @@ exit /b 1
 :: powershell (dois valores numa linha so', separados por "|"). Voltado
 :: para duas chamadas simples e separadas, no mesmo formato ja comprovado
 :: usado no restante do arquivo - reduz risco por simplicidade.
-set "PORTA=7734"
-for /f "usebackq delims=" %%P in (`powershell -NoProfile -Command "try{$p=(Get-Content '%~dp0config.json' -Raw -Encoding UTF8 | ConvertFrom-Json).porta; if($p -gt 0){[int]$p}else{7734}}catch{7734}" 2^>nul`) do set "PORTA=%%P"
-set "APP_TITULO=Relatorios"
-for /f "usebackq delims=" %%N in (`powershell -NoProfile -Command "try{$n=(Get-Content '%~dp0config.json' -Raw -Encoding UTF8 | ConvertFrom-Json).appName; if($n){$n}else{'Relatorios'}}catch{'Relatorios'}" 2^>nul`) do set "APP_TITULO=%%N"
+set "PORTA=7735"
+for /f "usebackq delims=" %%P in (`powershell -NoProfile -Command "try{$p=(Get-Content '%~dp0config.json' -Raw -Encoding UTF8 | ConvertFrom-Json).porta; if($p -gt 0){[int]$p}else{7735}}catch{7735}" 2^>nul`) do set "PORTA=%%P"
+set "APP_TITULO=Relatorios SmallSoft Offline"
+for /f "usebackq delims=" %%N in (`powershell -NoProfile -Command "try{$n=(Get-Content '%~dp0config.json' -Raw -Encoding UTF8 | ConvertFrom-Json).appName; if($n){$n}else{'Relatorios SmallSoft Offline'}}catch{'Relatorios SmallSoft Offline'}" 2^>nul`) do set "APP_TITULO=%%N"
 title !APP_TITULO! - Relatorio por Data
 exit /b 0
 

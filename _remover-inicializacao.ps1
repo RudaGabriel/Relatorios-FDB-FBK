@@ -9,7 +9,7 @@
 #   - atalhos/scripts nas pastas Inicializar (do usuario e de todos);
 #   - valores nas chaves Run do registro (HKCU e HKLM) que apontem para o
 #     sistema;
-#   - a pasta %LOCALAPPDATA%\RelatoriosBootstrap (bootstrap.vbs e
+#   - a pasta %LOCALAPPDATA%\RelatoriosOfflineBootstrap (bootstrap.vbs e
 #     launcher.path), apagando so' esses arquivos, por nome;
 #   - bootstrap.vbs/launcher.vbs que estejam AGUARDANDO a rede para subir o
 #     servidor (sem isso o servidor subiria ate 30 min depois da remocao).
@@ -66,14 +66,14 @@ $script:TrayEncerrado = $false
 $DIR        = Split-Path -Parent $MyInvocation.MyCommand.Path
 $PASTA_PROJ = $DIR
 $APP_NAME   = ''
-$PORTA      = 7734
+$PORTA      = 7735
 $LOG_PATH   = Join-Path $DIR 'relatorio.log'
 $RESULT_PATH = ''
 
 function Get-PortaValida($valor) {
     $p = 0
     if ([int]::TryParse([string]$valor, [ref]$p) -and $p -ge 1 -and $p -le 65535) { return $p }
-    return 7734
+    return 7735
 }
 
 if ($Escopo -eq 'Maquina') {
@@ -99,16 +99,20 @@ if ($Escopo -eq 'Maquina') {
     # Pasta sem permissao de escrita (rede somente leitura): log em %TEMP%.
     try { Add-Content -Path $LOG_PATH -Value $null -ErrorAction Stop } catch { $LOG_PATH = Join-Path $env:TEMP 'relatorio-remover.log' }
 }
-if (-not $APP_NAME) { $APP_NAME = 'Relatorios' }
+if (-not $APP_NAME) { $APP_NAME = 'Relatorios SmallSoft Offline' }
 
 # "launcher.vbs" e' nome generico (outro programa pode ter um): so' conta o
 # DESTA pasta. Os demais nomes sao exclusivos do sistema.
 $LAUNCHER_RX = [regex]::Escape((Join-Path $PASTA_PROJ 'launcher.vbs'))
 # Linha de comando de processos: casa com arquivos do sistema.
-$PADRAO_PROC   = "servidor-relatorio\.js|gerar-relatorio-html\.js|iniciar-tray\.ps1|RelatoriosBootstrap|$LAUNCHER_RX"
+# Relatorios SmallSoft Offline: os nomes dos arquivos sao os mesmos do sistema
+# "Relatorios FDB" (SSH). Para nunca encerrar/remover o OUTRO sistema instalado
+# na mesma maquina, so' conta o que cita arquivos DESTA pasta.
+$RX_PASTA      = [regex]::Escape($PASTA_PROJ.TrimEnd('\')) + '\\'
+$PADRAO_PROC   = "$RX_PASTA(servidor-relatorio\.js|gerar-relatorio-html\.js|iniciar-tray\.ps1)|RelatoriosOfflineBootstrap|$LAUNCHER_RX"
 # Itens de inicializacao (tarefa, atalho, registro): a cadeia de
 # inicializacao e os pontos de entrada que alguem possa ter posto ali.
-$PADRAO_INICIO = "RelatoriosBootstrap|iniciar-tray\.ps1|servidor-relatorio\.js|gerar-relatorio-html\.js|gerar_relatorio_(do_dia|por_data|intervalo)\.bat|$LAUNCHER_RX"
+$PADRAO_INICIO = "RelatoriosOfflineBootstrap|$RX_PASTA(iniciar-tray\.ps1|servidor-relatorio\.js|gerar-relatorio-html\.js|gerar_relatorio_(do_dia|por_data|intervalo)\.bat)|$LAUNCHER_RX"
 
 function Write-RemLog([string]$Msg) {
     try {
@@ -169,7 +173,7 @@ function Get-DescricaoProc($Proc) {
     if ($cl -match 'servidor-relatorio\.js')     { return 'servidor' }
     if ($cl -match 'gerar-relatorio-html\.js')   { return 'geracao de relatorio' }
     if ($cl -match 'iniciar-tray\.ps1')          { return 'icone da bandeja' }
-    if ($cl -match 'RelatoriosBootstrap')        { return 'bootstrap aguardando a rede' }
+    if ($cl -match 'RelatoriosOfflineBootstrap')        { return 'bootstrap aguardando a rede' }
     if ($cl -match 'launcher\.vbs')              { return 'launcher' }
     return 'relatorio'
 }
@@ -184,7 +188,7 @@ function Stop-ProcessosRelatorio {
     # 2) Encerramento ordenado do servidor: registra no relatorio.log e
     #    mostra "Servidor encerrado" nas telas abertas. Feito ANTES de matar
     #    o tray para nao deixar o watchdog dele religar o servidor sem tray.
-    $servidores = Get-ProcessosRelatorio @('node.exe') | Where-Object { ([string]$_.CommandLine) -match 'servidor-relatorio\.js' }
+    $servidores = Get-ProcessosRelatorio @('node.exe') | Where-Object { ([string]$_.CommandLine) -match ($RX_PASTA + 'servidor-relatorio\.js') }
     if (@($servidores).Count -gt 0) {
         try {
             Invoke-WebRequest "http://127.0.0.1:$PORTA/api/encerrar?origem=remover-inicializacao" -UseBasicParsing -TimeoutSec 3 -ErrorAction Stop | Out-Null
@@ -329,7 +333,7 @@ function Remove-PastaBootstrap {
     Write-Host ''
     Write-Host 'Bootstrap local...' -ForegroundColor Cyan
     if (-not $env:LOCALAPPDATA) { Write-Host '  %LOCALAPPDATA% indefinido - ignorado.'; return }
-    $pasta = Join-Path $env:LOCALAPPDATA 'RelatoriosBootstrap'
+    $pasta = Join-Path $env:LOCALAPPDATA 'RelatoriosOfflineBootstrap'
     if (-not (Test-Path -LiteralPath $pasta)) { Write-Host '  Nenhum bootstrap instalado.'; return }
     # Apaga por NOME (nunca a pasta com tudo dentro): se alguem guardou
     # outra coisa ali, nao some junto.

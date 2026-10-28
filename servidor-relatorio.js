@@ -1090,6 +1090,22 @@ var _fonteAtual = function() {
     }
 })();
 
+// ---------------------------------------------------------------------------
+// CONSULTA DE ESTOQUE (v3.0.0) — todos os itens da tabela ESTOQUE, lidos do
+// que o relatório está lendo (de preferência a cópia offline). Ver estoque-offline.js.
+// ---------------------------------------------------------------------------
+var _estoque = null;
+try {
+    _estoque = require("./estoque-offline.js").criarEstoque({
+        Firebird: Firebird,
+        alvo: function() { return { host: FDB_HOST, path: FDB_PATH, porta: FIREBIRD_PORT, user: USER, pass: PASS, charset: FB_CHARSET }; },
+        decodificar: function(b) { return _win1252Decoder.decode(b); },
+        ehCopia: function() { return !!(_offline && _offline.lendoCopia()); },
+        log: function(m) { logTs(m, "ESTOQUE"); }
+    });
+} catch (eEst) { logTs("Consulta de estoque indisponível: " + eEst.message, "ESTOQUE"); }
+var _ESTOQUE_HTML = path.join(__dirname, "estoque.html");
+
 var _maquinaIPCfg    = (cfg.maquinaIP && String(cfg.maquinaIP).trim()) ? String(cfg.maquinaIP).trim() : null;
 var _maquinaIPDetect = detectLocalIP(FDB_HOST);
 var _maquinaIP       = _maquinaIPDetect || _maquinaIPCfg || null;
@@ -2461,7 +2477,7 @@ var gerarEmBackground=function(inicio,fim,chave,_pollTriggered){
                 }
             }
             // Selo da cópia offline (v3.0.0) — independente do resto da página.
-            if (_offline && _offline.modo() !== "desligado") {
+            {
                 var _bodyOff = html.lastIndexOf("</body>");
                 if (_bodyOff >= 0) html = html.slice(0, _bodyOff) + _OFFLINE_SNIP + html.slice(_bodyOff);
                 else html = html + _OFFLINE_SNIP;
@@ -4305,7 +4321,10 @@ var aplicarNovoFdb = function(caminhoBruto, cb) {
 var _offlineSeloCliente = function() {
     try {
         if (window.__offlineSelo) return; window.__offlineSelo = true;
-        var css = "#__off_chip{position:fixed;left:12px;bottom:12px;z-index:2147483000;display:flex;align-items:center;gap:7px;max-width:calc(100vw - 24px);" +
+        var css = "#__off_box{position:fixed;left:12px;bottom:12px;z-index:2147483000;display:flex;gap:8px;align-items:center;max-width:calc(100vw - 24px)}" +
+            "#__est_chip{display:flex;align-items:center;gap:6px;padding:6px 11px;border-radius:999px;border:1px solid rgba(148,163,184,.35);background:rgba(15,23,42,.88);color:#e2e8f0;" +
+            "font:600 12px/1.25 Inter,'Segoe UI',Arial,sans-serif;text-decoration:none;box-shadow:0 4px 18px rgba(0,0,0,.35);white-space:nowrap}#__est_chip:hover,#__off_chip:hover{border-color:#3b82f6}" +
+            "#__off_chip{display:flex;align-items:center;gap:7px;max-width:calc(100vw - 24px);" +
             "padding:6px 11px;border-radius:999px;border:1px solid rgba(148,163,184,.35);background:rgba(15,23,42,.88);color:#e2e8f0;" +
             "font:600 12px/1.25 Inter,'Segoe UI',Arial,sans-serif;cursor:pointer;box-shadow:0 4px 18px rgba(0,0,0,.35);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}" +
             "#__off_chip .d{width:8px;height:8px;border-radius:50%;background:#22c55e;flex:0 0 auto}" +
@@ -4320,14 +4339,18 @@ var _offlineSeloCliente = function() {
             "#__off_pop .bt{margin-top:10px;width:100%;padding:8px;border:0;border-radius:9px;background:#2563eb;color:#fff;font-weight:600;cursor:pointer}" +
             "#__off_pop .bt[disabled]{opacity:.6;cursor:default}#__off_pop .cf{margin-top:10px;display:grid;grid-template-columns:1fr auto;gap:6px;align-items:center}" +
             "#__off_pop .cf select,#__off_pop .cf input{background:#1e293b;color:#e2e8f0;border:1px solid rgba(148,163,184,.35);border-radius:7px;padding:4px 6px;max-width:150px}" +
-            "@media (max-width:680px){#__off_chip{bottom:calc(76px + env(safe-area-inset-bottom,0px))}#__off_pop{bottom:calc(116px + env(safe-area-inset-bottom,0px))}}" +
-            "@media print{#__off_chip,#__off_pop{display:none!important}}";
-        var est = document.createElement("style"); est.textContent = css; (document.head || document.documentElement).appendChild(est);
+            "@media (max-width:680px){#__off_box{bottom:calc(76px + env(safe-area-inset-bottom,0px))}#__off_pop{bottom:calc(116px + env(safe-area-inset-bottom,0px))}}" +
+            "@media print{#__off_box,#__off_pop{display:none!important}}";
+        var estilo = document.createElement("style"); estilo.textContent = css; (document.head || document.documentElement).appendChild(estilo);
         var chip = document.createElement("button"); chip.type = "button"; chip.id = "__off_chip"; chip.style.display = "none";
         chip.setAttribute("aria-haspopup", "dialog"); chip.title = "Cópia offline do banco";
         chip.innerHTML = "<span class=\"d\"></span><span class=\"t\"></span>";
         var pop = document.createElement("div"); pop.id = "__off_pop"; pop.setAttribute("role", "dialog"); pop.style.display = "none";
-        document.body.appendChild(chip); document.body.appendChild(pop);
+        var caixa = document.createElement("div"); caixa.id = "__off_box";
+        var est = document.createElement("a"); est.id = "__est_chip"; est.href = "/estoque"; est.title = "Consultar todo o estoque (nome, código, código de barras...)";
+        est.innerHTML = "<svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M21 8l-9-5-9 5 9 5 9-5z\"/><path d=\"M3 8v8l9 5 9-5V8\"/><path d=\"M12 13v8\"/></svg>Estoque";
+        caixa.appendChild(chip); caixa.appendChild(est);
+        document.body.appendChild(caixa); document.body.appendChild(pop);
         var ult = null, msgAcao = "", editando = false;
         var p2 = function(n) { return (n < 10 ? "0" : "") + n; };
         var quando = function(ts) {
@@ -4464,6 +4487,8 @@ var _trocarLeitura = function(host, caminho, info) {
         if (Firebird) _iniciarPolling(1000);
         logTs("Leitura: " + _de + " → " + FDB + " (" + (info.motivo || "troca") + (info.lendo === "copia" && info.dadosDe ? "; dados de " + new Date(info.dadosDe).toLocaleString("pt-BR") : "") + ").", "OFFLINE");
         try { broadcastSSE({ type: "offline", lendo: info.lendo || null, dadosDe: info.dadosDe || null }); } catch (_) {}
+        // Estoque já consultado nesta sessão: relê em segundo plano para a próxima busca sair na hora.
+        try { if (_estoque && _estoque.status()) setTimeout(function() { _estoque.buscar({ q: "", limite: 1 }, function() {}); }, 3000); } catch (_) {}
     } catch (e) {
         logTs("ERRO ao trocar a leitura para " + host + ":" + caminho + ": " + (e && e.stack || e), "OFFLINE");
     }
@@ -4772,7 +4797,7 @@ var _DISP_NOME_TTL_MS = 10 * 60 * 1000;  // cache do nome por IP
 var _DISP_NOME_ESPERA = 1600;            // tempo máximo procurando o nome
 var _DISP_MAX         = 200;             // teto de aparelhos acompanhados
 var _DISP_RECARGA_MS  = 8000;            // tela fecha e reabre dentro disto = recarregamento
-var _ROTAS_BATIMENTO  = ["/api/status","/api/pronto","/api/events","/api/db-status","/api/hora-usuario","/pronto","/api/offline"];
+var _ROTAS_BATIMENTO  = ["/api/status","/api/pronto","/api/events","/api/db-status","/api/hora-usuario","/pronto","/api/offline","/api/estoque","/api/estoque/item"];
 var _dispositivos = {};   // ip → registro
 var _dispNomes    = {};   // ip → { nome, fonte, ts } | { pend: [callbacks] }
 // Só para os testes automáticos: inclui a própria máquina (127.0.0.1).
@@ -5459,6 +5484,44 @@ var server=http.createServer(function(req,res){
         res.writeHead(200,{"Content-Type":"application/json; charset=utf-8"});
         res.end(JSON.stringify({ok:true,msg:_reiniciar ? "Servidor reiniciando." : "Servidor encerrando."}));
         _encerrarServidor((_reiniciar ? "reinício" : "encerramento") + " solicitado por " + _origem, 0, _reiniciar);
+        return;
+    }
+
+    // /estoque — consulta de estoque completa (v3.0.0)
+    if(rota==="/estoque" && req.method==="GET"){
+        var _htmlEst = "";
+        try { _htmlEst = fs.readFileSync(_ESTOQUE_HTML, "utf8"); }
+        catch (eH) { res.writeHead(500,{"Content-Type":"text/plain; charset=utf-8"}); res.end("estoque.html não encontrado na pasta do sistema."); return; }
+        _htmlEst = _htmlEst.split("{{APP}}").join(String(APP_NAME).replace(/[&<>"']/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]; }));
+        res.writeHead(200,{"Content-Type":"text/html; charset=utf-8","Cache-Control":"no-store"});
+        res.end(_htmlComAparelho ? _htmlComAparelho(_htmlEst, req) : _htmlEst); return;
+    }
+    if((rota==="/api/estoque" || rota==="/api/estoque/item" || rota==="/api/estoque/csv") && req.method==="GET"){
+        if (!_estoque) { sendJson({ok:false, erro:"Consulta de estoque indisponível nesta instalação."}, 503); return; }
+        var _sp = parsed.searchParams;
+        var _pe = {
+            q: String(_sp.get("q") || "").slice(0, 300),
+            estoque: ["todos","com","sem","negativo","abaixo"].indexOf(_sp.get("estoque")) >= 0 ? _sp.get("estoque") : "todos",
+            ordem: ["","descricao","codigo","qtd","qtdAsc","preco","precoAsc"].indexOf(_sp.get("ordem") || "") >= 0 ? (_sp.get("ordem") || "") : "",
+            ativos: _sp.get("ativos") === "1",
+            pagina: _sp.get("pagina"), limite: _sp.get("limite"),
+            recarregar: _sp.get("recarregar") === "1" && _requisicaoDaRedeLocal(req)
+        };
+        if (rota === "/api/estoque/item") {
+            _estoque.item(_sp.get("id"), function(e, r) { sendJson(e ? {ok:false, erro:String(e.message || e)} : r, e ? 404 : 200); });
+            return;
+        }
+        if (rota === "/api/estoque/csv") {
+            _estoque.csv(_pe, function(e, csv, n) {
+                if (e) { sendJson({ok:false, erro:String(e.message || e)}, 503); return; }
+                res.writeHead(200, {"Content-Type":"text/csv; charset=utf-8", "Cache-Control":"no-store",
+                    "Content-Disposition":"attachment; filename=\"estoque-" + hoje() + ".csv\""});
+                res.end(csv);
+                logTs("Estoque exportado (" + n + " itens) por " + _ipDaRequisicao(req) + ".", "ESTOQUE");
+            });
+            return;
+        }
+        _estoque.buscar(_pe, function(e, r) { sendJson(e ? {ok:false, erro:"Não foi possível ler o estoque: " + String(e.message || e)} : r, e ? 503 : 200); });
         return;
     }
 

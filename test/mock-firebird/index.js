@@ -18,6 +18,12 @@ const lerEstado = () => {
 const registrar = linha => { try { fs.appendFileSync(LOG, linha + "\n"); } catch (_) {} };
 const hojeUTC = () => { const d = new Date(); return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate())); };
 
+const COLS_ESTOQUE = [
+    { n: "CODIGO", tp: 37, tam: 5 }, { n: "DESCRICAO", tp: 37, tam: 45 }, { n: "REFERENCIA", tp: 37, tam: 20 },
+    { n: "QTD_ATUAL", tp: 27, tam: 8 }, { n: "PRECO", tp: 27, tam: 8 }, { n: "MEDIDA", tp: 37, tam: 3 },
+    { n: "ATIVO", tp: 14, tam: 1 }, { n: "FORNECEDOR", tp: 37, tam: 30 }
+];
+
 function query(sql, params, cb) {
     const st = lerEstado();
     const s = String(sql).replace(/\s+/g, " ").trim();
@@ -127,6 +133,23 @@ function query(sql, params, cb) {
                     VAL_NUMERONF: r.numero, VAL_GERENCIAL: r.gerencial || null
                 }));
                 return st.atrasoGeracaoMs ? setTimeout(() => cb(null, _resp), st.atrasoGeracaoMs) : cb(null, _resp);
+            }
+            // Consulta de estoque (v3.0.0): catálogo da tabela ESTOQUE e o SELECT de
+            // todas as colunas (aliases C0..Cn, na ordem do catálogo). estado.estoque =
+            // [{ CODIGO, DESCRICAO, REFERENCIA, QTD_ATUAL, PRECO, MEDIDA, ATIVO, FORNECEDOR }].
+            if (/RDB\$FIELDS f/.test(s) && /'ESTOQUE'/.test(s))
+                return cb(null, COLS_ESTOQUE.map((c, i) => ({ T: "ESTOQUE", C: c.n, TP: c.tp, ST: 0, TAM: c.tam, ESC: 0, POS: i })));
+            if (/FROM "ESTOQUE"/.test(s)) {
+                const oct = /character set octets/i.test(s);
+                return cb(null, (st.estoque || []).map(r => {
+                    const o = {};
+                    COLS_ESTOQUE.forEach((c, i) => {
+                        let v = r[c.n] === undefined ? null : r[c.n];
+                        if (v != null && c.tp === 37 || v != null && c.tp === 14) v = oct ? Buffer.from(String(v), "latin1") : String(v);
+                        o["C" + i] = v;
+                    });
+                    return o;
+                }));
             }
             return cb(null, []);
         } catch (e) { cb(e); }

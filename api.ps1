@@ -51,7 +51,7 @@ $Config = Get-ConfigSegura -Path $ConfigPath
 # derruba o script se falhar (ex: config.json sem appName) - titulo e so
 # cosmetico, nao pode impedir o uso da ferramenta.
 try {
-    $__appName = if ($Config.appName) { $Config.appName } else { "Relatorios" }
+    $__appName = if ($Config.appName) { $Config.appName } else { "Relatorios SmallSoft Offline" }
     $host.UI.RawUI.WindowTitle = "$__appName - Cliente API"
 } catch {}
 

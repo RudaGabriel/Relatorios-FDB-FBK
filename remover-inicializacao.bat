@@ -6,7 +6,7 @@ setlocal enabledelayedexpansion
 ::  Desfaz o instalar-na-inicializacao.bat: remove TUDO o que
 ::  faz o relatorio iniciar sozinho no logon (tarefa agendada,
 ::  atalho na pasta Inicializar, chave Run do registro e o
-::  bootstrap local em %LOCALAPPDATA%\RelatoriosBootstrap) e
+::  bootstrap local em %LOCALAPPDATA%\RelatoriosOfflineBootstrap) e
 ::  pergunta se tambem deve encerrar os processos do relatorio
 ::  (servidor, icone da bandeja e geracoes em andamento).
 ::
@@ -24,7 +24,7 @@ setlocal enabledelayedexpansion
 :: =========================================================
 
 chcp 65001 >nul 2>&1
-title Relatorios - Remover inicializacao automatica
+title Relatorios SmallSoft Offline - Remover inicializacao automatica
 
 :: pushd aceita pasta de rede (UNC), cd /d nao.
 pushd "%~dp0" 2>nul
@@ -56,7 +56,7 @@ echo Sera removido tudo o que inicia o relatorio sozinho
 echo ao ligar/entrar no Windows:
 echo   - tarefa agendada
 echo   - atalho na pasta Inicializar e chave Run do registro
-echo   - bootstrap local ^(%%LOCALAPPDATA%%\RelatoriosBootstrap^)
+echo   - bootstrap local ^(%%LOCALAPPDATA%%\RelatoriosOfflineBootstrap^)
 echo.
 echo Configuracoes ^(config.json^), log e regra de firewall
 echo NAO sao apagados.

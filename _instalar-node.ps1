@@ -26,7 +26,7 @@ $ErrorActionPreference = 'Stop'
 # config.json ainda nao existe nesta etapa da instalacao) - titulo e' so'
 # cosmetico, nao pode impedir a instalacao do Node.js.
 try {
-    $__appName = "Relatorios"
+    $__appName = "Relatorios SmallSoft Offline"
     $__cfgPath = Join-Path $PSScriptRoot "config.json"
     if (Test-Path $__cfgPath) {
         $__cfg = Get-Content $__cfgPath -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop

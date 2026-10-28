@@ -210,7 +210,7 @@
     // === LÊ CONFIG (proibidos + appName) ===
     const pathConfig = require("node:path").join(__dirname, "config.json");
     let cfgProibidos             = [];
-    let cfgAppName               = "Relatorios"; // default igual ao servidor — evita título "Relatório  YYYY-MM-DD" (espaço duplo) quando config.json não tem appName
+    let cfgAppName               = "Relatorios SmallSoft Offline"; // default igual ao servidor — evita título "Relatório  YYYY-MM-DD" (espaço duplo) quando config.json não tem appName
     let cfgToastDuracao          = 5000;
     // Janela de correção de horário (min) — mesma chave e mesmos limites de
     // servidor-relatorio.js ("janelaCorrecaoHoraMin"); padrão 180 (3 horas).

@@ -1,5 +1,34 @@
 # Changelog
 
+## Relatórios SmallSoft Offline 1.0.0 — 2026-10-28
+
+Projeto offline criado a partir do *Relatórios FDB* (servidor 2.22.0 / gerador 3.26.1), com todos os recursos dele e mais:
+
+- **`offline-copia.js` 1.0.0 (novo):** cópia offline do banco. `gbak -b -g` (leitura, sem coleta de lixo) pelo
+  próprio Firebird → `gbak -c -mode read_only` numa cópia nova → conferência → troca atômica (manifesto em
+  `.tmp` + rename). Falha em qualquer etapa mantém a cópia anterior e apaga os temporários. Atualiza ao detectar
+  mudança nas vendas do dia (assinatura do fast-poll), respeitando intervalo mínimo adaptativo (≥ 3× a duração
+  da última cópia); também por idade máxima e a pedido. Modos `copia` (padrão), `hibrido` e `desligado`.
+  Credenciais do gbak por variável de ambiente; gbak em prioridade baixa; checa espaço em disco e o Firebird
+  local antes de começar; só apaga arquivos com o nome que ele cria, dentro da própria pasta. Restaura `.fbk`
+  escolhido pelo usuário ou encontrado no disco quando não há banco nem cópia.
+- **`estoque-offline.js` 1.0.0 + `estoque.html` (novos):** consulta de estoque completa — todos os itens da
+  tabela `ESTOQUE` em memória, busca em todas as colunas de texto (nome, código, código de barras, referência,
+  fornecedor...), sem acento, frase exata, exclusão, dígitos do código de barras, filtros, ordem, paginação,
+  detalhe com todas as colunas, totais e exportação CSV (fórmulas neutralizadas). Esquema descoberto pelo catálogo.
+- **`servidor-relatorio.js` 3.0.0:** lê a cópia offline (troca de leitura sem gravar no `config.json`),
+  rotas `/api/offline*`, `/estoque` e `/api/estoque*`, selo "Offline" + atalho "Estoque" na tela, `.fbk` no
+  seletor de banco, fast-poll espaçado enquanto lê a cópia, porta padrão 7735.
+- **Bandeja, instalador e removedor:** nome "Relatorios SmallSoft Offline", porta 7735, bootstrap em
+  `%LOCALAPPDATA%\RelatoriosOfflineBootstrap`, mutex próprio; o removedor só encerra processos **desta** pasta
+  (convive com o *Relatórios FDB* na mesma máquina). Bandeja: *Consultar estoque* e *Cópia offline do banco*.
+- **Testes:** `test/offline.test.js` e `test/estoque.test.js` (gbak e Firebird simulados).
+- Scripts da versão FBK anterior movidos para `legado/`.
+
+---
+
+## Histórico herdado do Relatórios FDB
+
 Histórico completo de versões de cada arquivo do projeto, da mais recente para a mais antiga.
 Cada arquivo traz no cabeçalho só a entrada da **versão atual**; o histórico completo fica aqui.
 

@@ -56,7 +56,7 @@ function Write-TrayLog {
 # ---------------------------------------------------------------------------
 # Instancia unica via mutex
 # ---------------------------------------------------------------------------
-$mutexName = "Global\RelatoriosTray_7734"
+$mutexName = "Global\RelatoriosOfflineTray_7735"
 $mutex = New-Object System.Threading.Mutex($false, $mutexName)
 $acquired = $false
 # AbandonedMutexException = o tray anterior morreu sem liberar o mutex: ele
@@ -77,8 +77,8 @@ Write-TrayLog "Mutex adquirido - nenhuma outra instancia ativa."
 # ---------------------------------------------------------------------------
 $cfgPath = Join-Path $DIR "config.json"
 
-$APP_NAME  = "Relatorios"
-$PORT      = 7734
+$APP_NAME  = "Relatorios SmallSoft Offline"
+$PORT      = 7735
 $MAQUINA_IP = $null
 # Credenciais do Firebird - ver bloco de leitura do config.json abaixo.
 $FB_USER = "SYSDBA"
@@ -839,6 +839,8 @@ $ICONES = @{
     reiniciar   = 'p:M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8;p:M3 3v5h5'
     sair        = 'p:M12 2v10;p:M18.4 6.6a9 9 0 1 1-12.77.04'
     servidor    = 'r:2,2,20,8,2;r:2,14,20,8,2;p:M6 6h.01;p:M6 18h.01'
+    estoque     = 'p:M21 8l-9-5-9 5 9 5 9-5z;p:M3 8v8l9 5 9-5V8;p:M12 13v8'
+    copia       = 'e:12,5,9,3;p:M3 5v6a9 3 0 0 0 9 3;p:M3 11v6a9 3 0 0 0 9 3;p:M21 5v4;p:M17 14v8;p:m14 19 3 3 3-3'
     qr          = 'r:3,3,5,5,1;r:16,3,5,5,1;r:3,16,5,5,1;p:M21 16h-3a2 2 0 0 0-2 2v3;p:M21 21v.01;p:M12 7v3a2 2 0 0 1-2 2H7;p:M3 12h.01;p:M12 3h.01;p:M12 16v.01;p:M16 12h1;p:M21 12v.01;p:M12 21v-1'
 }
 function Get-Icone([string]$nome, [string]$cor) {
@@ -1154,6 +1156,10 @@ function Update-Cabecalho {
             $telas = 0; $sc = Invoke-Api "/api/sse-clients" -Timeout 1; if ($sc) { $telas = [int]$sc.clients }
             $aparelhos = 0; $dv = Invoke-Api "/api/dispositivos" -Timeout 1; if ($dv) { $aparelhos = [int]$dv.total }
             $bancoTxt = if ($db.ok) { L "banco conectado" } elseif ($db.scanning) { L "procurando o banco..." } else { L "banco sem conex\u00e3o" }
+            $off = Invoke-Api "/api/offline" -Timeout 1
+            if ($off -and $off.lendo -eq "copia" -and $off.copia) {
+                try { $bancoTxt = (L "c\u00f3pia offline de ") + ([DateTimeOffset]::FromUnixTimeMilliseconds([int64]$off.copia.dadosDe)).LocalDateTime.ToString("HH:mm") + $(if ($off.fonteOk -eq $false) { L " (banco principal fora)" } else { "" }) } catch {}
+            }
             $cabStatus.Text = (L "\u25cf No ar \u00b7 ") + $bancoTxt
             $cabStatus.ForeColor = if ($db.ok) { [System.Drawing.Color]::FromArgb(22, 163, 74) } else { [System.Drawing.Color]::FromArgb(217, 119, 6) }
             $cabContagem.Text = [string]$telas + $(if ($telas -eq 1) { L " tela aberta" } else { L " telas abertas" }) + (L " \u00b7 ") + [string]$aparelhos + $(if ($aparelhos -eq 1) { L " aparelho na rede" } else { L " aparelhos na rede" })
@@ -1197,6 +1203,33 @@ $menu.Items.Add((New-ItemMenu "Gerar por per\u00edodo..." "periodo" "#7C3AED" {
         try { Start-Process "$ADDR/periodo" } catch {}
     }
 })) | Out-Null
+# --- Estoque e copia offline (Relatorios SmallSoft Offline) ---
+$menu.Items.Add((New-ItemMenu "Consultar estoque" "estoque" "#0D9488" { try { Start-Process "$ADDR/estoque" } catch {} })) | Out-Null
+$subCopia = New-ItemMenu "C\u00f3pia offline do banco" "copia" "#0D9488"
+$subCopia.DropDownItems.Add((New-ItemMenu "Atualizar a c\u00f3pia agora" "atualizar" "#0D9488" {
+    $r = Invoke-Api "/api/offline/atualizar" "POST" -Timeout 5
+    if ($null -eq $r) { Show-Balao "$APP_NAME" ((L "N\u00e3o foi poss\u00edvel pedir a c\u00f3pia: ") + $script:ultimoErroApi) "Warning"; return }
+    $txt = if ($r.msg) { [string]$r.msg } elseif ($r.erro) { [string]$r.erro } else { L "C\u00f3pia solicitada." }
+    Show-Balao "$APP_NAME" $txt $(if ($r.ok) { "Info" } else { "Warning" })
+})) | Out-Null
+$subCopia.DropDownItems.Add((New-ItemMenu "Situa\u00e7\u00e3o da c\u00f3pia..." "info" "#0D9488" {
+    $o = Invoke-Api "/api/offline" -Timeout 3
+    if ($null -eq $o) { Show-Mensagem ((L "O servidor n\u00e3o respondeu: ") + $script:ultimoErroApi) "$APP_NAME" "Warning"; return }
+    $quando = { param($ms) if ($ms) { try { return ([DateTimeOffset]::FromUnixTimeMilliseconds([int64]$ms)).LocalDateTime.ToString("dd/MM HH:mm") } catch {} } return "-" }
+    $t = (L "Modo: ") + [string]$o.modo + "`n" + (L "O relat\u00f3rio l\u00ea: ") + $(if ($o.lendo -eq "copia") { L "a c\u00f3pia offline" } else { L "o banco principal" })
+    if ($o.copia) { $t += "`n" + (L "Dados da c\u00f3pia: ") + (& $quando $o.copia.dadosDe) + " (" + [string]$o.copia.tamanhoMB + " MB, " + [string]$o.copia.duracaoS + " s)" } else { $t += "`n" + (L "Ainda n\u00e3o h\u00e1 c\u00f3pia.") }
+    $t += "`n" + (L "Banco principal: ") + $(if ($o.fonteOk -eq $true) { L "no ar" } elseif ($o.fonteOk -eq $false) { (L "indispon\u00edvel - ") + [string]$o.fonteErro } else { L "verificando..." })
+    if ($o.emAndamento) { $t += "`n" + (L "Fazendo a c\u00f3pia agora: ") + [string]$o.etapa }
+    if ($o.indisponivel) { $t += "`n`n" + [string]$o.indisponivel } elseif ($o.ultimoErro) { $t += "`n`n" + (L "\u00daltima falha: ") + [string]$o.ultimoErro }
+    if ($o.pasta) { $t += "`n`n" + (L "Pasta: ") + [string]$o.pasta }
+    Show-Mensagem $t "$APP_NAME" $(if ($o.indisponivel -or $o.fonteOk -eq $false) { "Warning" } else { "Information" })
+})) | Out-Null
+$subCopia.DropDownItems.Add((New-ItemMenu "Abrir a pasta das c\u00f3pias" "pasta" "#0D9488" {
+    $o = Invoke-Api "/api/offline" -Timeout 3
+    if ($o -and $o.pasta -and (Test-Path -LiteralPath ([string]$o.pasta))) { try { Start-Process explorer.exe -ArgumentList "`"$([string]$o.pasta)`"" } catch {} }
+    else { Show-Balao "$APP_NAME" (L "A pasta das c\u00f3pias ainda n\u00e3o existe.") "Info" }
+})) | Out-Null
+$menu.Items.Add($subCopia) | Out-Null
 $menu.Items.Add((New-Separador)) | Out-Null
 
 # --- Telas abertas ---
