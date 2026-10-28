@@ -1,0 +1,6 @@
+node_modules/
+relatorio.log
+hora-fixada-cache.json
+favicon.png
+*.tmp[0-9]*
+preferencias-aparelhos.json
