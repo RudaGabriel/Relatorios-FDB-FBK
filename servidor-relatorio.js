@@ -2,7 +2,7 @@
 
 /**
  * servidor-relatorio.js — Relatórios SmallSoft Offline
- * @version 3.0.0
+ * @version 3.1.0
  * @author Ruda Gabriel
  * @description Servidor HTTP + Firebird de relatórios com SSE, fast-poll e
  *              geração em subprocesso. SOMENTE LEITURA no banco.
@@ -11,8 +11,10 @@
  *              principal em atualização, manutenção ou fora do ar.
  * @changelog
  *   (Histórico completo das versões: CHANGELOG.md no repositório.)
+ *   3.1.0 - 2026-10-28 - Nenhuma conexão direta com o banco principal (só a cópia; sem
+ *     verificação por consulta, sem leitura direta, sem varredura de rede); selo "auto" removido.
  *   3.0.0 - 2026-10-28 - Relatórios SmallSoft Offline: cópia offline do banco
- *     (gbak somente leitura → cópia local read_only), modos copia/hibrido/desligado,
+ *     (gbak somente leitura → cópia local read_only),
  *     /api/offline*, selo "Offline" na tela, importação de .fbk, porta padrão 7735.
  *   2.22.0 - 2026-10-28 22:00 - Recarga desligada: a venda nova entra sem recarregar a página.
  *     - Chama window.__atualizarSemRecarregar (gerador 3.26.0+); o aviso "Há vendas novas"
@@ -24,7 +26,7 @@
 // Registrada na linha de início do log para que se saiba, ao investigar
 // qualquer ocorrência, qual versão do servidor estava no ar naquele momento
 // (o gerar-relatorio-html.js já faz o mesmo via SCRIPT_VERSION).
-const SERVER_VERSION = "3.0.0";
+const SERVER_VERSION = "3.1.0";
 
 // ===== Logger Global seguro — flush debounced 300ms =====
 const _fs = require('fs');
@@ -1033,60 +1035,62 @@ var FDB = FDB_HOST+":"+FDB_PATH;
 
 // ---------------------------------------------------------------------------
 // CÓPIA OFFLINE (v3.0.0 — Relatórios SmallSoft Offline)
-// FONTE_* = banco principal do Small Commerce; FDB_* = o que o relatório lê
-// (a cópia offline, ou o próprio banco principal enquanto não há cópia / no
-// modo híbrido com o banco no ar). Ver offline-copia.js.
+// FONTE_* = banco principal do Small Commerce (só o gbak encosta nele, para
+// copiar). FDB_* = o que o relatório lê: SEMPRE a cópia offline. Sem cópia
+// pronta, FDB_PATH fica vazio e o relatório espera ("Preparando a cópia
+// offline") — o sistema NUNCA conecta direto no banco principal, para não
+// atrapalhar atualização e manutenção do Small Commerce. Ver offline-copia.js.
 // ---------------------------------------------------------------------------
 var FONTE_HOST = FDB_HOST, FONTE_PATH = FDB_PATH;
 var _offline = null;
+var _aguardandoCopia = false; // true até a 1ª cópia ficar pronta (nada conecta no banco)
+var _bootPendente = null;     // fim do boot adiado até a 1ª cópia
 var _offlineCfg = function(c) {
     c = c || {};
-    var modo = String(c.offlineModo || "copia").toLowerCase();
-    if (["copia", "hibrido", "desligado"].indexOf(modo) < 0) modo = "copia";
     return {
-        modo: modo,
         intervaloMinMs: (_naFaixa(c.offlineIntervaloMin, 1, 1440) || 5) * 60000,
         verificarMs:    (_naFaixa(c.offlineVerificarSeg, 5, 3600) || 20) * 1000,
         maxIdadeMs:     (_naFaixa(c.offlineMaxIdadeMin, 5, 10080) || 180) * 60000,
         timeoutMs:      (_naFaixa(c.offlineTimeoutMin, 1, 360) || 30) * 60000
     };
 };
-// Banco principal atual: enquanto o relatório NÃO está lendo uma cópia, o que
-// ele lê é o banco principal (inclusive quando o usuário escolhe outro banco
-// ou o scan de rede o encontra em outro IP) — então acompanha FDB_*.
-var _fonteAtual = function() {
-    if (!_offline || !_offline.ehCopia(FDB_PATH)) { FONTE_HOST = FDB_HOST; FONTE_PATH = FDB_PATH; }
-    return { host: FONTE_HOST, path: FONTE_PATH };
-};
+var _fonteAtual = function() { return { host: FONTE_HOST, path: FONTE_PATH }; };
+// Fast-poll lendo a cópia: os dados só mudam na troca de cópia (que já regera
+// tudo), então 1 consulta a cada 2 s basta e não pesa no Firebird do caixa.
+var _FP_COPIA_MS = _naFaixa(cfg.fastPollCopiaMs, 0, 60000);
+if (_FP_COPIA_MS === null) _FP_COPIA_MS = 2000;
 (function _iniciarCopiaOffline() {
     var mod = null;
     try { mod = require("./offline-copia.js"); }
-    catch (e) { logTs("Cópia offline indisponível: offline-copia.js não carregou (" + e.message + "). O relatório lê o banco principal direto.", "OFFLINE"); return; }
-    try {
-        var oc = _offlineCfg(cfg);
-        var pasta = String(cfg.offlinePasta || "").trim() || mod.pastaPadrao(APP_NAME);
-        var gbakCfg = String(cfg.gbakPath || "").trim();
-        var gbak = oc.modo === "desligado" ? "" : mod.localizarGbak(gbakCfg, function(m) { logTs(m, "OFFLINE"); });
-        _offline = mod.criarCopiaOffline({
-            appName: APP_NAME, pasta: pasta, gbak: gbak, user: USER, pass: PASS, porta: FIREBIRD_PORT, charset: FB_CHARSET,
-            modo: oc.modo, intervaloMinMs: oc.intervaloMinMs, verificarMs: oc.verificarMs, maxIdadeMs: oc.maxIdadeMs, timeoutMs: oc.timeoutMs,
-            manterFbk: cfg.offlineManterFbk !== false,
-            Firebird: Firebird,
-            fonte: _fonteAtual,
-            assinatura: function(h, p, cb) { _assinaturaFonte(h, p, cb); },
-            aoTrocar: function(h, p, info) { _trocarLeitura(h, p, info); },
-            log: function(m) { logTs(m, "OFFLINE"); },
-            logDebug: function(m) { logDebug(m); }
-        });
-        var ini = _offline.copiaInicial();
-        if (ini) {
-            FONTE_HOST = FDB_HOST; FONTE_PATH = FDB_PATH;
-            FDB_HOST = ini.host; FDB_PATH = ini.path; FDB = FDB_HOST + ":" + FDB_PATH;
-            logTs("Lendo a cópia offline (dados de " + new Date(ini.dadosDe).toLocaleString("pt-BR") + "): " + FDB_PATH + " | banco principal: " + FONTE_HOST + ":" + FONTE_PATH, "OFFLINE");
+    catch (e) { logTs("ERRO: offline-copia.js não carregou (" + e.message + "). Sem cópia offline o relatório não abre — reinstale a pasta do sistema.", "OFFLINE"); }
+    if (mod) {
+        try {
+            var oc = _offlineCfg(cfg);
+            var pasta = String(cfg.offlinePasta || "").trim() || mod.pastaPadrao(APP_NAME);
+            var gbak = mod.localizarGbak(String(cfg.gbakPath || "").trim(), function(m) { logTs(m, "OFFLINE"); });
+            _offline = mod.criarCopiaOffline({
+                appName: APP_NAME, pasta: pasta, gbak: gbak, user: USER, pass: PASS, porta: FIREBIRD_PORT, charset: FB_CHARSET,
+                intervaloMinMs: oc.intervaloMinMs, verificarMs: oc.verificarMs, maxIdadeMs: oc.maxIdadeMs, timeoutMs: oc.timeoutMs,
+                manterFbk: cfg.offlineManterFbk !== false,
+                Firebird: Firebird,
+                fonte: _fonteAtual,
+                aoTrocar: function(h, p, info) { _trocarLeitura(h, p, info); },
+                log: function(m) { logTs(m, "OFFLINE"); },
+                logDebug: function(m) { logDebug(m); }
+            });
+        } catch (e2) {
+            _offline = null;
+            logTs("ERRO ao preparar a cópia offline: " + (e2 && e2.stack || e2), "OFFLINE");
         }
-    } catch (e2) {
-        _offline = null;
-        logTs("ERRO ao preparar a cópia offline: " + (e2 && e2.stack || e2) + " — o relatório lê o banco principal direto.", "OFFLINE");
+    }
+    var ini = _offline ? _offline.copiaInicial() : null;
+    if (ini) {
+        FDB_HOST = ini.host; FDB_PATH = ini.path; FDB = FDB_HOST + ":" + FDB_PATH;
+        logTs("Lendo a cópia offline (dados de " + new Date(ini.dadosDe).toLocaleString("pt-BR") + "): " + FDB_PATH + " | banco principal: " + FONTE_HOST + ":" + FONTE_PATH, "OFFLINE");
+    } else {
+        FDB_HOST = "127.0.0.1"; FDB_PATH = ""; FDB = "";
+        _aguardandoCopia = true;
+        logTs("Ainda não há cópia offline: o relatório abre quando a primeira ficar pronta (o banco principal não é lido direto). Banco principal: " + FONTE_HOST + ":" + FONTE_PATH, "OFFLINE");
     }
 })();
 
@@ -1098,7 +1102,8 @@ var _estoque = null;
 try {
     _estoque = require("./estoque-offline.js").criarEstoque({
         Firebird: Firebird,
-        alvo: function() { return { host: FDB_HOST, path: FDB_PATH, porta: FIREBIRD_PORT, user: USER, pass: PASS, charset: FB_CHARSET }; },
+        // Só a cópia offline: sem cópia pronta (FDB_PATH vazio), não lê nada.
+        alvo: function() { return FDB_PATH && _offline && _offline.ehCopia(FDB_PATH) ? { host: FDB_HOST, path: FDB_PATH, porta: FIREBIRD_PORT, user: USER, pass: PASS, charset: FB_CHARSET } : null; },
         decodificar: function(b) { return _win1252Decoder.decode(b); },
         ehCopia: function() { return !!(_offline && _offline.lendoCopia()); },
         log: function(m) { logTs(m, "ESTOQUE"); }
@@ -1531,6 +1536,8 @@ var aguardarFDB = function(onPronto) {
     };
 
     var _tryLocal = function(onLocalDone) {
+        // Offline: nunca testa o banco principal local direto.
+        onLocalDone(false); return;
         var _local = detectFdbLocal();
         if (!_local || FDB_HOST === "127.0.0.1") {
             onLocalDone(false);
@@ -1660,6 +1667,8 @@ var encontrarIPFirebird=function(ips,cb){
 };
 
 var descobrirIPFirebird=function(onPronto){
+    // Offline: nunca procura nem conecta em servidores Firebird da rede.
+    if(true){dbStatus.scanning=false;dbStatus.scanCompleto=true;onPronto(false);return;}
     dbStatus.scanning=true;dbStatus.scanCompleto=false;
     testarFdb(FDB_HOST,FDB_PATH,function(ok,erro){
         if(ok){
@@ -1899,6 +1908,8 @@ var _registrarCorrecoesHora = function(json) {
 };
 
 var gerarEmBackground=function(inicio,fim,chave,_pollTriggered){
+    // Offline: sem cópia pronta não há o que ler (o banco principal nunca é lido direto).
+    if (_aguardandoCopia || !FDB_PATH) { logDebug("Geração adiada: aguardando a primeira cópia offline."); return; }
     var ent=cache[chave];
     if(ent&&ent.gerando)return;
 
@@ -2247,18 +2258,8 @@ var gerarEmBackground=function(inicio,fim,chave,_pollTriggered){
             "}catch(e){};" +
             // ── Auto-reload (apenas relatório de hoje) ────────────────────────
             (ehHje ? (
-            // Badge visual confirma que auto-reload está ativo
-            "try{var _badge=document.createElement('div');" +
-            "_badge.id='__srv_badge';" +
-            "_badge.title='Auto-atualizacao ativa — detecta vendas em ~200ms';" +
-            "_badge.style.cssText='position:fixed;bottom:8px;left:8px;z-index:2147483646;" +
-            "background:rgba(0,200,80,.18);border:1px solid rgba(0,200,80,.35);border-radius:6px;" +
-            "padding:3px 8px;font-size:10px;color:rgba(0,220,80,.9);font-family:monospace;" +
-            "pointer-events:none;transition:opacity .5s;opacity:1';" +
-            "_badge.textContent=(typeof window.__recargaAutoDesligada==='function'&&window.__recargaAutoDesligada())?'\\u21bb ao vivo':'\\u21bb auto';" +
-            "document.body.appendChild(_badge);" +
-            "setTimeout(function(){_badge.style.opacity='0.18';},3000);" +
-            "}catch(_){}" +
+            // Selo "↻ auto" removido (v3.1.0, pedido do usuário): a atualização
+            // automática continua igual; só o indicador verde no canto saiu.
             // Estado interno — _loadTs marca quando esta página foi carregada
             "var _q="+qt+",_t="+(Math.round(tot*100)/100)+",_loadTs=Date.now();" +
             "console.log('[srv] auto-reload ativo | qt='+_q+' tot='+_t+' loadTs='+_loadTs);" +
@@ -2320,7 +2321,7 @@ var gerarEmBackground=function(inicio,fim,chave,_pollTriggered){
             "try{if(typeof window.__antesRecarga==='function')window.__antesRecarga();}catch(_){}" +
             "window.location.replace(window.location.href);};" +
             // Chamada pelo menu ao trocar a opção: ligou com venda pendente → atualiza já.
-            "window.__srvRecargaMudou=function(lig){try{var bd=document.getElementById('__srv_badge');if(bd)bd.textContent=lig?'\\u21bb auto':'\\u21bb ao vivo';}catch(_){}" +
+            "window.__srvRecargaMudou=function(lig){try{}catch(_){}" +
             "if(lig&&_recPend)_recarregar(true);};" +
             // SSE (primário)
             "var _es=null,_connTry=0;" +
@@ -3222,7 +3223,7 @@ var _fpPoll = function() {
     var _agoraFp = Date.now();
     // Lendo a cópia offline: os dados só mudam quando a cópia é trocada (e a
     // troca já regera o relatório) — não precisa consultar a cada 15 ms.
-    if (_offline && _offline.lendoCopia() && _agoraFp - _fpInicioCiclo < 2000) return;
+    if (_offline && _offline.lendoCopia() && _agoraFp - _fpInicioCiclo < _FP_COPIA_MS) return;
     // Modo completo: cada parte no seu ritmo (ver "Modo completo em DUAS partes").
     // A complementar tem prioridade quando as duas estão em dia, para nunca
     // ficar para trás; mesmo assim a rápida roda no máximo 1 ciclo depois.
@@ -4260,6 +4261,14 @@ var aplicarNovoFdb = function(caminhoBruto, cb) {
         }
     }
 
+    // Offline (v3.1.0): o banco escolhido NÃO é testado nem lido — vira o banco
+    // principal de onde o gbak faz a próxima cópia, pedida já.
+    FONTE_HOST = novoHost; FONTE_PATH = novoPath;
+    saveConfig({ fdbPath: novoPath, fbHost: novoHost });
+    logTs("Banco principal definido: " + novoHost + ":" + novoPath + " — fazendo a cópia offline.", "OFFLINE");
+    if (_offline) _offline.atualizarAgora(function() {});
+    cb({ ok: true, msg: "Banco principal salvo. A cópia offline está sendo feita; o relatório abre com ela sozinho." });
+    return;
     _aplicandoFdb = true;
     logTs("[FDB Manual] Testando conexão em " + novoHost + ":" + novoPath + "...");
 
@@ -4366,19 +4375,16 @@ var _offlineSeloCliente = function() {
         };
         var esc = function(v) { return String(v == null ? "" : v).replace(/[&<>"]/g, function(c) { return c === "&" ? "&amp;" : c === "<" ? "&lt;" : c === ">" ? "&gt;" : "&quot;"; }); };
         var linha = function(k, v) { return "<div class=\"l\"><span>" + esc(k) + "</span><b>" + esc(v) + "</b></div>"; };
-        var nomeModo = { copia: "Cópia offline (sempre)", hibrido: "Híbrido (ao vivo + cópia de reserva)", desligado: "Desligado (banco principal direto)" };
         var desenharChip = function(s) {
-            if (!s || s.modo === "desligado") { chip.style.display = "none"; return; }
+            if (!s) { chip.style.display = "none"; return; }
             var cls = "", txt = "";
             var dados = s.copia ? quando(s.copia.dadosDe) : "";
             if (s.lendo === "copia" && s.copia) {
                 if (s.fonteOk === false) { cls = "av"; txt = "Banco principal indisponível · dados de " + dados; }
                 else txt = "Offline · dados de " + dados;
-            } else if (s.modo === "hibrido" && s.fonteOk !== false) {
-                txt = "Ao vivo" + (s.copia ? " · reserva de " + dados : "");
-            } else if (s.emAndamento && !s.copia) { cls = "av"; txt = "Preparando a cópia offline..."; }
-            else if (!s.disponivel) { cls = "er"; txt = "Lendo o banco principal (cópia indisponível)"; }
-            else { cls = "av"; txt = "Lendo o banco principal · cópia em preparo"; }
+            } else if (s.emAndamento) { cls = "av"; txt = "Preparando a cópia offline..."; }
+            else if (!s.disponivel) { cls = "er"; txt = "Cópia offline indisponível"; }
+            else { cls = "av"; txt = "Aguardando a cópia offline"; }
             if (s.emAndamento && (s.copia || s.lendo === "copia")) { txt += " · atualizando..."; cls += " at"; }
             chip.className = cls;
             chip.querySelector(".t").textContent = txt;
@@ -4387,27 +4393,24 @@ var _offlineSeloCliente = function() {
         var desenharPop = function(s) {
             if (pop.style.display === "none" || editando) return;
             var h = "<h4>Cópia offline do banco</h4>";
-            h += linha("Modo", nomeModo[s.modo] || s.modo);
-            h += linha("O relatório lê", s.lendo === "copia" ? "a cópia offline" : "o banco principal");
+            h += linha("O relatório lê", "só a cópia (nunca o banco principal)");
             if (s.copia) {
                 h += linha("Dados da cópia", quando(s.copia.dadosDe) + " (" + ha(s.copia.dadosDe) + ")");
                 h += linha("Origem", s.copia.origem === "fbk" ? "arquivo de backup (.fbk)" : "banco principal");
                 if (s.copia.duracaoS) h += linha("Última cópia levou", s.copia.duracaoS + " s");
                 if (s.copia.tamanhoMB) h += linha("Tamanho", s.copia.tamanhoMB + " MB");
             } else h += linha("Dados da cópia", "ainda não há cópia");
-            h += linha("Banco principal", s.fonteOk === true ? "no ar" : s.fonteOk === false ? "indisponível desde " + quando(s.fonteDesde) : "verificando...");
-            h += linha("Verifica mudanças a cada", (s.verificarSeg || "?") + " s");
+            h += linha("Banco principal (na última cópia)", s.fonteOk === true ? "copiado sem problemas" : s.fonteOk === false ? "indisponível desde " + quando(s.fonteDesde) : "—");
+            h += linha("Olha o arquivo do banco a cada", (s.verificarSeg || "?") + " s (sem conectar)");
             h += linha("Intervalo mínimo entre cópias", (s.intervaloMinMin || "?") + " min");
             if (s.emAndamento) h += "<div class=\"m ok\">Fazendo a cópia agora: " + esc(s.etapa || "") + "...</div>";
             if (s.fonteOk === false && s.fonteErro) h += "<div class=\"m\">" + esc(s.fonteErro) + (s.copia ? "<br>O relatório continua com a cópia de " + esc(quando(s.copia.dadosDe)) + "." : "") + "</div>";
             if (s.indisponivel) h += "<div class=\"m\">" + esc(s.indisponivel) + "</div>";
             else if (s.ultimoErro && !s.emAndamento) h += "<div class=\"m\">Última tentativa falhou: " + esc(s.ultimoErro) + "</div>";
             if (msgAcao) h += "<div class=\"m ok\">" + esc(msgAcao) + "</div>";
-            if (s.podeAtualizar && s.modo !== "desligado") h += "<button type=\"button\" class=\"bt\" id=\"__off_at\"" + (s.emAndamento ? " disabled" : "") + ">" + (s.emAndamento ? "Cópia em andamento..." : "Atualizar cópia agora") + "</button>";
+            if (s.podeAtualizar) h += "<button type=\"button\" class=\"bt\" id=\"__off_at\"" + (s.emAndamento ? " disabled" : "") + ">" + (s.emAndamento ? "Cópia em andamento..." : "Atualizar cópia agora") + "</button>";
             if (s.podeConfigurar) {
-                h += "<div class=\"cf\"><label for=\"__off_md\">Modo</label><select id=\"__off_md\">" +
-                    ["copia", "hibrido", "desligado"].map(function(m) { return "<option value=\"" + m + "\"" + (m === s.modo ? " selected" : "") + ">" + esc(nomeModo[m]) + "</option>"; }).join("") + "</select>" +
-                    "<label for=\"__off_iv\">Intervalo mínimo (min)</label><input id=\"__off_iv\" type=\"number\" min=\"1\" max=\"1440\" value=\"" + esc(s.intervaloMinMin || 5) + "\"></div>" +
+                h += "<div class=\"cf\"><label for=\"__off_iv\">Intervalo mínimo (min)</label><input id=\"__off_iv\" type=\"number\" min=\"1\" max=\"1440\" value=\"" + esc(s.intervaloMinMin || 5) + "\"></div>" +
                     "<button type=\"button\" class=\"bt\" id=\"__off_sv\" style=\"background:#475569\">Salvar</button>";
             }
             pop.innerHTML = h;
@@ -4421,10 +4424,10 @@ var _offlineSeloCliente = function() {
             var bSv = document.getElementById("__off_sv");
             if (bSv) {
                 var foco = function() { editando = true; }, solta = function() { setTimeout(function() { editando = false; }, 300); };
-                ["__off_md", "__off_iv"].forEach(function(id) { var el = document.getElementById(id); if (el) { el.onfocus = foco; el.onblur = solta; } });
+                ["__off_iv"].forEach(function(id) { var el = document.getElementById(id); if (el) { el.onfocus = foco; el.onblur = solta; } });
                 bSv.onclick = function() {
-                    var md = document.getElementById("__off_md"), iv = document.getElementById("__off_iv");
-                    var corpo = { offlineModo: md ? md.value : s.modo, offlineIntervaloMin: iv ? parseInt(iv.value, 10) : s.intervaloMinMin };
+                    var iv = document.getElementById("__off_iv");
+                    var corpo = { offlineIntervaloMin: iv ? parseInt(iv.value, 10) : s.intervaloMinMin };
                     bSv.disabled = true; bSv.textContent = "Salvando...";
                     fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(corpo), cache: "no-store" })
                         .then(function(r) { return r.json().catch(function() { return {}; }); })
@@ -4454,8 +4457,9 @@ var _OFFLINE_SNIP = "<script>(" + _offlineSeloCliente.toString() + ")();<\/scrip
 // nunca o endereço da cópia offline (senão o próximo início procuraria o
 // banco principal no lugar errado).
 var _salvarFbHost = function(h) {
-    if (_offline && _offline.ehCopia(FDB_PATH)) return false;
-    return updateConfigKey("fbHost", h);
+    // Offline: o que responde aqui é sempre a cópia — o banco principal só muda
+    // pela escolha do usuário (aplicarNovoFdb).
+    return false;
 };
 
 // ---------------------------------------------------------------------------
@@ -4470,7 +4474,6 @@ var _trocarLeitura = function(host, caminho, info) {
     if (!host || !caminho) return;
     if (FDB_HOST === host && FDB_PATH === caminho) return;
     if (_aplicandoFdb) { setTimeout(function() { _trocarLeitura(host, caminho, info); }, 2000); return; }
-    _fonteAtual(); // guarda o banco principal antes de sair dele
     var _de = FDB;
     try {
         _pararPolling();
@@ -4485,7 +4488,9 @@ var _trocarLeitura = function(host, caminho, info) {
         var dh = hoje();
         gerarEmBackground(dh, dh, dh);
         if (Firebird) _iniciarPolling(1000);
-        logTs("Leitura: " + _de + " → " + FDB + " (" + (info.motivo || "troca") + (info.lendo === "copia" && info.dadosDe ? "; dados de " + new Date(info.dadosDe).toLocaleString("pt-BR") : "") + ").", "OFFLINE");
+        _aguardandoCopia = false;
+        if (_bootPendente) { var _bp = _bootPendente; _bootPendente = null; try { _bp(true); } catch (eBp) { logTs("ERRO ao concluir o início: " + (eBp && eBp.stack || eBp)); } }
+        logTs("Leitura: " + (_de || "(nenhuma)") + " → " + FDB + " (" + (info.motivo || "troca") + (info.lendo === "copia" && info.dadosDe ? "; dados de " + new Date(info.dadosDe).toLocaleString("pt-BR") : "") + ").", "OFFLINE");
         try { broadcastSSE({ type: "offline", lendo: info.lendo || null, dadosDe: info.dadosDe || null }); } catch (_) {}
         // Estoque já consultado nesta sessão: relê em segundo plano para a próxima busca sair na hora.
         try { if (_estoque && _estoque.status()) setTimeout(function() { _estoque.buscar({ q: "", limite: 1 }, function() {}); }, 3000); } catch (_) {}
@@ -4494,66 +4499,32 @@ var _trocarLeitura = function(host, caminho, info) {
     }
 };
 
-// Assinatura leve das vendas de HOJE no banco principal (somente leitura):
-// a mesma consulta do fast-poll completo (quantidade, total e hash por
-// registro, por tipo), numa conexão curta. Mudou → offline-copia.js faz cópia nova.
-var _assinEsquema = {}; // "host|caminho" → esquema sondado (uma vez por banco)
-var _assinaturaFonte = function(host, caminho, cb) {
-    if (!Firebird) { cb(new Error("node-firebird indisponível")); return; }
-    var fim = false, conexao = null;
-    var acabar = function(err, sig) {
-        if (fim) return; fim = true; clearTimeout(t);
-        if (conexao) { try { _matarConexao(conexao); } catch (_) {} conexao = null; }
-        cb(err, sig);
-    };
-    var t = setTimeout(function() { acabar(new Error("Timeout 10s")); }, 10000);
-    var opts = { host: host, port: FIREBIRD_PORT, database: caminho, user: USER, password: PASS, role: null, charset: FB_CHARSET, lowercase_keys: false };
-    var chave = host + "|" + caminho;
-    var dh = hoje();
-    var consultar = function(db, esq) {
-        var comp = esq ? _montarFpSqlCompleto(esq, null) : null;
-        var basico = function() {
-            var temV = !!(esq && esq.NFCE && esq.NFCE.VENDEDOR), pb = [];
-            for (var i = 0; i < _fpNumBlocos(temV); i++) pb.push(dh, dh);
-            db.query(_montarFpSql(temV), pb, function(e2, r2) {
-                if (e2 || !r2 || !r2[0]) { acabar(e2 || new Error("consulta sem resposta")); return; }
-                var x = r2[0];
-                acabar(null, dh + "|b|" + [x.FP_QT, x.FP_TOT, x.FP_PEND, x.FP_SVEND, x.FP_SFORMA].map(function(v) { return String(v == null ? "" : v); }).join("|"));
-            });
-        };
-        if (!comp || !comp.sql) { basico(); return; }
-        var pc = [];
-        for (var i = 0; i < comp.pares; i++) pc.push(dh, dh);
-        db.query(comp.sql, pc, function(e1, r1) {
-            if (fim) return;
-            if (e1 || !r1 || !r1[0]) { basico(); return; } // Firebird sem HASH etc.: modo básico
-            acabar(null, dh + "|c|" + JSON.stringify(_fpLerCompleto(r1[0])));
-        });
-    };
-    try {
-        Firebird.attach(opts, function(err, db) {
-            if (fim) { if (!err && db) { try { _matarConexao(db); } catch (_) {} } return; }
-            if (err || !db) { acabar(err || new Error("sem conexão")); return; }
-            conexao = db;
-            if (_assinEsquema[chave]) { consultar(db, _assinEsquema[chave]); return; }
-            db.query("SELECT TRIM(RDB$RELATION_NAME) AS T, TRIM(RDB$FIELD_NAME) AS C FROM RDB$RELATION_FIELDS WHERE TRIM(RDB$RELATION_NAME) IN ('NFCE','PAGAMENT','VENDAS')", [], function(eE, rows) {
-                if (fim) return;
-                if (eE || !rows) { consultar(db, null); return; }
-                var esq = { NFCE: {}, PAGAMENT: {}, VENDAS: {} };
-                rows.forEach(function(r) {
-                    var tb = String(r.T || r.t || "").trim().toUpperCase(), c = String(r.C || r.c || "").trim().toUpperCase();
-                    if (esq[tb] && c) esq[tb][c] = true;
-                });
-                _assinEsquema[chave] = esq;
-                consultar(db, esq);
-            });
-        });
-    } catch (e) { acabar(e); }
+// Tela enquanto a 1ª cópia não fica pronta: mostra a etapa e entra sozinha.
+var _paginaAguardandoCopia = function() {
+    var nome = String(APP_NAME).replace(/[&<>"']/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]; });
+    return "<!doctype html><html lang=\"pt-br\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">" +
+        "<title>Preparando a cópia · " + nome + "</title><style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0b1120;color:#e5e7eb;font:15px/1.5 Inter,'Segoe UI',Arial,sans-serif;padding:16px;box-sizing:border-box}" +
+        ".c{max-width:520px;width:100%;background:#111827;border:1px solid rgba(148,163,184,.25);border-radius:16px;padding:24px}h1{font-size:19px;margin:0 0 6px}p{color:#94a3b8;margin:6px 0}" +
+        "#et{margin:14px 0;padding:10px 12px;border-radius:10px;background:rgba(59,130,246,.12);color:#bfdbfe}#er{display:none;margin:10px 0;padding:10px 12px;border-radius:10px;background:rgba(245,158,11,.14);color:#fcd34d;word-break:break-word}" +
+        "a,button{display:inline-block;margin:6px 8px 0 0;padding:8px 12px;border-radius:9px;border:1px solid rgba(148,163,184,.3);background:#1f2937;color:#e5e7eb;font:inherit;font-weight:600;text-decoration:none;cursor:pointer}" +
+        ".sp{display:inline-block;width:12px;height:12px;border:2px solid #60a5fa;border-right-color:transparent;border-radius:50%;animation:g 1s linear infinite;margin-right:8px;vertical-align:-1px}@keyframes g{to{transform:rotate(360deg)}}</style></head><body>" +
+        "<div class=\"c\"><h1>" + nome + "</h1><p>Preparando a cópia offline do banco. O relatório lê só a cópia — o banco do caixa não é usado direto.</p>" +
+        "<div id=\"et\"><span class=\"sp\"></span><span id=\"tx\">Verificando...</span></div><div id=\"er\"></div>" +
+        "<p>Esta página entra no relatório sozinha quando a cópia ficar pronta.</p>" +
+        "<button type=\"button\" id=\"at\">Tentar a cópia agora</button><a href=\"/selecionar-fdb\">Escolher o banco ou um backup (.fbk)</a><a href=\"/estoque\">Estoque</a></div>" +
+        "<script>(function(){var tx=document.getElementById('tx'),er=document.getElementById('er');" +
+        "function v(){fetch('/api/offline',{cache:'no-store'}).then(function(r){return r.json();}).then(function(s){" +
+        "if(s&&s.lendo==='copia'&&s.copia){location.replace('/');return;}" +
+        "tx.textContent=s&&s.emAndamento?('Fazendo a cópia: '+(s.etapa||'')+'...'):'Aguardando a próxima tentativa...';" +
+        "var m=s&&(s.indisponivel||s.ultimoErro||s.fonteErro);er.style.display=m?'block':'none';er.textContent=m||'';" +
+        "}).catch(function(){tx.textContent='Sem resposta do servidor...';});}" +
+        "document.getElementById('at').onclick=function(){fetch('/api/offline/atualizar',{method:'POST'}).then(function(r){return r.json();}).then(function(r){tx.textContent=(r&&(r.msg||r.erro))||'Pedido enviado.';}).catch(function(){});};" +
+        "v();setInterval(v,3000);})();<\/script></body></html>";
 };
 
 // Status da cópia para a tela/bandeja/API. Caminhos só para a rede local.
 var _offlineStatusPara = function(req) {
-    if (!_offline) return { ok: true, modo: "desligado", disponivel: false, indisponivel: "Módulo de cópia offline não carregado.", lendo: "fonte" };
+    if (!_offline) return { ok: true, modo: "copia", disponivel: false, indisponivel: "Módulo de cópia offline não carregado (offline-copia.js).", lendo: "nenhum" };
     var s = _offline.status();
     s.ok = true;
     s.leitura = { host: FDB_HOST, arquivo: FDB_PATH };
@@ -5504,6 +5475,7 @@ var server=http.createServer(function(req,res){
             estoque: ["todos","com","sem","negativo","abaixo"].indexOf(_sp.get("estoque")) >= 0 ? _sp.get("estoque") : "todos",
             ordem: ["","descricao","codigo","qtd","qtdAsc","preco","precoAsc"].indexOf(_sp.get("ordem") || "") >= 0 ? (_sp.get("ordem") || "") : "",
             ativos: _sp.get("ativos") === "1",
+            contem: _sp.get("contem") !== "0", // padrão: contém (qualquer parte do texto)
             pagina: _sp.get("pagina"), limite: _sp.get("limite"),
             recarregar: _sp.get("recarregar") === "1" && _requisicaoDaRedeLocal(req)
         };
@@ -5814,7 +5786,6 @@ var server=http.createServer(function(req,res){
             toastDuration:         _config.toastDuration        || 5000, // CONTRATO FIX: padrão unificado com filho (era 4000)
             spawnTimeoutMs:        _SPAWN_TIMEOUT_MS,
             janelaCorrecaoHoraMin: Math.round(_HORA_GERENCIAL_JANELA_MS / 60000),
-            offlineModo:           _offline ? _offline.modo() : "desligado",
             offlineIntervaloMin:   Math.round(_offlineCfg(_config).intervaloMinMs / 60000),
             offlineVerificarSeg:   Math.round(_offlineCfg(_config).verificarMs / 1000),
             offlineMaxIdadeMin:    Math.round(_offlineCfg(_config).maxIdadeMs / 60000),
@@ -5858,7 +5829,7 @@ var server=http.createServer(function(req,res){
                         var _tdP = parseInt(p.toastDuration, 10);
                         if (!(_tdP >= 500 && _tdP <= 60000)) { sendJson({ok:false, erro:"Duração dos avisos deve ficar entre 500 e 60000 ms."}, 400); return; }
                     }
-                    var _ignP = _cSrvP ? [] : ["appName","pollInterval","maxLogLines","favicon","janelaCorrecaoHoraMin","aplicarTodos","offlineModo","offlineIntervaloMin","offlineVerificarSeg","offlineMaxIdadeMin"].filter(function(k){ return p[k] !== undefined; });
+                    var _ignP = _cSrvP ? [] : ["appName","pollInterval","maxLogLines","favicon","janelaCorrecaoHoraMin","aplicarTodos","offlineIntervaloMin","offlineVerificarSeg","offlineMaxIdadeMin"].filter(function(k){ return p[k] !== undefined; });
                     var _novasP = {};
                     _PREFS_CHAVES.forEach(function(k){ if (p[k] !== undefined) _novasP[k] = p[k]; });
                     var _infoP = _prefsDescreverChave(_chP);
@@ -5903,11 +5874,6 @@ var server=http.createServer(function(req,res){
                     obj.janelaCorrecaoHoraMin=jh;
                 }
                 // Cópia offline (v3.0.0): valida e grava; aplicado em memória mais abaixo.
-                if(p.offlineModo !== undefined){
-                    var _om = String(p.offlineModo||"").toLowerCase();
-                    if(["copia","hibrido","desligado"].indexOf(_om) < 0){ sendJson({ok:false, erro:"offlineModo deve ser copia, hibrido ou desligado."}, 400); return; }
-                    obj.offlineModo = _om;
-                }
                 var _offFaixas = [["offlineIntervaloMin",1,1440,"Intervalo mínimo entre cópias (min)"],["offlineVerificarSeg",5,3600,"Verificação do banco principal (s)"],["offlineMaxIdadeMin",5,10080,"Idade máxima da cópia (min)"]];
                 for (var _of = 0; _of < _offFaixas.length; _of++) {
                     var _fx = _offFaixas[_of];
@@ -6001,7 +5967,7 @@ var server=http.createServer(function(req,res){
 
                 // Sincroniza _config em memória com o objeto já processado (sem novo readFileSync).
                 try { Object.assign(_config, obj); appCfg = _config; cfg = _config; } catch(_sc) {}
-                if (_offline && (p.offlineModo !== undefined || p.offlineIntervaloMin !== undefined || p.offlineVerificarSeg !== undefined || p.offlineMaxIdadeMin !== undefined)) {
+                if (_offline && (p.offlineIntervaloMin !== undefined || p.offlineVerificarSeg !== undefined || p.offlineMaxIdadeMin !== undefined)) {
                     try { _offline.configurar(_offlineCfg(_config)); } catch (_oc) { logTs("ERRO ao aplicar a configuração da cópia offline: " + _oc.message, "OFFLINE"); }
                 }
 
@@ -6688,6 +6654,10 @@ var server=http.createServer(function(req,res){
 
     // /
     if(rota==="/"){
+        if(_aguardandoCopia){
+            res.writeHead(200,{"Content-Type":"text/html; charset=utf-8","Cache-Control":"no-store"});
+            res.end(_paginaAguardandoCopia()); return;
+        }
         // Se FDB não encontrado automaticamente, exibe picker manual
         if(_aguardandoFdbManual){
             res.writeHead(200,{"Content-Type":"text/html; charset=utf-8"});
@@ -6718,6 +6688,10 @@ var server=http.createServer(function(req,res){
 
     // /periodo
     if(rota==="/periodo"){
+        if(_aguardandoCopia){
+            res.writeHead(200,{"Content-Type":"text/html; charset=utf-8","Cache-Control":"no-store"});
+            res.end(_paginaAguardandoCopia()); return;
+        }
         // Se FDB não encontrado automaticamente, exibe picker manual
         if(_aguardandoFdbManual){
             res.writeHead(200,{"Content-Type":"text/html; charset=utf-8"});
@@ -6784,7 +6758,7 @@ server.listen(PORT, BIND_ADDR, function(){
     // justamente em manutenção; a cópia existente é que mantém o relatório no ar).
     try { if (_offline) _offline.iniciar(); } catch (eOff) { logTs("ERRO ao iniciar a cópia offline: " + (eOff && eOff.stack || eOff), "OFFLINE"); }
 
-    aguardarFDB(function(dbOk){
+    var _aoBancoPronto = function(dbOk){
         if(dbOk){
             // Ordem correta: disponível → configurado (FDB pode ter mudado após scan)
             logProtegido("Banco disponível em "+FDB_HOST+".");
@@ -6816,7 +6790,14 @@ server.listen(PORT, BIND_ADDR, function(){
         // log anterior mostrava POLL_INTERVAL, 10× menor que o valor efetivo.
         setImmediate(_prepararReserva); // gerador pré-aquecido já para a 1ª venda
         logTs("Fast-poll: a partir de " + _FP_INTERVAL_MS + " ms (adaptativo: no máximo 1/3 do tempo do banco) | gerador pré-aquecido | pollStatus fallback: " + (_intervaloPollStatus()/1000) + "s | browser poll: " + POLL_INTERVAL + "ms | spawnTimeout: " + (_SPAWN_TIMEOUT_MS/1000) + "s. Servidor pronto.");
-    });
+    };
+    if (_aguardandoCopia) {
+        // Sem cópia ainda: nada conecta no banco; termina o início quando ela ficar pronta.
+        dbStatus = { ok: false, ip: "127.0.0.1", erro: "Preparando a cópia offline do banco...", scanCompleto: true, scanning: false };
+        _bootPendente = function() { _aoBancoPronto(true); };
+    } else {
+        aguardarFDB(_aoBancoPronto);
+    }
 });
 
 server.on("error",function(err){

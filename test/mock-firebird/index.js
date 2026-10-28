@@ -177,6 +177,7 @@ const novaConexao = () => {
 
 module.exports = {
     attach(opts, cb) {
+        if (process.env.MOCK_LOG_ATTACH) registrar("ATTACH " + opts.database);
         const esperada = process.env.MOCK_SENHA || "masterkey";
         if (opts.password !== esperada) return setImmediate(() => cb(new Error("senha incorreta")));
         if (/offline/.test(String(opts.database)) && !fs.existsSync(path.join(RAIZ, "online.flag")))

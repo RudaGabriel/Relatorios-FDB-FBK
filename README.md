@@ -21,7 +21,7 @@ Versão **offline** do sistema *Relatórios FDB* (projeto SSH): traz **todos os 
 | 🗄️ **Cópia offline automática** | O relatório lê uma cópia do `SMALL.FDB` mantida pelo próprio sistema. Banco principal em atualização, manutenção, travado ou desligado? O relatório continua abrindo, com os dados da última cópia. |
 | 🔒 **Sem risco para os dados** | A cópia é feita pelo próprio Firebird (`gbak` em modo leitura, sem coleta de lixo) e restaurada como banco **somente leitura**. O banco principal nunca é alterado nem copiado "a quente". |
 | 🔎 **Consulta de estoque completa** | Todos os itens da tabela `ESTOQUE`: busca por nome, código, código de barras, referência, fornecedor, grupo, NCM… em **todas** as colunas, sem limite de resultados, com exportação para Excel. |
-| 🤖 **Zero cliques** | Detecta mudanças nas vendas e atualiza a cópia sozinho; troca para a cópia nova sem recarregar nada; encontra `gbak`, banco e backups `.fbk` sozinho. |
+| 🤖 **Zero cliques** | Detecta mudanças no arquivo do banco (sem conectar nele) e atualiza a cópia sozinho; troca para a cópia nova sem recarregar nada; encontra `gbak`, banco e backups `.fbk` sozinho. |
 
 Pode ser instalado **na mesma máquina** que o *Relatórios FDB*: usa porta, tarefa agendada, pasta de inicialização e ícone de bandeja próprios.
 
@@ -36,7 +36,7 @@ Pode ser instalado **na mesma máquina** que o *Relatórios FDB*: usa porta, tar
 2. Execute **`instalar-na-inicializacao.bat`** (pede administrador, instala o que falta, libera a porta **7735** no firewall e cria a inicialização automática).
 3. Abra: duplo clique no ícone da bandeja ou `http://localhost:7735`.
 
-Na primeira vez o sistema lê o banco principal direto (somente leitura) enquanto faz a primeira cópia; quando ela fica pronta, passa para a cópia sozinho. O canto inferior esquerdo da tela mostra o estado (**Offline · dados de 14:32**).
+Na primeira vez a tela mostra *Preparando a cópia offline* até a primeira cópia ficar pronta — o banco principal nunca é lido direto. O canto inferior esquerdo da tela mostra o estado (**Offline · dados de 14:32**).
 
 > Só quer testar? Execute `gerar_relatorio_do_dia.bat`. Para remover a inicialização automática: `remover-inicializacao.bat` (só mexe nos processos **desta** pasta — o *Relatórios FDB*, se instalado, não é afetado).
 
@@ -57,22 +57,15 @@ Na primeira vez o sistema lê o banco principal direto (somente leitura) enquant
                  troca atômica ──▶ relatório e estoque leem daqui
 ```
 
-- **Quando atualiza:** a cada 20 s uma consulta leve (somente leitura) tira a "assinatura" das vendas de hoje no banco principal. Mudou → nova cópia, respeitando o **intervalo mínimo** (padrão 5 min, que cresce sozinho para 3× a duração da última cópia — a cópia nunca ocupa o banco do caixa mais que 1/3 do tempo). Também atualiza a cada 3 h sem mudança (alterações em outros dias) e quando você pede.
+- **Nenhuma conexão direta com o banco principal.** O relatório e o estoque leem **só a cópia**. O único contato com o `SMALL.FDB` é o próprio `gbak`, na hora de copiar — sem consultas de verificação, para não atrapalhar atualização e manutenção do Small Commerce. Enquanto não existe a primeira cópia, a tela mostra *Preparando a cópia offline* e entra sozinha quando ela fica pronta.
+- **Quando atualiza:** a cada 20 s o sistema olha só o **tamanho e a data de alteração do arquivo** do banco (sem abri-lo). Mudou → nova cópia, respeitando o **intervalo mínimo** (padrão 5 min, que cresce sozinho para 3× a duração da última cópia — a cópia nunca ocupa o banco do caixa mais que 1/3 do tempo). Banco em **outra máquina** (não dá para olhar o arquivo): nova cópia a cada 3× o intervalo mínimo. Também atualiza a cada 3 h sem mudança e quando você pede.
 - **Pedir na hora:** clique no selo **Offline** no canto da tela → *Atualizar cópia agora* · bandeja → *Cópia offline do banco → Atualizar a cópia agora* · `POST /api/offline/atualizar`.
 - **Se algo falhar** (banco em manutenção, sem espaço em disco, gbak com erro): os temporários são apagados e o relatório **continua com a cópia anterior**. O motivo aparece no selo, na bandeja e no `relatorio.log` (categoria `[OFFLINE]`).
 - **Banco principal fora do ar:** o selo fica amarelo — *Banco principal indisponível · dados de 14:32*. Quando ele volta, a cópia é atualizada sozinha.
 - **Sem banco e sem cópia:** o sistema procura um `SMALL.fbk` nos lugares conhecidos (pasta do sistema, `Área de Trabalho\VE`, Documentos, pasta do Small Commerce) e restaura. Também dá para escolher um `.fbk` em *Configurações → Selecionar banco*.
 - **Onde ficam as cópias:** `C:\ProgramData\RelatoriosSmallSoftOffline\copias` (local — o Firebird não abre banco em pasta de rede). Ficam a cópia em uso e o último backup `.fbk`; as anteriores são apagadas quando o Firebird as solta. O sistema só apaga arquivos com o nome que ele mesmo cria, dentro dessa pasta.
 
-### Modos (`offlineModo`)
-
-| Modo | O relatório lê | Para quem |
-|---|---|---|
-| `copia` (padrão) | **Sempre** a cópia offline | Foco em offline: zero carga extra de leitura no banco do caixa, imune a manutenção |
-| `hibrido` | O banco principal **ao vivo** (venda aparece na hora); cai para a cópia quando ele fica indisponível e volta sozinho | Quem quer tempo real e segurança |
-| `desligado` | O banco principal direto | Igual ao *Relatórios FDB* |
-
-O modo e o intervalo mudam no próprio selo (no computador do servidor) ou no `config.json`, sem reiniciar.
+O intervalo mínimo muda no próprio selo (no computador do servidor) ou no `config.json`, sem reiniciar.
 
 ---
 
@@ -92,10 +85,13 @@ Botão **Estoque** no canto da tela, bandeja → *Consultar estoque* ou `http://
 | `7891000100103` | código de barras (com ou sem pontos/traços no cadastro) — o exato vem primeiro |
 | `123` | código 00123 em primeiro (zeros à esquerda) |
 
+- **Caixa "Contém"** (marcada por padrão): acha o texto em qualquer parte — `ato` acha *GATO*. Desmarcada: só no começo das palavras — `ato` acha *ATOALHADO*, mas não *GATO*. A escolha fica salva em cada aparelho.
+
 - **Leitor de código de barras:** bipe no campo de busca; se der um só item, o detalhe abre sozinho.
 - **Filtros:** com estoque, sem estoque, negativo, abaixo do mínimo, só ativos. **Ordem:** relevância, nome, código, estoque, preço.
 - **Detalhe do item:** todas as colunas do cadastro, com botão de copiar código e código de barras.
 - **Totais** do resultado (estoque somado e valor de venda em estoque) e **Exportar** para CSV/Excel com todas as colunas de todos os resultados.
+- **Contador fixo no topo** que acompanha a rolagem (*mostrando 200 de 1.234 encontrados · 5.000 itens no estoque*) e botão **Topo** para voltar ao início.
 - Atalhos: `/`, `F3` ou `Ctrl+F` vão para a busca; `Esc` limpa/fecha.
 
 ---
@@ -108,14 +104,14 @@ Todas as chaves do *Relatórios FDB* continuam valendo (`appName`, `fbUser`/`fbP
 | Chave | Padrão | Para que serve |
 |---|---|---|
 | `porta` | `7735` | Porta HTTP (o *Relatórios FDB* usa 7734) |
-| `offlineModo` | `"copia"` | `copia`, `hibrido` ou `desligado` |
 | `offlineIntervaloMin` | `5` | Intervalo mínimo entre cópias (1 a 1440 min) |
-| `offlineVerificarSeg` | `20` | A cada quantos segundos verifica mudanças no banco principal (5 a 3600) |
+| `offlineVerificarSeg` | `20` | A cada quantos segundos olha o arquivo do banco principal, sem conectar (5 a 3600) |
 | `offlineMaxIdadeMin` | `180` | Refaz a cópia depois desse tempo mesmo sem mudança detectada |
 | `offlineTimeoutMin` | `30` | Tempo máximo de uma cópia (banco muito grande: aumente) |
 | `offlinePasta` | automático | Pasta das cópias (precisa ser um disco local desta máquina) |
 | `gbakPath` | automático | Caminho do `gbak.exe` (o padrão é o do Firebird em execução) |
 | `offlineManterFbk` | `true` | Guarda o último backup `.fbk` (segurança extra) |
+| `fastPollCopiaMs` | `2000` | Intervalo da verificação interna sobre a cópia (0 a 60000 ms) |
 
 ---
 
@@ -130,7 +126,7 @@ Todas as rotas do *Relatórios FDB* (veja o `api.ps1`), mais:
 | `/api/offline/atualizar` | POST/GET | Faz uma cópia nova já (rede local) |
 | `/api/offline/importar` | POST | `{ "caminho": "C:\\...\\SMALL.fbk" }` — restaura um backup como cópia (computador do servidor) |
 | `/estoque` | GET | Tela da consulta de estoque |
-| `/api/estoque?q=&estoque=&ordem=&ativos=1&pagina=&limite=` | GET | Busca (até 1000 por página; `estoque`: todos/com/sem/negativo/abaixo) |
+| `/api/estoque?q=&estoque=&ordem=&ativos=1&contem=1&pagina=&limite=` | GET | Busca (até 1000 por página; `estoque`: todos/com/sem/negativo/abaixo; `contem=0`: só começo das palavras) |
 | `/api/estoque/item?id=N` | GET | Todas as colunas de um item |
 | `/api/estoque/csv?q=...` | GET | CSV com todos os resultados |
 
@@ -141,7 +137,7 @@ Todas as rotas do *Relatórios FDB* (veja o `api.ps1`), mais:
 
 | Sintoma | O que fazer |
 |---|---|
-| Selo vermelho "cópia indisponível" | Clique nele: o motivo aparece. Normalmente: `gbak.exe` não encontrado (informe `gbakPath`) ou Firebird não instalado nesta máquina |
+| Tela "Preparando a cópia offline" não sai / selo "cópia indisponível" | Clique nele: o motivo aparece. Normalmente: `gbak.exe` não encontrado (informe `gbakPath`) ou Firebird não instalado nesta máquina |
 | "O Firebird não está rodando nesta máquina" | Rode o sistema no computador do banco, ou instale/inicie o Firebird (mesma versão do servidor) aqui |
 | "não permite criar a cópia nesta pasta" | No `firebird.conf`, `DatabaseAccess` restrito: libere a pasta das cópias ou mude `offlinePasta` para uma pasta permitida |
 | Cópia demora muito | Aumente `offlineIntervaloMin` (e `offlineTimeoutMin` se der tempo esgotado) |

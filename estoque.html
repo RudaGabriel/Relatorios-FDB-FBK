@@ -28,7 +28,10 @@ h1{margin:0;font-size:18px;font-weight:700}
 .fil{margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .fil select,.fil label{font:inherit;font-size:13px;color:var(--tx);background:var(--pn);border:1px solid var(--bd);border-radius:8px;padding:5px 8px}
 .fil label{display:inline-flex;gap:6px;align-items:center;cursor:pointer}
-.res{padding:8px 16px;color:var(--mu);font-size:13px;display:flex;gap:12px;flex-wrap:wrap}
+.res{position:sticky;top:var(--hTopo,0px);z-index:4;background:var(--bg);padding:7px 16px;color:var(--mu);font-size:13px;border-bottom:1px solid var(--bd);line-height:1.6}
+.res .p{white-space:nowrap}.res .p+.p::before{content:" · ";white-space:normal}
+.topo{position:fixed;right:16px;bottom:calc(16px + env(safe-area-inset-bottom,0px));z-index:15;display:flex;align-items:center;gap:6px;padding:10px 14px;border-radius:999px;border:1px solid var(--bd);background:var(--ac);color:#fff;font:inherit;font-weight:700;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.35);opacity:0;transform:translateY(12px);pointer-events:none;transition:opacity .2s,transform .2s}
+.topo.on{opacity:1;transform:none;pointer-events:auto}
 .res b{color:var(--tx)}
 .aviso{margin:8px 16px;padding:10px 12px;border-radius:10px;background:rgba(245,158,11,.14);color:var(--av);display:none}
 .erro{background:rgba(239,68,68,.14);color:var(--er)}
@@ -50,7 +53,7 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
 .cust{display:none}.comCusto .cust{display:table-cell}
 /* Celular: cartões */
 @media (max-width:720px){
-  .top{padding:10px 12px 8px}.wrap{padding:0 10px 90px}.res{padding:8px 12px}
+  .top{padding:10px 12px 8px;position:static}.wrap{padding:0 10px 90px}.res{padding:6px 12px;font-size:12.5px}
   table,thead,tbody,tr,td{display:block}thead{display:none}table{background:none;border:0}
   tbody tr{background:var(--pn);border:1px solid var(--bd);border-radius:12px;margin-bottom:8px;padding:8px 10px;display:grid;grid-template-columns:1fr auto;gap:2px 10px}
   td{border:0;padding:0}
@@ -110,12 +113,13 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
       <option value="preco">Maior preço</option>
       <option value="precoAsc">Menor preço</option>
     </select>
+    <label title="Marcado: acha o texto em qualquer parte (ex.: “ato” acha “GATO”). Desmarcado: só no começo das palavras."><input type="checkbox" id="fCon"> Contém</label>
     <label><input type="checkbox" id="fAtv"> Só ativos</label>
     <label><input type="checkbox" id="fCus"> Mostrar custo</label>
   </div>
 </div>
+<div class="res" id="res" aria-live="polite"></div>
 <div class="aviso" id="aviso"></div>
-<div class="res" id="res"></div>
 <div class="wrap" id="wrap">
   <table id="tab" hidden>
     <thead><tr>
@@ -134,6 +138,7 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
   </div>
 </div>
 <div class="toast" id="toast"></div>
+<button type="button" class="topo" id="bTopo" aria-label="Voltar ao topo">&#8593; Topo</button>
 <script>
 (function () {
   "use strict";
@@ -146,7 +151,7 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
   var LIMITE = 100;
 
   $("fEst").value = ler("est", "todos"); $("fOrd").value = ler("ord", "");
-  $("fAtv").checked = ler("atv", "0") === "1"; $("fCus").checked = ler("cus", "0") === "1";
+  $("fAtv").checked = ler("atv", "0") === "1"; $("fCon").checked = ler("con", "1") === "1"; $("fCus").checked = ler("cus", "0") === "1";
   var aplicarCusto = function () { document.body.classList.toggle("comCusto", $("fCus").checked); };
   aplicarCusto();
   try { var u = new URL(location.href); if (u.searchParams.get("q")) qEl.value = u.searchParams.get("q"); } catch (e) {}
@@ -162,7 +167,8 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
   var marcar = function (txt) {
     var s = String(txt == null ? "" : txt); if (!termos.length || !s) return esc(s);
     var base = semAc(s).toUpperCase(), marcas = new Array(s.length + 1);
-    termos.forEach(function (t) { var i = 0; if (!t) return; while ((i = base.indexOf(t, i)) >= 0) { for (var k = i; k < i + t.length; k++) marcas[k] = 1; i += t.length; } });
+    var soInicio = !$("fCon").checked;
+    termos.forEach(function (t) { var i = 0; if (!t) return; while ((i = base.indexOf(t, i)) >= 0) { if (!soInicio || i === 0 || !/[A-Z0-9]/.test(base[i - 1])) { for (var k = i; k < i + t.length; k++) marcas[k] = 1; } i += t.length; } });
     var out = "", dentro = false;
     for (var i = 0; i < s.length; i++) { if (marcas[i] && !dentro) { out += "<mark>"; dentro = true; } if (!marcas[i] && dentro) { out += "</mark>"; dentro = false; } out += esc(s[i]); }
     return out + (dentro ? "</mark>" : "");
@@ -172,6 +178,7 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
     var p = new URLSearchParams();
     p.set("q", qEl.value); p.set("estoque", $("fEst").value); p.set("ordem", $("fOrd").value);
     if ($("fAtv").checked) p.set("ativos", "1");
+    p.set("contem", $("fCon").checked ? "1" : "0");
     p.set("pagina", String(pagina)); p.set("limite", String(LIMITE));
     if (extra) Object.keys(extra).forEach(function (k) { p.set(k, extra[k]); });
     return p.toString();
@@ -211,10 +218,16 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
         vazio.textContent = qEl.value ? "Nenhum item encontrado para “" + qEl.value + "”." : "Nenhum item.";
         bMais.hidden = estado.pagina >= estado.paginas;
         bMais.textContent = "Carregar mais (" + (estado.total - estado.itens.length).toLocaleString("pt-BR") + " restantes)";
-        var partes = ["<b>" + estado.total.toLocaleString("pt-BR") + "</b> de " + Number(d.totalItens).toLocaleString("pt-BR") + " itens"];
+        // Contador que acompanha a rolagem: quantos já estão na tela, de quantos achados.
+        var mostrados = estado.itens.length;
+        var partes = [estado.total === 0 ? "<b>0</b> encontrados" :
+          mostrados < estado.total
+            ? "mostrando <b>" + mostrados.toLocaleString("pt-BR") + "</b> de <b>" + estado.total.toLocaleString("pt-BR") + "</b> encontrados"
+            : "<b>" + estado.total.toLocaleString("pt-BR") + "</b> encontrados (todos na tela)"];
+        partes.push(Number(d.totalItens).toLocaleString("pt-BR") + " itens no estoque");
         if (d.somaQtd != null) partes.push("estoque somado: <b>" + qtdF(d.somaQtd) + "</b>");
         if (d.somaValorVenda != null) partes.push("valor de venda em estoque: <b>" + reais(d.somaValorVenda) + "</b>");
-        res.innerHTML = partes.join(" · ");
+        res.innerHTML = partes.map(function (x) { return "<span class=\"p\">" + x + "</span>"; }).join("");
         origem(d);
         // Leitor de código de barras (digita + Enter): um único resultado → abre o item.
         if (extra && extra.__enter && estado.total === 1) abrir(estado.itens[0].id);
@@ -238,7 +251,8 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
     if (e.key === "Escape" && qEl.value) { qEl.value = ""; buscar(1); syncUrl(); }
   });
   var syncUrl = function () { try { var u = new URL(location.href); if (qEl.value) u.searchParams.set("q", qEl.value); else u.searchParams.delete("q"); history.replaceState(null, "", u.toString()); } catch (e) {} };
-  ["fEst", "fOrd", "fAtv"].forEach(function (id) { $(id).addEventListener("change", function () { gravar(id === "fEst" ? "est" : id === "fOrd" ? "ord" : "atv", id === "fAtv" ? ($(id).checked ? "1" : "0") : $(id).value); buscar(1); }); });
+  var CHAVE_FILTRO = { fEst: "est", fOrd: "ord", fAtv: "atv", fCon: "con" };
+  ["fEst", "fOrd", "fAtv", "fCon"].forEach(function (id) { $(id).addEventListener("change", function () { var el = $(id); gravar(CHAVE_FILTRO[id], el.type === "checkbox" ? (el.checked ? "1" : "0") : el.value); buscar(1); }); });
   $("fCus").addEventListener("change", function () { gravar("cus", $("fCus").checked ? "1" : "0"); aplicarCusto(); });
   document.querySelectorAll("th[data-o]").forEach(function (th) { th.addEventListener("click", function () { $("fOrd").value = th.getAttribute("data-o"); gravar("ord", $("fOrd").value); buscar(1); }); });
   bMais.addEventListener("click", function () { if (!estado.carregando) buscar(estado.pagina + 1); });
@@ -283,6 +297,25 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
     if (e.key === "Escape" && ov.classList.contains("on")) { fechar(); return; }
     var campo = /^(INPUT|TEXTAREA|SELECT)$/.test((document.activeElement || {}).tagName || "");
     if ((e.key === "/" && !campo) || e.key === "F3" || (e.ctrlKey && (e.key === "f" || e.key === "F"))) { e.preventDefault(); qEl.focus(); qEl.select(); }
+  });
+  // O contador fica preso logo abaixo do topo fixo (no celular o topo rola e só o contador fica).
+  var topoEl = document.querySelector(".top");
+  var ajustarAltura = function () {
+    var fixo = getComputedStyle(topoEl).position === "sticky";
+    document.documentElement.style.setProperty("--hTopo", (fixo ? topoEl.offsetHeight : 0) + "px");
+  };
+  ajustarAltura();
+  window.addEventListener("resize", ajustarAltura);
+  if ("ResizeObserver" in window) new ResizeObserver(ajustarAltura).observe(topoEl);
+  // Botão "Topo": aparece depois de rolar um pouco.
+  var bTopo = $("bTopo"), topoPend = false;
+  var olharTopo = function () { topoPend = false; bTopo.classList.toggle("on", (window.pageYOffset || document.documentElement.scrollTop || 0) > 400); };
+  window.addEventListener("scroll", function () { if (!topoPend) { topoPend = true; (window.requestAnimationFrame || setTimeout)(olharTopo); } }, { passive: true });
+  bTopo.addEventListener("click", function () {
+    // Lista longa: volta direto (rolagem suave de milhares de linhas demora).
+    var longe = (window.pageYOffset || 0) > 4000;
+    try { window.scrollTo({ top: 0, behavior: longe ? "auto" : "smooth" }); } catch (e) { window.scrollTo(0, 0); }
+    if (window.matchMedia && !window.matchMedia("(pointer:coarse)").matches) setTimeout(function () { qEl.focus({ preventScroll: true }); }, 350);
   });
   qEl.focus();
   buscar(1);

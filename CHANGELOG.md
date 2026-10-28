@@ -1,5 +1,20 @@
 # Changelog
 
+## Relatórios SmallSoft Offline 1.1.0 — 2026-10-28
+
+- **Nenhuma conexão direta com o banco principal** (`offline-copia.js` 1.1.0, `servidor-relatorio.js` 3.1.0):
+  o relatório e o estoque leem só a cópia; o único contato com o `SMALL.FDB` é o gbak, ao copiar.
+  Saíram a consulta de verificação a cada 20 s (agora: tamanho/data do arquivo, sem conectar), a leitura
+  direta enquanto não há cópia (agora: tela "Preparando a cópia offline"), os modos `hibrido`/`desligado`,
+  o teste de conexão ao escolher o banco (agora só grava e pede a cópia), a varredura de rede e o teste do
+  banco local. "Banco principal indisponível" vem do resultado do gbak ou do arquivo sumido.
+- **Selo verde "↻ auto"** removido do canto do relatório (a atualização automática continua).
+- **Estoque:** contador fixo que acompanha a rolagem ("mostrando 200 de 1.234 encontrados") e botão **Topo**.
+- `fastPollCopiaMs` (padrão 2000): ritmo da verificação interna sobre a cópia.
+- **Consulta de estoque:** caixa **"Contém"** na busca (marcada por padrão = texto em qualquer parte;
+  desmarcada = só no começo das palavras). Vale para termos, frases, exclusões e destaque; salva por aparelho;
+  parâmetro `contem=0` em `/api/estoque` e `/api/estoque/csv`.
+
 ## Relatórios SmallSoft Offline 1.0.0 — 2026-10-28
 
 Projeto offline criado a partir do *Relatórios FDB* (servidor 2.22.0 / gerador 3.26.1), com todos os recursos dele e mais:

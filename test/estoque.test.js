@@ -59,6 +59,13 @@ test("estoque: lê todos os itens e acha por nome sem acento, código, código d
     // Busca por fornecedor (qualquer coluna de texto).
     assert.strictEqual((await buscar(e, { q: "vet ltda" })).itens[0].codigo, "00200");
     assert.strictEqual(normalizar("  Ração  Gato "), "RACAO GATO");
+    // "Contém" desmarcado: só no começo das palavras.
+    assert.strictEqual((await buscar(e, { q: "ato" })).total, 1, "contém deveria achar GATO");
+    assert.strictEqual((await buscar(e, { q: "ato", contem: false })).total, 0, "início de palavra não deveria achar GATO");
+    assert.deepStrictEqual((await buscar(e, { q: "gat", contem: false })).itens.map(i => i.codigo), ["00123"]);
+    assert.deepStrictEqual((await buscar(e, { q: "pulgas", contem: false })).itens.map(i => i.codigo), [], "ANTIPULGAS não começa com PULGAS");
+    assert.deepStrictEqual((await buscar(e, { q: "pulgas" })).itens.map(i => i.codigo), ["00200"]);
+    assert.strictEqual((await buscar(e, { q: "7891000100103", contem: false })).itens[0].codigo, "00123", "código de barras inteiro também vale no modo início");
 });
 
 test("estoque: filtros, ordem, paginação, detalhe com todas as colunas e CSV seguro", async () => {
@@ -87,6 +94,19 @@ test("estoque: filtros, ordem, paginação, detalhe com todas as colunas e CSV s
     assert.ok(!/;=CMD/.test(csv) && csv.includes("'=CMD"), "fórmula não foi neutralizada");
 });
 
+// O sistema só lê a cópia offline: os testes já começam com uma cópia pronta
+// (o Firebird simulado responde igual para qualquer arquivo).
+function semearCopia(dir, fonte) {
+    const pasta = path.join(dir, "copias");
+    fs.mkdirSync(pasta, { recursive: true });
+    const arq = path.join(pasta, "SMALL_OFFLINE_20260101_000000.FDB");
+    fs.writeFileSync(arq, "COPIA");
+    fs.writeFileSync(path.join(pasta, "copia-offline.json"), JSON.stringify({ versao: 1, ativa: {
+        arquivo: arq, host: "127.0.0.1", dadosDe: Date.now(), criadaEm: Date.now(), origem: "fdb",
+        fonte: { host: "127.0.0.1", path: fonte }, sig: null } }));
+    return arq;
+}
+
 const portaLivre = () => new Promise((resolve, reject) => {
     const s = net.createServer(); s.once("error", reject);
     s.listen(0, "127.0.0.1", () => { const p = s.address().port; s.close(() => resolve(p)); });
@@ -100,7 +120,8 @@ test("servidor: página /estoque, /api/estoque, detalhe e exportação", async (
     fs.copyFileSync(path.join(__dirname, "mock-firebird", "index.js"), path.join(mock, "index.js"));
     fs.copyFileSync(path.join(__dirname, "mock-firebird", "package.json"), path.join(mock, "package.json"));
     const porta = await portaLivre();
-    fs.writeFileSync(path.join(dir, "config.json"), JSON.stringify({ appName: "Loja <Teste>", porta, fbHost: "127.0.0.1", fdbPath: "/tmp/teste.fdb", offlineModo: "desligado" }, null, 2));
+    fs.writeFileSync(path.join(dir, "config.json"), JSON.stringify({ appName: "Loja <Teste>", porta, fbHost: "127.0.0.1", fdbPath: "/tmp/teste.fdb", offlinePasta: path.join(dir, "copias") }, null, 2));
+    semearCopia(dir, "/tmp/teste.fdb");
     fs.writeFileSync(path.join(dir, "estado.json"), JSON.stringify({ nfce: [], pag: [], ger: [], estoque: ITENS }));
     const env = Object.assign({}, process.env, { MOCK_SENHA: "s", RELATORIO_FB_PASS: "s", MOCK_FB_DIR: dir });
     const proc = spawn(process.execPath, ["servidor-relatorio.js", "--no-browser"], { cwd: dir, env, stdio: "ignore" });
@@ -110,6 +131,8 @@ test("servidor: página /estoque, /api/estoque, detalhe e exportação", async (
         for (let i = 0; i < 100; i++) { try { r = await (await fetch(base + "/api/estoque?q=gato")).json(); if (r && r.ok) break; } catch (_) {} await new Promise(x => setTimeout(x, 200)); }
         assert.ok(r && r.ok, "API do estoque não respondeu: " + JSON.stringify(r));
         assert.deepStrictEqual(r.itens.map(i => i.codigo), ["00123"]);
+        assert.strictEqual((await (await fetch(base + "/api/estoque?q=ato&contem=0")).json()).total, 0, "contem=0 ignorado pela API");
+        assert.strictEqual((await (await fetch(base + "/api/estoque?q=ato")).json()).total, 1);
         const pag = await (await fetch(base + "/estoque")).text();
         assert.ok(pag.includes("Loja &lt;Teste&gt;") && !pag.includes("Loja <Teste>"), "nome do sistema sem escape na página");
         assert.ok(pag.includes('id="q"'));
@@ -121,7 +144,7 @@ test("servidor: página /estoque, /api/estoque, detalhe e exportação", async (
         // Parâmetros inválidos não quebram nada.
         const ruim = await (await fetch(base + "/api/estoque?estoque=xx&ordem=;drop&limite=999999&pagina=-5")).json();
         assert.strictEqual(ruim.ok, true); assert.strictEqual(ruim.limite, 1000); assert.strictEqual(ruim.pagina, 1);
-        // Relatório traz o atalho do estoque mesmo com a cópia desligada.
+        // Relatório traz o atalho do estoque.
         let html = "";
         for (let i = 0; i < 100; i++) { html = await (await fetch(base + "/")).text(); if (html.includes("__est_chip")) break; await new Promise(x => setTimeout(x, 200)); }
         assert.ok(html.includes("__est_chip"), "atalho do estoque não aparece no relatório");

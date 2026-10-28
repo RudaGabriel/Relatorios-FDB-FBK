@@ -2,9 +2,12 @@
 
 /**
  * offline-copia.js
- * @version 1.0.0
+ * @version 1.1.0
  * @author Ruda Gabriel
  * @description Cópia offline do banco do Small Commerce (Relatórios SmallSoft Offline).
+ * @changelog
+ *   1.1.0 - 2026-10-28 - Sem nenhuma conexão direta com o banco principal: detecção de
+ *     mudança pelo arquivo (tamanho/data), sem consulta de verificação; só modo "copia".
  *
  * O relatório não precisa ler o banco principal (SMALL.FDB) ao vivo: ele lê uma
  * CÓPIA local, que este módulo mantém atualizada sozinho. Assim o relatório
@@ -26,26 +29,24 @@
  *      soltar. Qualquer falha em qualquer etapa descarta os temporários e
  *      mantém a cópia que já estava em uso — nunca fica sem cópia válida.
  *
+ * NENHUMA CONEXÃO DIRETA COM O BANCO PRINCIPAL: o relatório e o estoque leem
+ * só a cópia. O único contato com o banco principal é o próprio gbak, na hora
+ * de copiar — nada de consultas de verificação, para não atrapalhar
+ * atualização e manutenção do Small Commerce.
+ *
  * Quando atualizar a cópia (tudo automático):
- *   - a cada `verificarMs` uma consulta leve (somente leitura) tira a
- *     "assinatura" das vendas do dia no banco principal; mudou → nova cópia,
+ *   - banco principal nesta máquina: a cada `verificarMs` lê só o TAMANHO e a
+ *     DATA DE ALTERAÇÃO do arquivo (sem abrir o banco); mudou → nova cópia,
  *     respeitando o intervalo mínimo entre cópias (`intervaloMinMs`, que também
  *     cresce sozinho para 3× a duração da última cópia — nunca ocupa o banco do
  *     caixa mais que 1/3 do tempo);
- *   - a cada `maxIdadeMs` mesmo sem mudança detectada (cobre alteração em
- *     outros dias);
+ *   - banco principal em outra máquina (não dá para olhar o arquivo): a cada
+ *     3× o intervalo mínimo;
+ *   - a cada `maxIdadeMs` mesmo sem mudança;
  *   - ao pedir "Atualizar cópia agora" (bandeja, tela, API).
  *
- * Modos (`modo`):
- *   "copia"     — padrão: o relatório lê SEMPRE a cópia offline.
- *   "hibrido"   — lê o banco principal ao vivo enquanto ele responde; quando
- *                 ele cai/entra em manutenção, passa sozinho para a cópia e
- *                 volta quando ele responder de novo.
- *   "desligado" — sem cópia: lê o banco principal direto (como o sistema SSH).
- *
- * Sem gbak ou sem Firebird local para abrir a cópia, o módulo informa o motivo
- * no status/log e o sistema segue lendo o banco principal direto (somente
- * leitura), sem parar.
+ * Sem cópia pronta o relatório espera (tela "Preparando a cópia offline");
+ * sem gbak ou sem Firebird local, o motivo aparece no status e no log.
  *
  * Este arquivo não depende de nada do servidor: tudo chega por `opcoes`
  * (o que também permite testá-lo isolado, com gbak e Firebird simulados).
@@ -57,7 +58,7 @@ const os = require("os");
 const cp = require("child_process");
 const net = require("net");
 
-const VERSAO = "1.0.0";
+const VERSAO = "1.1.0";
 const MANIFESTO = "copia-offline.json";
 const PREFIXO = "SMALL_OFFLINE_";
 // Únicos nomes que este módulo cria — e os ÚNICOS que ele apaga.
@@ -128,7 +129,7 @@ function localizarGbak(preferido, log) {
         const p = String(out || "").split(/\r?\n/).map(s => s.trim()).find(existe);
         if (p) return p;
     } catch (_) {}
-    if (log) log("gbak não encontrado (Firebird não instalado nesta máquina?) — a cópia offline fica desativada; o relatório lê o banco principal direto.");
+    if (log) log("gbak não encontrado (Firebird não instalado nesta máquina?) — sem ele não há cópia offline (informe \"gbakPath\" no config.json).");
     return "";
 }
 
@@ -144,10 +145,9 @@ function pastaPadrao(appName) {
 /**
  * Cria o gerenciador.
  * opcoes:
- *   pasta, gbak, user, pass, porta, charset, modo,
+ *   pasta, gbak, user, pass, porta, charset,
  *   Firebird           — node-firebird JÁ BLINDADO (somente leitura)
  *   fonte()            — {host, path} do banco principal atual
- *   assinatura(host, path, cb(err, sig))  — consulta leve das vendas do dia
  *   aoTrocar(host, path, info)            — o servidor passa a ler daqui
  *   log(msg), logDebug(msg)
  *   intervaloMinMs, verificarMs, maxIdadeMs, timeoutMs, manterFbk
@@ -156,11 +156,10 @@ function criarCopiaOffline(opcoes) {
     const o = Object.assign({}, opcoes || {});
     const log = typeof o.log === "function" ? o.log : () => {};
     const logDebug = typeof o.logDebug === "function" ? o.logDebug : () => {};
-    const MODOS = ["copia", "hibrido", "desligado"];
-    let modo = MODOS.indexOf(String(o.modo || "").toLowerCase()) >= 0 ? String(o.modo).toLowerCase() : "copia";
+    const modo = "copia"; // único modo: o sistema nunca lê o banco principal direto
     const pasta = path.resolve(String(o.pasta || pastaPadrao(o.appName)));
     const porta = o.porta || 3050;
-    let intervaloMinMs = _faixa(o.intervaloMinMs, 30000, 24 * 3600000, 5 * 60000);
+    let intervaloMinMs = _faixa(o.intervaloMinMs, 5000, 24 * 3600000, 5 * 60000);
     let verificarMs = _faixa(o.verificarMs, 5000, 3600000, 20000);
     let maxIdadeMs = _faixa(o.maxIdadeMs, 5 * 60000, 7 * 24 * 3600000, 180 * 60000);
     let timeoutMs = _faixa(o.timeoutMs, 60000, 6 * 3600000, 30 * 60000);
@@ -175,8 +174,6 @@ function criarCopiaOffline(opcoes) {
         fonteOk: null,         // null = ainda não verificada
         fonteErro: "",
         fonteDesde: 0,         // desde quando está no estado atual (ok ou com erro)
-        falhasFonte: 0,
-        ultimaSig: null,       // última assinatura lida do banco principal
         ultimaVerificacao: 0,
         emAndamento: false,
         etapa: "",
@@ -415,6 +412,11 @@ function criarCopiaOffline(opcoes) {
             const bruto = _txt(e && (e.message || e), 500);
             const amigavel = explicarErro(bruto);
             st.ultimoErro = (amigavel ? amigavel + " " : "") + "[" + etapaFalha + "] " + bruto;
+            if (origem.tipo === "fdb" && etapaFalha === "backup" && !/cancelada/.test(bruto)) {
+                if (st.fonteOk !== false) st.fonteDesde = Date.now();
+                st.fonteOk = false; st.fonteErroDe = "gbak";
+                st.fonteErro = (amigavel || "O banco principal não deixou copiar agora.") + " (" + _txt(bruto, 200) + ")";
+            }
             // Falhou: espera o intervalo mínimo antes de tentar de novo (não martela o banco).
             st.proximaPermitida = Date.now() + intervaloMinMs;
             log("Cópia offline FALHOU em " + etapaFalha + ": " + st.ultimoErro + " — o relatório continua com a cópia anterior" + (st.ativa ? " (dados de " + new Date(st.ativa.dadosDe).toLocaleString("pt-BR") + ")." : "."));
@@ -452,6 +454,7 @@ function criarCopiaOffline(opcoes) {
                     gravarManifesto();
                     apagar(fbkTmp); // só existe se não virou o "último backup"
                     st.emAndamento = false; st.etapa = ""; st.ultimoOk = Date.now(); st.ultimoErro = ""; st.indisponivel = "";
+                    if (origem.tipo === "fdb") { if (st.fonteOk !== true) st.fonteDesde = Date.now(); st.fonteOk = true; st.fonteErro = ""; st.fonteErroDe = ""; }
                     st.ultimaDuracaoMs = Date.now() - inicio;
                     // Intervalo mínimo adaptativo: nunca ocupa o banco do caixa mais que 1/3 do tempo.
                     st.proximaPermitida = Date.now() + Math.max(intervaloMinMs, st.ultimaDuracaoMs * 3);
@@ -488,25 +491,28 @@ function criarCopiaOffline(opcoes) {
         });
     };
 
-    // ── Para onde o relatório olha ──────────────────────────────────────────
+    // ── Para onde o relatório olha: SEMPRE a cópia ──────────────────────────
+    // O sistema nunca lê o banco principal. Sem cópia pronta, o relatório
+    // espera (tela "Preparando a cópia offline").
     const copiaUsavel = () => !!(st.ativa && st.ativa.arquivo && fs.existsSync(st.ativa.arquivo));
     const fonteAtual = () => { const f = typeof o.fonte === "function" ? (o.fonte() || {}) : {}; return f && f.path ? { host: f.host || "127.0.0.1", path: f.path } : null; };
-    // Decide (copia/fonte) e avisa o servidor quando muda.
     const aplicarLeitura = (motivo) => {
-        let alvo = "fonte";
-        if (modo === "copia" && copiaUsavel()) alvo = "copia";
-        if (modo === "hibrido" && copiaUsavel() && st.fonteOk === false) alvo = "copia";
-        const f = fonteAtual();
-        if (alvo === "copia") {
-            st.lendo = "copia";
-            if (typeof o.aoTrocar === "function") o.aoTrocar("127.0.0.1", st.ativa.arquivo, { motivo, lendo: "copia", dadosDe: st.ativa.dadosDe });
-        } else if (f) {
-            st.lendo = "fonte";
-            if (typeof o.aoTrocar === "function") o.aoTrocar(f.host, f.path, { motivo, lendo: "fonte" });
-        }
+        if (!copiaUsavel()) return;
+        st.lendo = "copia";
+        if (typeof o.aoTrocar === "function") o.aoTrocar("127.0.0.1", st.ativa.arquivo, { motivo, lendo: "copia", dadosDe: st.ativa.dadosDe });
     };
 
-    // ── Verificação periódica do banco principal ────────────────────────────
+    // ── Detecção de mudança SEM conectar no banco principal ─────────────────
+    // Banco principal nesta máquina: tamanho + data de alteração do arquivo
+    // (só leitura dos atributos, nunca abre o banco). Em outra máquina: não dá
+    // para olhar o arquivo — a cópia é refeita a cada 3× o intervalo mínimo.
+    const ehArquivoLocal = f => !!f && _ehLocal(f.host);
+    const assinaturaArquivo = f => {
+        if (!ehArquivoLocal(f)) return { remoto: true };
+        try { const s = fs.statSync(f.path); return { sig: s.size + "|" + Math.round(s.mtimeMs) }; }
+        catch (e) { return { erro: e && e.code === "ENOENT" ? "Arquivo do banco principal não encontrado: " + f.path : "Não consegui ler os atributos do banco principal: " + _txt(e && e.message, 200) }; }
+    };
+
     const agendarVerificacao = (ms) => {
         clearTimeout(timerVerif);
         if (parado) return;
@@ -514,50 +520,45 @@ function criarCopiaOffline(opcoes) {
         if (timerVerif.unref) timerVerif.unref();
     };
     const verificar = () => {
-        if (parado || modo === "desligado") return;
+        if (parado) return;
         const f = fonteAtual();
-        if (!f || typeof o.assinatura !== "function") { agendarVerificacao(verificarMs); return; }
-        const minhaGer = geracao;
+        if (!f) { agendarVerificacao(verificarMs); return; }
         st.ultimaVerificacao = Date.now();
-        o.assinatura(f.host, f.path, (err, sig) => {
-            if (parado || minhaGer !== geracao) return;
-            const estavaOk = st.fonteOk;
-            if (err) {
-                st.falhasFonte++;
-                const msg = _txt(err.message || err, 300);
-                // Uma falha isolada não muda nada; duas seguidas = banco principal fora.
-                if (st.falhasFonte >= 2 && st.fonteOk !== false) {
-                    st.fonteOk = false; st.fonteDesde = Date.now();
-                    st.fonteErro = (explicarErro(msg) || "Banco principal sem resposta.") + " (" + msg + ")";
-                    log("Banco principal indisponível (" + st.fonteErro + ")" + (copiaUsavel() ? " — o relatório segue com a cópia offline de " + new Date(st.ativa.dadosDe).toLocaleString("pt-BR") + "." : " — ainda não há cópia offline."));
-                    if (modo === "hibrido") aplicarLeitura("banco principal indisponível");
-                    if (!st.ativa && !st.tentouFbkDisco) { st.tentouFbkDisco = true; api.tentarFbkDoDisco(o.fbkExtras || [], () => {}); }
-                } else if (st.fonteOk === false) {
-                    st.fonteErro = (explicarErro(msg) || "Banco principal sem resposta.") + " (" + msg + ")";
-                }
-                agendarVerificacao(verificarMs);
-                return;
+        const a = assinaturaArquivo(f);
+        if (a.erro) {
+            if (st.fonteOk !== false || st.fonteErroDe !== "arquivo") {
+                st.fonteOk = false; st.fonteDesde = Date.now(); st.fonteErro = a.erro; st.fonteErroDe = "arquivo";
+                log(a.erro + (copiaUsavel() ? " — o relatório segue com a cópia de " + new Date(st.ativa.dadosDe).toLocaleString("pt-BR") + "." : ""));
             }
-            st.falhasFonte = 0;
-            if (st.fonteOk !== true) {
-                st.fonteOk = true; st.fonteDesde = Date.now(); st.fonteErro = "";
-                if (estavaOk === false) log("Banco principal voltou a responder.");
-                if (modo === "hibrido" && estavaOk === false) aplicarLeitura("banco principal voltou");
-            }
-            st.ultimaSig = sig;
-            const agora = Date.now();
-            const mudou = !st.ativa || st.ativa.origem !== "fdb" || st.ativa.sig !== sig ||
-                !st.ativa.fonte || _norm(st.ativa.fonte.path) !== _norm(f.path) || String(st.ativa.fonte.host || "") !== String(f.host || "");
-            const velha = st.ativa && agora - (st.ativa.dadosDe || 0) > maxIdadeMs;
-            const manual = st.pedidoManual;
-            if (gbak && !st.emAndamento && (manual || ((mudou || velha) && agora >= st.proximaPermitida))) {
-                st.pedidoManual = false;
-                const motivo = manual ? "pedido manual" : (!st.ativa ? "primeira cópia" : (mudou ? "mudança nas vendas detectada" : "cópia com mais de " + Math.round(maxIdadeMs / 60000) + " min"));
-                executarCopia({ tipo: "fdb", host: f.host, path: f.path, sig }, motivo, () => agendarVerificacao(verificarMs));
-                return;
-            }
+            if (!st.ativa && !st.tentouFbkDisco) { st.tentouFbkDisco = true; api.tentarFbkDoDisco(o.fbkExtras || [], () => {}); }
             agendarVerificacao(verificarMs);
-        });
+            return;
+        }
+        if (st.fonteErroDe === "arquivo") { st.fonteOk = null; st.fonteErro = ""; st.fonteErroDe = ""; log("Arquivo do banco principal encontrado de novo."); }
+        const agora = Date.now();
+        const mesmaFonte = !!(st.ativa && st.ativa.origem === "fdb" && st.ativa.fonte &&
+            _norm(st.ativa.fonte.path) === _norm(f.path) && String(st.ativa.fonte.host || "") === String(f.host || ""));
+        const mudou = !mesmaFonte || (a.remoto ? agora - (st.ativa.dadosDe || 0) >= intervaloMinMs * 3 : st.ativa.sig !== a.sig);
+        const velha = st.ativa && agora - (st.ativa.dadosDe || 0) > maxIdadeMs;
+        const manual = st.pedidoManual;
+        if (gbak && !st.emAndamento && (manual || ((mudou || velha) && agora >= st.proximaPermitida))) {
+            st.pedidoManual = false;
+            const motivo = manual ? "pedido manual" : (!st.ativa ? "primeira cópia" : !mesmaFonte ? "banco principal trocado"
+                : mudou ? (a.remoto ? "atualização periódica (banco em outra máquina)" : "banco principal alterado") : "cópia com mais de " + Math.round(maxIdadeMs / 60000) + " min");
+            executarCopia({ tipo: "fdb", host: f.host, path: f.path }, motivo, (r) => {
+                // O próprio backup mexe no cabeçalho do banco (contador de transações):
+                // a assinatura é lida DEPOIS dele, senão toda cópia pediria outra.
+                setTimeout(() => {
+                    if (r && r.ok && st.ativa && st.ativa.origem === "fdb") {
+                        const d = assinaturaArquivo(f);
+                        if (d.sig) { st.ativa.sig = d.sig; gravarManifesto(); }
+                    }
+                    agendarVerificacao(verificarMs);
+                }, 3000);
+            });
+            return;
+        }
+        agendarVerificacao(verificarMs);
     };
 
     // ── .fbk encontrado no disco (sem banco e sem cópia) ────────────────────
@@ -581,9 +582,7 @@ function criarCopiaOffline(opcoes) {
         pasta,
         /** Cópia válida para abrir já no início (antes de qualquer verificação). */
         copiaInicial() {
-            if (modo === "desligado" || !gbak && !st.ativa) return null;
             if (!copiaUsavel()) return null;
-            if (modo === "hibrido") return null; // híbrido começa pelo banco principal
             st.lendo = "copia";
             return { host: "127.0.0.1", path: st.ativa.arquivo, dadosDe: st.ativa.dadosDe };
         },
@@ -597,16 +596,15 @@ function criarCopiaOffline(opcoes) {
         iniciar() {
             if (!parado) return;
             parado = false; geracao++;
-            if (modo === "desligado") { log("Cópia offline desligada (offlineModo = \"desligado\"): o relatório lê o banco principal direto."); return; }
             if (!gbak) st.indisponivel = "gbak.exe não encontrado nesta máquina (instale o Firebird ou informe \"gbakPath\" no config.json).";
             if (!o.Firebird) st.indisponivel = "node-firebird indisponível.";
             const erroPasta = garantirPasta();
             if (erroPasta) { st.indisponivel = erroPasta; log(erroPasta); }
             limparOrfaos();
-            log("Cópia offline " + VERSAO + ": modo \"" + modo + "\" | pasta " + pasta + " | gbak " + (gbak || "não encontrado") +
-                " | verificação a cada " + Math.round(verificarMs / 1000) + " s | intervalo mínimo entre cópias " + Math.round(intervaloMinMs / 60000) + " min" +
+            log("Cópia offline " + VERSAO + ": pasta " + pasta + " | gbak " + (gbak || "não encontrado") +
+                " | verifica o arquivo do banco a cada " + Math.round(verificarMs / 1000) + " s (sem conectar) | intervalo mínimo entre cópias " + Math.round(intervaloMinMs / 60000) + " min" +
                 (st.ativa ? " | cópia em uso: " + path.basename(st.ativa.arquivo) + " (dados de " + new Date(st.ativa.dadosDe).toLocaleString("pt-BR") + ")" : " | ainda sem cópia"));
-            if (st.indisponivel) log("Cópia offline indisponível: " + st.indisponivel + " O relatório lê o banco principal direto (somente leitura).");
+            if (st.indisponivel) log("Cópia offline indisponível: " + st.indisponivel + " Sem cópia o relatório não abre (o sistema não lê o banco principal direto).");
             agendarVerificacao(1500);
         },
         parar() {
@@ -617,7 +615,6 @@ function criarCopiaOffline(opcoes) {
         /** Pede uma cópia já (ignora o intervalo mínimo). */
         atualizarAgora(cb) {
             cb = typeof cb === "function" ? cb : () => {};
-            if (modo === "desligado") { cb({ ok: false, erro: "A cópia offline está desligada (offlineModo = \"desligado\")." }); return; }
             if (!gbak) { cb({ ok: false, erro: st.indisponivel || "gbak não encontrado." }); return; }
             if (st.emAndamento) { cb({ ok: true, jaEmAndamento: true, msg: "A cópia já está sendo feita (" + st.etapa + ")." }); return; }
             st.pedidoManual = true;
@@ -627,7 +624,6 @@ function criarCopiaOffline(opcoes) {
         /** Restaura um .fbk escolhido pelo usuário e passa a ler dele. */
         importarFbk(arquivo, cb) {
             cb = typeof cb === "function" ? cb : () => {};
-            if (modo === "desligado") { cb({ ok: false, erro: "A cópia offline está desligada (offlineModo = \"desligado\")." }); return; }
             let s = null; try { s = fs.statSync(String(arquivo || "")); } catch (_) {}
             if (!s || !s.isFile() || s.size <= 0) { cb({ ok: false, erro: "Arquivo de backup não encontrado: " + arquivo }); return; }
             if (!/\.(fbk|gbk)$/i.test(String(arquivo))) { cb({ ok: false, erro: "O arquivo precisa ser um backup do Firebird (.fbk ou .gbk)." }); return; }
@@ -636,7 +632,7 @@ function criarCopiaOffline(opcoes) {
         /** Sem cópia e sem banco principal: tenta um SMALL.fbk do disco. */
         tentarFbkDoDisco(extras, cb) {
             cb = typeof cb === "function" ? cb : () => {};
-            if (modo === "desligado" || !gbak || st.ativa || st.emAndamento) { cb({ ok: false }); return; }
+            if (!gbak || st.ativa || st.emAndamento) { cb({ ok: false }); return; }
             const fbk = procurarFbk(extras);
             if (!fbk) { cb({ ok: false, erro: "Nenhum SMALL.fbk encontrado nos locais conhecidos." }); return; }
             log("Sem banco principal e sem cópia: usando o backup encontrado em " + fbk + ".");
@@ -645,17 +641,10 @@ function criarCopiaOffline(opcoes) {
         /** Muda as opções em tempo real (tela de configurações). */
         configurar(novas) {
             const n = novas || {};
-            if (n.intervaloMinMs !== undefined) intervaloMinMs = _faixa(n.intervaloMinMs, 30000, 24 * 3600000, intervaloMinMs);
+            if (n.intervaloMinMs !== undefined) intervaloMinMs = _faixa(n.intervaloMinMs, 5000, 24 * 3600000, intervaloMinMs);
             if (n.verificarMs !== undefined) verificarMs = _faixa(n.verificarMs, 5000, 3600000, verificarMs);
             if (n.maxIdadeMs !== undefined) maxIdadeMs = _faixa(n.maxIdadeMs, 5 * 60000, 7 * 24 * 3600000, maxIdadeMs);
             if (n.timeoutMs !== undefined) timeoutMs = _faixa(n.timeoutMs, 60000, 6 * 3600000, timeoutMs);
-            if (n.modo !== undefined && MODOS.indexOf(String(n.modo)) >= 0 && n.modo !== modo) {
-                const antes = modo; modo = String(n.modo);
-                log("Cópia offline: modo \"" + antes + "\" → \"" + modo + "\".");
-                if (modo === "desligado") { clearTimeout(timerVerif); }
-                else if (!parado) agendarVerificacao(500);
-                aplicarLeitura("modo alterado");
-            }
         },
         status() {
             const agora = Date.now();
