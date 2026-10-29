@@ -419,7 +419,7 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
       var d; try { d = JSON.parse(ev.data); } catch (e) { return; }
       if (!d || !d.type) return;
       if (d.type === "navigate") irPara(d.url);
-      else if (d.type === "navigate-hash") { if (d.hash === "config") irPara("/config"); else if (d.hash === "periodo") irPara("/#periodo"); }
+      else if (d.type === "navigate-hash") { if (d.hash === "config") irPara("/config?voltar=" + encodeURIComponent(location.pathname + location.search)); else if (d.hash === "periodo") irPara("/#periodo"); }
       else if (d.type === "foco") { try { window.focus(); } catch (e) {} }
       // "reload" também vem a cada venda nova (não muda o estoque da cópia):
       // só o "Recarregar abas" da bandeja (manual) relê a página.

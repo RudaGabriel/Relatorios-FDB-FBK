@@ -4,8 +4,8 @@
 
 ### Vendas do dia e consulta de estoque do Small Commerce, lendo uma **cópia offline** do banco Firebird
 
-<img alt="versão: 1.5.1" src="https://img.shields.io/badge/vers%C3%A3o-1.5.1-2563EB?style=flat">
-<img alt="servidor: v3.5.1" src="https://img.shields.io/badge/servidor-v3.5.1-2563EB?style=flat">
+<img alt="versão: 1.5.2" src="https://img.shields.io/badge/vers%C3%A3o-1.5.2-2563EB?style=flat">
+<img alt="servidor: v3.5.2" src="https://img.shields.io/badge/servidor-v3.5.2-2563EB?style=flat">
 <img alt="cópia offline: v1.4.0" src="https://img.shields.io/badge/c%C3%B3pia%20offline-v1.4.0-0D9488?style=flat">
 <img alt="estoque: v1.1.0" src="https://img.shields.io/badge/estoque-v1.1.0-0D9488?style=flat">
 <img alt="gerador: v3.26.1" src="https://img.shields.io/badge/gerador-v3.26.1-2563EB?style=flat">
@@ -90,7 +90,7 @@ Na primeira vez aparece **Preparando a cópia offline**, com barra de progresso,
 | Saber de quando são os dados | Selo **Offline** no canto da tela · cabeçalho do menu da bandeja |
 | Atualizar a cópia agora | Clique no selo → *Atualizar cópia agora* · bandeja → *Cópia offline do banco → Atualizar a cópia agora* |
 | Acompanhar uma cópia em andamento | Selo e página de espera mostram **porcentagem, tempo decorrido e quanto falta**; a bandeja mostra *copiando N%* |
-| Configurar | Botão **Configurações** · bandeja → *Configurações → Editar configurações...* (funciona com qualquer tela aberta, inclusive o estoque) |
+| Configurar | Botão **Configurações** · bandeja → *Configurações → Editar configurações...* (funciona com qualquer tela aberta, inclusive o estoque; o botão **Voltar** retorna à tela de onde você veio) |
 | Trocar o banco | Bandeja → *Configurações → Selecionar banco (FDB)...* |
 | Ver o log | Bandeja → *Ferramentas → Abrir o log* ou *Acompanhar o log ao vivo* |
 

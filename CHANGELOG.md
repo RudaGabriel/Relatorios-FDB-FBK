@@ -1,5 +1,12 @@
 # Changelog
 
+## Relatórios SmallSoft Offline 1.5.2 — 2026-10-29
+
+- **Configurações abertas pela bandeja voltam para a tela de origem**: com o estoque aberto, o botão da página de
+  configurações agora é "Voltar para o estoque" e retorna com a mesma busca (antes sempre voltava ao relatório).
+  Vale também para outras telas (período, carregamento). O endereço de volta só aceita caminhos deste servidor.
+- `servidor-relatorio.js` 3.5.2.
+
 ## Relatórios SmallSoft Offline 1.5.1 — 2026-10-29
 
 - **Estoque: "Contém" desmarcado** agora traz só os itens que **começam** com o texto digitado (descrição, código,
