@@ -135,14 +135,14 @@ const portaLivre = () => new Promise((resolve, reject) => {
 
 test("servidor: página /estoque, /api/estoque, detalhe e exportação", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "srv-estoque-"));
-    for (const f of ["servidor-relatorio.js", "gerar-relatorio-html.js", "offline-copia.js", "estoque-offline.js", "estoque.html"]) fs.copyFileSync(path.join(RAIZ, f), path.join(dir, f));
+    for (const f of ["servidor-relatorio.js", "gerar-relatorio-html.js", "offline-copia.js", "estoque-offline.js", "estoque.html", "https-local.js"]) fs.copyFileSync(path.join(RAIZ, f), path.join(dir, f));
     fs.cpSync(path.join(RAIZ, "leitor"), path.join(dir, "leitor"), { recursive: true });
     const mock = path.join(dir, "node_modules", "node-firebird");
     fs.mkdirSync(mock, { recursive: true });
     fs.copyFileSync(path.join(__dirname, "mock-firebird", "index.js"), path.join(mock, "index.js"));
     fs.copyFileSync(path.join(__dirname, "mock-firebird", "package.json"), path.join(mock, "package.json"));
-    const porta = await portaLivre();
-    fs.writeFileSync(path.join(dir, "config.json"), JSON.stringify({ appName: "Loja <Teste>", porta, fbHost: "127.0.0.1", fdbPath: "/tmp/teste.fdb", offlinePasta: path.join(dir, "copias") }, null, 2));
+    const porta = await portaLivre(), portaHttps = await portaLivre();
+    fs.writeFileSync(path.join(dir, "config.json"), JSON.stringify({ appName: "Loja <Teste>", porta, portaHttps, fbHost: "127.0.0.1", fdbPath: "/tmp/teste.fdb", offlinePasta: path.join(dir, "copias") }, null, 2));
     semearCopia(dir, "/tmp/teste.fdb");
     fs.writeFileSync(path.join(dir, "estado.json"), JSON.stringify({ nfce: [], pag: [], ger: [], estoque: ITENS }));
     const env = Object.assign({}, process.env, { MOCK_SENHA: "s", RELATORIO_FB_PASS: "s", MOCK_FB_DIR: dir });
@@ -194,6 +194,25 @@ test("servidor: página /estoque, /api/estoque, detalhe e exportação", async (
             const t = await (await fetch(base + "/config?voltar=" + encodeURIComponent(ruim))).text();
             assert.ok(t.includes('data-voltar="/"') && t.includes("Voltar para o relatorio"), "voltar inseguro aceito: " + ruim);
         }
+        // HTTPS (leitor ao vivo no celular): mesma aplicação na portaHttps, certificado próprio.
+        const https = require("node:https");
+        const pedirHttps = caminho => new Promise((ok, falhou) => {
+            const rq = https.get({ host: "127.0.0.1", port: portaHttps, path: caminho, rejectUnauthorized: false }, rs => {
+                const cert = rs.socket && rs.socket.getPeerCertificate ? rs.socket.getPeerCertificate() : {};
+                let b = ""; rs.setEncoding("utf8"); rs.on("data", d => b += d); rs.on("end", () => ok({ status: rs.statusCode, corpo: b, cert }));
+            });
+            rq.on("error", falhou); rq.setTimeout(8000, () => rq.destroy(new Error("tempo esgotado")));
+        });
+        let rh = null;
+        for (let i = 0; i < 50 && !rh; i++) { try { rh = await pedirHttps("/estoque"); } catch (_) { await new Promise(x => setTimeout(x, 200)); } }
+        assert.ok(rh && rh.status === 200 && rh.corpo.includes('id="q"'), "estoque não abriu por HTTPS");
+        assert.ok(/IP Address:127\.0\.0\.1/.test(rh.cert.subjectaltname || ""), "certificado sem o IP: " + (rh.cert && rh.cert.subjectaltname));
+        assert.ok(fs.existsSync(path.join(dir, "https", "autoassinado.crt")), "certificado fora da pasta https ao lado das cópias");
+        const apiH = await (await fetch(base + "/api/https")).json();
+        assert.strictEqual(apiH.url, "https://127.0.0.1:" + portaHttps);
+        assert.strictEqual(apiH.confiavel, false);
+        assert.strictEqual(JSON.parse((await pedirHttps("/api/https")).corpo).seguro, true);
+        assert.ok(pag.includes("irParaSeguro") && pag.includes('get("ler") === "1"'), "estoque não leva ao leitor ao vivo pelo HTTPS");
         const det = await (await fetch(base + "/api/estoque/item?id=" + r.itens[0].id)).json();
         assert.strictEqual(det.ok, true);
         const csv = await fetch(base + "/api/estoque/csv?q=racao");

@@ -449,6 +449,22 @@ const el = {
 const aviso = m => { try { window.__estoqueAviso(String(m).replace(/<[^>]+>/g, "")); } catch (_) {} };
 const cameraAoVivo = () => !!(window.isSecureContext && navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
 let leitor = null, concluida = false, uiFoco = null;
+// Endereço HTTPS do sistema (porta 7736): lá o navegador libera a câmera ao vivo.
+// Buscado já ao abrir a página: no toque em "Ler código" a decisão é imediata
+// (o iPhone só abre a câmera/foto se for no próprio toque).
+let enderecoSeguro = null;
+if (!cameraAoVivo()) {
+  fetch("/api/https", { cache: "no-store" }).then(r => r.ok ? r.json() : null)
+    .then(d => { if (d && d.ok && d.url && /^https:\/\/[a-z0-9.-]+:\d+$/i.test(d.url)) enderecoSeguro = d; })
+    .catch(() => {});
+}
+function irParaSeguro() {
+  if (!enderecoSeguro) return false;
+  if (!enderecoSeguro.confiavel && !confirm("O leitor ao vivo precisa da conexão segura (HTTPS) do sistema.\n\nNa primeira vez o celular mostra um aviso de certificado: toque em \"Avançado\" / \"Mostrar detalhes\" e depois em \"Continuar\" / \"Visitar site\". É o certificado do próprio sistema, da sua rede.\n\nAbrir o leitor ao vivo agora? (Cancelar = tirar uma foto do código)")) return false;
+  const q = ($("q") && $("q").value) || "";
+  location.href = enderecoSeguro.url + "/estoque?ler=1" + (q ? "&q=" + encodeURIComponent(q) : "");
+  return true;
+}
 
 function obterLeitor() {
   if (leitor) return leitor;
@@ -489,6 +505,7 @@ function lido(codigo) {
 async function abrir() {
   // Sem câmera ao vivo (página http na rede): vai direto para a foto — um clique só.
   if (!cameraAoVivo()) {
+    if (irParaSeguro()) return;
     aviso("Nesta conexão o navegador não libera a câmera ao vivo: tire uma foto do código.");
     el.arquivo.click();
     return;
@@ -552,6 +569,14 @@ el.foto.addEventListener("click", () => el.arquivo.click());
 el.arquivo.addEventListener("change", () => { const a = el.arquivo.files && el.arquivo.files[0]; el.arquivo.value = ""; lerFoto(a); });
 // Botão só aparece quando o leitor carregou (navegador com suporte a módulos).
 el.bLer.hidden = false;
+// Veio do http com "?ler=1": abre o leitor ao vivo direto.
+try {
+  const u = new URL(location.href);
+  if (u.searchParams.get("ler") === "1") {
+    u.searchParams.delete("ler"); history.replaceState(null, "", u.toString());
+    if (cameraAoVivo()) setTimeout(abrir, 300);
+  }
+} catch (_) {}
 </script>
 </body>
 </html>

@@ -33,7 +33,7 @@
 // Registrada na linha de início do log para que se saiba, ao investigar
 // qualquer ocorrência, qual versão do servidor estava no ar naquele momento
 // (o gerar-relatorio-html.js já faz o mesmo via SCRIPT_VERSION).
-const SERVER_VERSION = "3.5.4";
+const SERVER_VERSION = "3.6.0";
 
 // ===== Logger Global seguro — flush debounced 300ms =====
 const _fs = require('fs');
@@ -5657,6 +5657,13 @@ var server=http.createServer(function(req,res){
     }
 
     // /api/offline — estado da cópia offline (v3.0.0)
+    // /api/https — endereço seguro para o leitor ao vivo no celular (v3.6.0).
+    if(rota==="/api/https" && req.method==="GET"){
+        var _hEnd = null;
+        try { _hEnd = _httpsLocal ? _httpsLocal.enderecoPara(req.headers.host) : null; } catch (_) {}
+        sendJson({ok:!!_hEnd, url:_hEnd ? _hEnd.url : null, confiavel:!!(_hEnd && _hEnd.confiavel), seguro:!!(req.socket && req.socket.encrypted)});
+        return;
+    }
     if(rota==="/api/offline" && req.method==="GET"){
         sendJson(_offlineStatusPara(req)); return;
     }
@@ -6921,7 +6928,28 @@ var server=http.createServer(function(req,res){
 // ---------------------------------------------------------------------------
 // Inicia
 // ---------------------------------------------------------------------------
+// HTTPS (v3.6.0): a mesma aplicação numa segunda porta (padrão: porta + 1),
+// só para o celular poder usar a câmera AO VIVO no leitor do estoque (o
+// navegador não libera a câmera em http://IP). Ver https-local.js.
+var _httpsLocal = null;
+var _iniciarHttps = function() {
+    try {
+        var _pH = appCfg.portaHttps === 0 || appCfg.portaHttps === false ? 0 : parseInt(appCfg.portaHttps || (PORT + 1), 10);
+        if (!(_pH > 0 && _pH < 65536) || _pH === PORT) { if (_pH !== 0) logTs("HTTPS desligado: portaHttps inválida.", "SERVIDOR"); return; }
+        var _pastaCopias = "";
+        try { _pastaCopias = _offline ? _offline.status().pasta : ""; } catch (_) {}
+        var _pastaH = String(appCfg.httpsPasta || "").trim() || (_pastaCopias ? path.join(path.dirname(_pastaCopias), "https") : path.join(__dirname, "https"));
+        _httpsLocal = require("./https-local.js").criarHttpsLocal({
+            porta: _pH, pasta: _pastaH, bind: BIND_ADDR,
+            handler: server.listeners("request")[0],
+            log: function(m) { logTs(m, "SERVIDOR"); }
+        });
+        _httpsLocal.iniciar();
+    } catch (eH) { _httpsLocal = null; logTs("HTTPS indisponível: " + (eH && eH.message || eH), "SERVIDOR"); }
+};
+
 server.listen(PORT, BIND_ADDR, function(){
+    _iniciarHttps();
     var addr = _maquinaIP
         ? "http://" + _maquinaIP + ":" + PORT + "  (acesso externo habilitado)"
         : "http://localhost:" + PORT;

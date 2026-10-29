@@ -1,5 +1,23 @@
 # Changelog
 
+## Relatórios SmallSoft Offline 1.6.0 — 2026-10-29
+
+- **Leitor de código de barras AO VIVO no celular.** O navegador só libera a câmera ao vivo em página segura, e por
+  `http://IP:7735` o celular só tirava foto. Novo `https-local.js` 1.0.0: a mesma aplicação também na porta **7736**
+  com HTTPS.
+  - Certificado gerado na própria máquina (Node puro, sem internet) para os IPs dela, refeito sozinho quando o IP
+    muda ou perto de vencer. Na primeira vez o celular mostra um aviso de certificado ("Avançado → Continuar").
+  - Com o Tailscale e *HTTPS Certificates* ligado no painel, usa o certificado oficial do nome `.ts.net`: abre
+    sem aviso nenhum.
+  - No estoque, **Ler código** pela rede leva ao endereço HTTPS (com a busca) e abre o leitor ao vivo sozinho;
+    *Cancelar* no aviso continua tirando foto.
+  - Nova rota `/api/https`; chave `portaHttps` (`0` desliga).
+- **Instalação nova: erro do Node na primeira vez** (`instalar-na-inicializacao.bat` 1.14.1). O `PATH` da janela
+  era relido só do sistema e sem expandir variáveis, e o instalador parava em "Node.js não foi instalado
+  corretamente" até rodar de novo. Agora procura nas pastas do Node, relê o PATH do sistema e do usuário e espera
+  até 30 s. Também cria `%APPDATA%\npm` antes do `npm install`. O firewall libera a porta HTTPS também.
+- `servidor-relatorio.js` 3.6.0.
+
 ## Relatórios SmallSoft Offline 1.5.6 — 2026-10-29
 
 - Celular: a bolinha do selo "Offline" (e o selo expandido com o botão Estoque) fica no **canto direito**, acima da
