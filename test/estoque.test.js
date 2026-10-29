@@ -171,7 +171,7 @@ test("servidor: página /estoque, /api/estoque, detalhe e exportação", async (
         const pedir = caminho => new Promise(ok => http.get({ host: "127.0.0.1", port: porta, path: caminho }, rs => { rs.resume(); ok(rs.statusCode); }).on("error", () => ok(0)));
         for (const ruim of ["/leitor/../config.json", "/leitor/%2e%2e/config.json", "/leitor/vendor/../../servidor-relatorio.js", "/leitor/x.exe"]) assert.strictEqual(await pedir(ruim), 404, ruim);
         // Comandos da bandeja chegam ao estoque (SSE): "Editar configurações" com o estoque aberto.
-        assert.ok(pag.includes('new EventSource("/api/events")') && pag.includes('irPara("/config")'), "estoque não escuta os comandos da bandeja");
+        assert.ok(pag.includes('new EventSource("/api/events")') && pag.includes('irPara("/config?voltar="'), "estoque não escuta os comandos da bandeja");
         const sse = await new Promise((ok, falhou) => {
             const rq = http.get({ host: "127.0.0.1", port: porta, path: "/api/events" }, rs => {
                 let buf = "";
@@ -186,6 +186,14 @@ test("servidor: página /estoque, /api/estoque, detalhe e exportação", async (
             setTimeout(() => { rq.destroy(); falhou(new Error("comando de configurações não chegou pelo SSE")); }, 8000);
         });
         assert.ok(sse.buf.includes('"hash":"config"'));
+        // Configurações abertas a partir do estoque voltam para o estoque (com a busca).
+        assert.ok(pag.includes('irPara("/config?voltar="'), "estoque não informa para onde voltar");
+        const cfgEst = await (await fetch(base + "/config?voltar=" + encodeURIComponent("/estoque?q=racao%20gato"))).text();
+        assert.ok(cfgEst.includes('data-voltar="/estoque?q=racao%20gato"') && cfgEst.includes("Voltar para o estoque"), "botão não volta para o estoque: " + (cfgEst.match(/<button[^>]*voltarBtn[^>]*>[^<]*/) || [cfgEst.slice(0, 300)])[0]);
+        for (const ruim of ["//exemplo.com", "https://exemplo.com", "javascript:alert(1)", "/\\exemplo.com", "/config?voltar=/estoque", "/x\"onmouseover=\"1"]) {
+            const t = await (await fetch(base + "/config?voltar=" + encodeURIComponent(ruim))).text();
+            assert.ok(t.includes('data-voltar="/"') && t.includes("Voltar para o relatorio"), "voltar inseguro aceito: " + ruim);
+        }
         const det = await (await fetch(base + "/api/estoque/item?id=" + r.itens[0].id)).json();
         assert.strictEqual(det.ok, true);
         const csv = await fetch(base + "/api/estoque/csv?q=racao");

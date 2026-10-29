@@ -33,7 +33,7 @@
 // Registrada na linha de início do log para que se saiba, ao investigar
 // qualquer ocorrência, qual versão do servidor estava no ar naquele momento
 // (o gerar-relatorio-html.js já faz o mesmo via SCRIPT_VERSION).
-const SERVER_VERSION = "3.5.1";
+const SERVER_VERSION = "3.5.2";
 
 // ===== Logger Global seguro — flush debounced 300ms =====
 const _fs = require('fs');
@@ -2401,7 +2401,7 @@ var gerarEmBackground=function(inicio,fim,chave,_pollTriggered){
             "if(d.type==='navigate-hash'&&d.hash){" +
             // Tela sem o modal (página de período antiga, erro...): vai para onde o
             // comando funciona em vez de ignorar em silêncio.
-            "if(d.hash==='config'){if(typeof __abrirModalConfig==='function')__abrirModalConfig();else window.location.assign('/config');}" +
+            "if(d.hash==='config'){if(typeof __abrirModalConfig==='function')__abrirModalConfig();else window.location.assign('/config?voltar='+encodeURIComponent(window.location.pathname+window.location.search));}" +
             "else if(d.hash==='periodo'){if(typeof __abrirModalPeriodo==='function')__abrirModalPeriodo();else window.location.assign('/#periodo');}" +
             "}" +
             "}catch(e){};};" +
@@ -4004,7 +4004,7 @@ var paginaLoading=function(titulo,sub,chavePoll,urlDest){
         "_pEs.onmessage=function(ev){try{var d=JSON.parse(ev.data);" +
         "if(d.type==='reload'){window.location.replace(_dest);}" +
         "else if(d.type==='navigate'){var _u=String(d.url||'/');if(_u.charAt(0)!=='/'||_u.charAt(1)==='/')_u='/';window.location.assign(_u);}" +
-        "else if(d.type==='navigate-hash'&&d.hash==='config'){window.location.assign('/config');}" +
+        "else if(d.type==='navigate-hash'&&d.hash==='config'){window.location.assign('/config?voltar='+encodeURIComponent(window.location.pathname+window.location.search));}" +
         "}catch(_){};};" +
         "_pEs.onopen=function(){" +
         // Ao conectar SSE, verifica /pronto imediatamente — HTML pode já estar pronto
@@ -6133,6 +6133,16 @@ var server=http.createServer(function(req,res){
     // /config — página HTML
     if(rota==="/config"){
         var SC3="</"+"script>";
+        // "Voltar": para a tela de onde o comando veio (ex.: estoque aberto quando a
+        // bandeja pediu as configurações). Só caminho deste servidor ("/..."), nunca
+        // outro site ("//", "\\", esquema) nem a própria /config.
+        var _voltarCfg = (function(){
+            var v = String(parsed.searchParams.get("voltar") || "");
+            if (!v || v.length > 600 || v.charAt(0) !== "/" || v.charAt(1) === "/" || /[\\\s<>"'`]/.test(v)) return "/";
+            if (/^\/config(?:[?#/]|$)/i.test(v)) return "/";
+            return v;
+        })();
+        var _voltarRot = /^\/estoque(?:[?#/]|$)/i.test(_voltarCfg) ? "Voltar para o estoque" : "Voltar para o relatorio";
         var cfgHtml=(function(){
             // Usa _config em memória — sem readFileSync por request de página
             var cc=_config;
@@ -6192,7 +6202,7 @@ var server=http.createServer(function(req,res){
             "<textarea id=\"proibidos\" placeholder=\"Nome1\nNome2\nProduto A\"></textarea>"+
             "<p class=\"hint\">Vendas com esses termos serao ocultadas do relatorio.</p></div>"+
             "<button class=\"btn\" id=\"salvarBtn\" onclick=\"salvar()\">Salvar configuracoes</button>"+
-            "<button class=\"btn btn-sec\" style=\"margin-top:10px\" onclick=\"window.location.href='/'\">Voltar para o relatorio</button>"+
+            "<button class=\"btn btn-sec\" style=\"margin-top:10px\" id=\"voltarBtn\" data-voltar=\""+escH(_voltarCfg)+"\" onclick=\"window.location.href=this.getAttribute('data-voltar')||'/'\">"+_voltarRot+"</button>"+
             "</div>"+
             "<script>"+
             "(function(){"+
