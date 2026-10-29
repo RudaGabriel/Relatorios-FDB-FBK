@@ -33,7 +33,7 @@
 // Registrada na linha de início do log para que se saiba, ao investigar
 // qualquer ocorrência, qual versão do servidor estava no ar naquele momento
 // (o gerar-relatorio-html.js já faz o mesmo via SCRIPT_VERSION).
-const SERVER_VERSION = "3.5.2";
+const SERVER_VERSION = "3.5.3";
 
 // ===== Logger Global seguro — flush debounced 300ms =====
 const _fs = require('fs');
@@ -4405,6 +4405,11 @@ var _offlineSeloCliente = function() {
             "#__off_pop .bt[disabled]{opacity:.6;cursor:default}#__off_pop .cf{margin-top:10px;display:grid;grid-template-columns:1fr auto;gap:6px;align-items:center}" +
             "#__off_pop .cf select,#__off_pop .cf input{background:#1e293b;color:#e2e8f0;border:1px solid rgba(148,163,184,.35);border-radius:7px;padding:4px 6px;max-width:150px}" +
             "@media (max-width:680px){#__off_box{bottom:calc(76px + env(safe-area-inset-bottom,0px))}#__off_pop{bottom:calc(116px + env(safe-area-inset-bottom,0px))}}" +
+            // Celular (v3.5.3): recolhido = só a bolinha de status num botão redondo,
+            // para não cobrir a lista nem as janelas. Tocar expande; recolhe em 5 s.
+            "#__off_box.rec #__est_chip,#__off_box.rec #__off_chip .t{display:none}" +
+            "#__off_box.rec #__off_chip{width:34px;height:34px;padding:0;justify-content:center;opacity:.85}" +
+            "#__off_box.rec #__off_chip .d{width:10px;height:10px}" +
             "@media print{#__off_box,#__off_pop{display:none!important}}";
         var estilo = document.createElement("style"); estilo.textContent = css; (document.head || document.documentElement).appendChild(estilo);
         var chip = document.createElement("button"); chip.type = "button"; chip.id = "__off_chip"; chip.style.display = "none";
@@ -4501,13 +4506,41 @@ var _offlineSeloCliente = function() {
                 .then(function(s) { if (!s) return; ult = s; desenharChip(s); desenharPop(s); })
                 .catch(function() {});
         };
+        // Celular: o selo fica recolhido; um toque expande e ele recolhe sozinho
+        // em 5 s (espera o detalhe da cópia ser fechado, se estiver aberto).
+        var mqMovel = window.matchMedia ? window.matchMedia("(max-width:680px)") : null;
+        var ehMovel = function() { return !!(mqMovel && mqMovel.matches); };
+        var tRecolher = null;
+        var recolher = function() {
+            clearTimeout(tRecolher); tRecolher = null;
+            if (!ehMovel()) { caixa.className = ""; return; }
+            if (pop.style.display !== "none") { tRecolher = setTimeout(recolher, 5000); return; }
+            caixa.className = "rec"; chip.title = "Cópia offline do banco (toque para ver)";
+        };
+        var expandir = function() {
+            caixa.className = ""; chip.title = "Cópia offline do banco";
+            clearTimeout(tRecolher); tRecolher = setTimeout(recolher, 5000);
+        };
+        var fecharPop = function() {
+            pop.style.display = "none";
+            if (ehMovel()) { clearTimeout(tRecolher); tRecolher = setTimeout(recolher, 5000); }
+        };
+        if (mqMovel) {
+            var aoMudar = function() { if (ehMovel()) recolher(); else { clearTimeout(tRecolher); caixa.className = ""; } };
+            if (mqMovel.addEventListener) mqMovel.addEventListener("change", aoMudar); else if (mqMovel.addListener) mqMovel.addListener(aoMudar);
+        }
+        recolher();
         chip.onclick = function(e) {
             e.stopPropagation();
-            if (pop.style.display === "none") { pop.style.display = ""; msgAcao = ""; if (ult) desenharPop(ult); buscar(); }
-            else pop.style.display = "none";
+            if (caixa.className === "rec") { expandir(); return; }
+            if (pop.style.display === "none") {
+                pop.style.display = ""; msgAcao = ""; if (ult) desenharPop(ult); buscar();
+                clearTimeout(tRecolher); tRecolher = null;
+            } else fecharPop();
         };
-        document.addEventListener("click", function(e) { if (pop.style.display !== "none" && !pop.contains(e.target) && e.target !== chip) pop.style.display = "none"; });
-        document.addEventListener("keydown", function(e) { if (e.key === "Escape" && pop.style.display !== "none") pop.style.display = "none"; });
+        est.addEventListener("click", function() { clearTimeout(tRecolher); tRecolher = null; });
+        document.addEventListener("click", function(e) { if (pop.style.display !== "none" && !pop.contains(e.target) && !chip.contains(e.target)) fecharPop(); });
+        document.addEventListener("keydown", function(e) { if (e.key === "Escape" && pop.style.display !== "none") fecharPop(); });
         buscar();
         // Durante a cópia, a cada 2 s (a barra anda); fora dela, a cada 10 s.
         var ciclo = function() { if (!document.hidden) buscar(); setTimeout(ciclo, ult && ult.emAndamento ? 2000 : 10000); };
