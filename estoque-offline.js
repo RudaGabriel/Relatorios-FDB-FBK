@@ -46,17 +46,10 @@ const PAPEIS = {
 const _semAcento = s => String(s == null ? "" : s).normalize("NFD").replace(/[̀-ͯ]/g, "");
 const normalizar = s => _semAcento(s).toUpperCase().replace(/\s+/g, " ").trim();
 const _soDigitos = s => String(s || "").replace(/\D+/g, "");
-const _RE_LETRA = /[A-Z0-9]/;
-// Acha "t" em "hs" só no COMEÇO de uma palavra (antes dele: início do campo,
-// espaço ou pontuação). Usado quando a busca "Contém" está desmarcada.
-const _noInicioDePalavra = (hs, t) => {
-    let i = hs.indexOf(t);
-    while (i >= 0) {
-        if (i === 0 || !_RE_LETRA.test(hs[i - 1])) return true;
-        i = hs.indexOf(t, i + 1);
-    }
-    return false;
-};
+// "Contém" desmarcado: o texto digitado (inteiro) precisa estar no COMEÇO de
+// algum campo (descrição, código, barras, referência...). "hs" tem os campos
+// separados por \u0001, então basta procurar "\u0001" + texto.
+const _noInicioDoCampo = (hs, t) => hs.indexOf("\u0001" + t) >= 0;
 // Tipos do Firebird (RDB$FIELD_TYPE).
 const T_TEXTO = { 14: "CHAR", 37: "VARCHAR", 40: "CSTRING" };
 const T_BLOB = 261;
@@ -276,17 +269,29 @@ function criarEstoque(opcoes) {
             const n = normalizar(t); if (n) termos.push(n);
         });
         const qNum = /^\d{3,}$/.test(bruto.trim()) ? bruto.trim() : "";
-        // "Contém" (padrão): o termo pode estar em qualquer parte do texto.
-        // Desmarcado: só no começo das palavras ("ATO" acha "ATOALHADO", mas não "GATO").
-        const tem = f.contem === false ? _noInicioDePalavra : (hs, t) => hs.indexOf(t) >= 0;
+        // "Contém" (padrão): cada termo pode estar em qualquer parte do texto.
+        // Desmarcado: o texto digitado inteiro precisa estar no começo de algum campo
+        // ("PIPICAT" acha "PIPICAT FLORAL 4KG", mas "FLORAL" não). "-termo" continua excluindo.
+        const soInicio = f.contem === false;
+        const prefixo = soInicio ? normalizar(bruto.replace(/"/g, " ").split(/\s+/).filter(t => t && !(t[0] === "-" && t.length > 1)).join(" ")) : "";
+        // Código numérico com zeros à esquerda: "4203" também acha "04203".
+        const prefNum = soInicio && /^\d+$/.test(prefixo) ? prefixo.replace(/^0+(?=\d)/, "") : "";
+        const contem = (hs, t) => hs.indexOf(t) >= 0;
         const res = [];
         const N = c.linhas.length;
         for (let i = 0; i < N; i++) {
             const hs = c.busca[i];
             let ok = true;
-            for (let k = 0; k < termos.length && ok; k++) if (!tem(hs, termos[k]) && !(qNum && tem(c.digitos[i], termos[k]))) ok = false;
-            for (let k = 0; k < frases.length && ok; k++) if (!tem(hs, frases[k])) ok = false;
-            for (let k = 0; k < excl.length && ok; k++) if (tem(hs, excl[k])) ok = false;
+            if (soInicio) {
+                if (prefixo && !_noInicioDoCampo(hs, prefixo) && !_noInicioDoCampo(c.digitos[i], prefixo)) {
+                    const cod = prefNum ? String(valor(c, i, "codigo") == null ? "" : valor(c, i, "codigo")).trim().replace(/^0+(?=\d)/, "") : "";
+                    if (!(prefNum && /^\d+$/.test(cod) && cod.indexOf(prefNum) === 0)) ok = false;
+                }
+            } else {
+                for (let k = 0; k < termos.length && ok; k++) if (!contem(hs, termos[k]) && !(qNum && contem(c.digitos[i], termos[k]))) ok = false;
+                for (let k = 0; k < frases.length && ok; k++) if (!contem(hs, frases[k])) ok = false;
+            }
+            for (let k = 0; k < excl.length && ok; k++) if (contem(hs, excl[k])) ok = false;
             if (!ok) continue;
             if (f.estoque && f.estoque !== "todos" && c.idxPapel.qtd >= 0) {
                 const q = _num(valor(c, i, "qtd"));

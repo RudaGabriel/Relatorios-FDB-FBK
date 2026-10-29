@@ -33,7 +33,7 @@
 // Registrada na linha de início do log para que se saiba, ao investigar
 // qualquer ocorrência, qual versão do servidor estava no ar naquele momento
 // (o gerar-relatorio-html.js já faz o mesmo via SCRIPT_VERSION).
-const SERVER_VERSION = "3.5.0";
+const SERVER_VERSION = "3.5.1";
 
 // ===== Logger Global seguro — flush debounced 300ms =====
 const _fs = require('fs');
@@ -2399,8 +2399,10 @@ var gerarEmBackground=function(inicio,fim,chave,_pollTriggered){
             "setTimeout(function(){_aw.style.opacity='0';setTimeout(function(){try{_aw.parentNode&&_aw.parentNode.removeChild(_aw);}catch(_){}},450);},_as*1000);" +
             "}catch(_){}}" +
             "if(d.type==='navigate-hash'&&d.hash){" +
-            "if(typeof __abrirModalConfig==='function'&&d.hash==='config'){__abrirModalConfig();}" +
-            "else if(typeof __abrirModalPeriodo==='function'&&d.hash==='periodo'){__abrirModalPeriodo();}" +
+            // Tela sem o modal (página de período antiga, erro...): vai para onde o
+            // comando funciona em vez de ignorar em silêncio.
+            "if(d.hash==='config'){if(typeof __abrirModalConfig==='function')__abrirModalConfig();else window.location.assign('/config');}" +
+            "else if(d.hash==='periodo'){if(typeof __abrirModalPeriodo==='function')__abrirModalPeriodo();else window.location.assign('/#periodo');}" +
             "}" +
             "}catch(e){};};" +
             "_es.onopen=function(){_connTry=0;console.log('[srv] SSE conectado');};" +
@@ -2411,6 +2413,12 @@ var gerarEmBackground=function(inicio,fim,chave,_pollTriggered){
             "}catch(e){console.log('[srv] SSE falhou: '+e.message);setTimeout(_conn,5000);}" +
             "};" +
             "_conn();" +
+            // Chegou com #periodo ou #config (comando da bandeja vindo de outra tela): abre o modal.
+            "window.addEventListener('load',function(){try{var _h=window.location.hash;" +
+            "if(_h!=='#periodo'&&_h!=='#config')return;" +
+            "try{history.replaceState(null,'',window.location.pathname+window.location.search);}catch(_){}" +
+            "setTimeout(function(){try{if(_h==='#config'&&typeof __abrirModalConfig==='function')__abrirModalConfig();" +
+            "else if(_h==='#periodo'&&typeof __abrirModalPeriodo==='function')__abrirModalPeriodo();}catch(_){}},150);}catch(_){}});" +
             // Poll HTTP (fallback — detecta mesmo sem SSE)
             "var _pollErros=0;" +
             // DEDUP FIX (auditoria v2.5.0): /api/status agora devolve 'correcoes' por
@@ -3995,6 +4003,8 @@ var paginaLoading=function(titulo,sub,chavePoll,urlDest){
         "try{_pEs=new EventSource('/api/events');" +
         "_pEs.onmessage=function(ev){try{var d=JSON.parse(ev.data);" +
         "if(d.type==='reload'){window.location.replace(_dest);}" +
+        "else if(d.type==='navigate'){var _u=String(d.url||'/');if(_u.charAt(0)!=='/'||_u.charAt(1)==='/')_u='/';window.location.assign(_u);}" +
+        "else if(d.type==='navigate-hash'&&d.hash==='config'){window.location.assign('/config');}" +
         "}catch(_){};};" +
         "_pEs.onopen=function(){" +
         // Ao conectar SSE, verifica /pronto imediatamente — HTML pode já estar pronto
@@ -6544,7 +6554,7 @@ var server=http.createServer(function(req,res){
     }
     // /api/navigate/recarregar — recarrega todas as abas abertas.
     if(rota==="/api/navigate/recarregar"){
-        var sentRel = broadcastSSE({type:"reload"});
+        var sentRel = broadcastSSE({type:"reload", manual:true});
         sendJson({ok:true, clients:sentRel});return;
     }
     // /api/info — versões, máquina, banco e uso de memória.

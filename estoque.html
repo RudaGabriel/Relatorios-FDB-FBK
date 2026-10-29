@@ -160,7 +160,7 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
       <option value="preco">Maior preço</option>
       <option value="precoAsc">Menor preço</option>
     </select>
-    <label title="Marcado: acha o texto em qualquer parte (ex.: “ato” acha “GATO”). Desmarcado: só no começo das palavras."><input type="checkbox" id="fCon"> Contém</label>
+    <label title="Marcado: acha o texto em qualquer parte (ex.: “ato” acha “GATO”). Desmarcado: só itens que começam com o texto (descrição, código, barras...)."><input type="checkbox" id="fCon"> Contém</label>
     <label><input type="checkbox" id="fAtv"> Só ativos</label>
     <label><input type="checkbox" id="fCus"> Mostrar custo</label>
   </div>
@@ -242,7 +242,8 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
     var s = String(txt == null ? "" : txt); if (!termos.length || !s) return esc(s);
     var base = semAc(s).toUpperCase(), marcas = new Array(s.length + 1);
     var soInicio = !$("fCon").checked;
-    termos.forEach(function (t) { var i = 0; if (!t) return; while ((i = base.indexOf(t, i)) >= 0) { if (!soInicio || i === 0 || !/[A-Z0-9]/.test(base[i - 1])) { for (var k = i; k < i + t.length; k++) marcas[k] = 1; } i += t.length; } });
+    if (soInicio) { var pre = termos.join(" "); if (pre && base.indexOf(pre) === 0) for (var k = 0; k < pre.length; k++) marcas[k] = 1; }
+    else termos.forEach(function (t) { var i = 0; if (!t) return; while ((i = base.indexOf(t, i)) >= 0) { for (var k = i; k < i + t.length; k++) marcas[k] = 1; i += t.length; } });
     var out = "", dentro = false;
     for (var i = 0; i < s.length; i++) { if (marcas[i] && !dentro) { out += "<mark>"; dentro = true; } if (!marcas[i] && dentro) { out += "</mark>"; dentro = false; } out += esc(s[i]); }
     return out + (dentro ? "</mark>" : "");
@@ -404,6 +405,30 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
     qEl.value = String(codigo || "").trim(); syncUrl(); clearTimeout(tmr); buscar(1, { __enter: "1" });
   };
   window.__estoqueAviso = toast;
+
+  // Comandos da bandeja (SSE /api/events). Antes o estoque não escutava nada:
+  // "Editar configurações", "Gerar por período", "Abrir relatório"... não
+  // chegavam quando a tela aberta era esta.
+  var es = null, esTent = 0;
+  var irPara = function (u) { u = String(u || "/"); if (u.charAt(0) !== "/" || u.charAt(1) === "/") u = "/"; location.assign(u); };
+  var conectar = function () {
+    if (!window.EventSource) return;
+    try { es = new EventSource("/api/events"); } catch (e) { setTimeout(conectar, 5000); return; }
+    es.onopen = function () { esTent = 0; };
+    es.onmessage = function (ev) {
+      var d; try { d = JSON.parse(ev.data); } catch (e) { return; }
+      if (!d || !d.type) return;
+      if (d.type === "navigate") irPara(d.url);
+      else if (d.type === "navigate-hash") { if (d.hash === "config") irPara("/config"); else if (d.hash === "periodo") irPara("/#periodo"); }
+      else if (d.type === "foco") { try { window.focus(); } catch (e) {} }
+      // "reload" também vem a cada venda nova (não muda o estoque da cópia):
+      // só o "Recarregar abas" da bandeja (manual) relê a página.
+      else if (d.type === "reload" && d.manual) location.reload();
+      else if (d.type === "aviso" && d.msg) toast(String(d.msg));
+    };
+    es.onerror = function () { try { es.close(); } catch (e) {} es = null; esTent++; setTimeout(conectar, Math.min(2000 * esTent, 30000)); };
+  };
+  conectar();
   qEl.focus();
   buscar(1);
 })();
