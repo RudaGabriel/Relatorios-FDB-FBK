@@ -1,5 +1,15 @@
 # Changelog
 
+## Relatórios SmallSoft Offline 1.6.3 — 2026-10-29
+
+- **Botões do mesmo tamanho** (o maior como referência):
+  - *Minhas preferências → Proibidos*: **Importar do servidor** e **Juntar com os do servidor** ficam lado a lado,
+    do mesmo tamanho, dividindo a largura (no celular o texto quebra dentro do botão; em telas muito estreitas
+    vira só "Importar" / "Juntar").
+  - Janela da venda: *Só gerencial*, *Sem itens*, *Com itens* e *Fechar* ficam todos com a largura do maior
+    (e se ajustam quando algum some).
+- `gerar-relatorio-html.js` 3.26.2.
+
 ## Relatórios SmallSoft Offline 1.6.2 — 2026-10-29
 
 - Celular: o selo "Offline" volta para o **canto esquerdo** (à direita ficava em cima do botão "voltar ao topo"
