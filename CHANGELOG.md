@@ -4,12 +4,12 @@
 
 - **Estoque: "Contém" desmarcado** agora traz só os itens que **começam** com o texto digitado (descrição, código,
   código de barras, referência, fornecedor...). Antes bastava o termo estar no começo de qualquer palavra, então
-  `floral` achava "PIPICAT FLORAL" mesmo desmarcado. Código sem os zeros à esquerda continua valendo (`4203` → `04203`).
+  `gato` achava "RAÇÃO GATO 1KG" mesmo desmarcado. Código sem os zeros à esquerda continua valendo (`4203` → `04203`).
 - **Comandos da bandeja com o estoque aberto**: a página do estoque não escutava a bandeja, então
   "Editar configurações", "Gerar por período", "Abrir relatório", avisos e "Recarregar abas" não chegavam.
   Agora o estoque recebe todos (configurações abre `/config`; período abre o relatório já com o modal).
   Telas do relatório sem o modal (e a tela de carregamento) também deixam de ignorar o comando.
-- `servidor-relatorio.js` 3.5.1.
+- `servidor-relatorio.js` 3.5.1, `estoque-offline.js` 1.1.0.
 
 ## Relatórios SmallSoft Offline 1.5.0 — 2026-10-29
 
