@@ -46,32 +46,29 @@ Na primeira vez a tela mostra *Preparando a cópia offline* até a primeira cóp
 ## 🗄️ Como a cópia offline funciona
 
 ```
- SMALL.FDB (local, unidade de rede ou \\servidor\pasta)
-      │  1. cópia do ARQUIVO para copias\temp — só leitura do arquivo, sem conectar no banco;
-      │     só vale se tamanho e data não mudaram do começo ao fim da cópia
-      ▼
- copias\temp\SMALL_OFFLINE_...copia.tmp ──2. gfix -v (validação, se houver)──┐
-      │                                                                     │
-      └──3. gbak -b -g (Firebird desta máquina, sobre a CÓPIA) ──▶ ultimo-backup.fbk
-                                                                    │
-                                 4. gbak -c -mode read_only ◀───────┘
-                                                │
-                                                ▼
-                     SMALL_OFFLINE_AAAAMMDD_HHMMSS.FDB  (somente leitura) ── conferida
-                                                │
-                                                ▼
-                         troca atômica ──▶ relatório e estoque leem daqui
+ SMALL.FDB ──1. gbak -b -g (leitura pelo servidor Firebird, foto da transação)──▶ ultimo-backup.fbk
+                                                                                     │
+                                   2. gbak -c -mode read_only ◀──────────────────────┘
+                                                  │
+                                                  ▼
+                       SMALL_OFFLINE_AAAAMMDD_HHMMSS.FDB  (somente leitura) ── conferida
+                                                  │
+                                                  ▼
+                           troca atômica ──▶ relatório e estoque leem daqui
 ```
 
-**Por que copiar o arquivo antes?** Assim o banco do caixa não recebe nenhuma conexão durante a cópia — não atrapalha atualização nem manutenção do Small Commerce. Mas copiar um `.FDB` em uso pode gerar uma cópia com páginas de momentos diferentes; por isso o sistema espera o banco ficar alguns segundos sem gravar, só aceita a cópia se o arquivo não mudou do começo ao fim, valida (gfix) e converte com o gbak, que recusa uma cópia com defeito.
+**O gbak direto tem risco para os dados?** Não: é o método recomendado pelo próprio Firebird. Ele lê por dentro do servidor, numa "foto" consistente do banco, e com `-g` não faz nem a coleta de lixo — o banco do caixa não é alterado. O único inconveniente é ficar conectado enquanto copia (uma manutenção que exija uso exclusivo espera a cópia terminar). É o método padrão (`"offlineMetodo": "gbak"`).
 
-**E o gbak direto na pasta SmallSoft, tem risco?** Para os dados, não: é o método recomendado pelo próprio Firebird — lê por dentro do servidor, numa "foto" consistente, e com `-g` não faz nem a coleta de lixo. O único inconveniente é ficar conectado enquanto copia (uma manutenção que exija uso exclusivo espera). Por isso ele é só a **reserva** (método `auto`): usado quando a cópia do arquivo não sai íntegra — banco gravando sem parar, ou arquivo travado pelo Firebird 3+, que abre o banco em modo exclusivo. Com `"offlineMetodo": "arquivo"` ele nunca é usado; com `"gbak"`, só ele.
+<details>
+<summary><b>Opcional: cópia pelo arquivo (pasta temporária)</b></summary>
 
-> ⚠️ **Firebird 3 ou mais novo:** o servidor abre o banco em modo exclusivo. Se, no instante em que o sistema está lendo o arquivo (alguns segundos), **ninguém** estiver conectado e o caixa abrir uma conexão nova, essa conexão pode falhar e precisar ser repetida. Com o banco já aberto pelo caixa (o normal no expediente), a leitura do arquivo é recusada na hora e o sistema usa o gbak direto, sem efeito no caixa. Se preferir evitar qualquer chance disso, use `"offlineMetodo": "gbak"`.
+Com `"offlineMetodo": "auto"` o sistema copia o arquivo `SMALL.FDB` para `copias\temp` sem conectar no banco (espera alguns segundos sem gravação e só aceita a cópia se o arquivo não mudou do começo ao fim), valida com o `gfix` e converte com o gbak local; se a cópia do arquivo não sair íntegra, usa o gbak direto. Com `"arquivo"`, nunca usa o gbak direto. Atenção: no **Firebird 3 ou mais novo** (que abre o banco em modo exclusivo), se ninguém estiver conectado no instante da leitura do arquivo e o caixa abrir uma conexão nova, essa conexão pode falhar e precisar ser repetida. Banco alcançável só por compartilhamento (`\\servidor\...`) é sempre copiado pelo arquivo — o Firebird não abre banco por compartilhamento.
 
-- **Nenhuma conexão direta com o banco principal.** O relatório e o estoque leem **só a cópia**. No método padrão o `SMALL.FDB` só é **lido como arquivo**; o gbak conecta nele apenas como reserva — sem consultas de verificação, para não atrapalhar atualização e manutenção do Small Commerce. Enquanto não existe a primeira cópia, a tela mostra *Preparando a cópia offline* e entra sozinha quando ela fica pronta.
+</details>
+
+- **Nenhuma conexão direta com o banco principal.** O relatório e o estoque leem **só a cópia**. O único contato com o `SMALL.FDB` é o gbak, na hora de copiar — sem consultas de verificação, para não atrapalhar atualização e manutenção do Small Commerce. Enquanto não existe a primeira cópia, a tela mostra *Preparando a cópia offline* e entra sozinha quando ela fica pronta.
 - **Quando atualiza:** a cada 20 s o sistema olha só o **tamanho e a data de alteração do arquivo** do banco (sem abri-lo). Mudou → nova cópia, respeitando o **intervalo mínimo** (padrão 5 min, que cresce sozinho para 3× a duração da última cópia — a cópia nunca ocupa o banco do caixa mais que 1/3 do tempo). Banco em **outra máquina** (não dá para olhar o arquivo): nova cópia a cada 3× o intervalo mínimo. Também atualiza a cada 3 h sem mudança e quando você pede.
-- **Banco em outra máquina (rede):** o sistema procura o `SMALL.FDB` sozinho, **sem conectar no banco**: `config.json` → pastas do Small Commerce → arquivos de configuração do Small (que dizem onde está o banco) → unidades de rede mapeadas → compartilhamentos das máquinas citadas → máquinas da rede com a porta 3050 aberta (só teste de porta) e seus compartilhamentos. Achou pelo compartilhamento → copia o arquivo por ele. O resultado fica salvo em `fdbArquivo`. Também dá para informar à mão em *Selecionar banco*: `\\SERVIDOR\pasta\SMALL.FDB`, `Z:\...\SMALL.FDB` ou `IP:C:\...\SMALL.FDB`.
+- **Banco em outra máquina (rede):** o sistema procura o `SMALL.FDB` sozinho, **sem conectar no banco**: `config.json` → pastas do Small Commerce → arquivos de configuração do Small (que dizem onde está o banco) → unidades de rede mapeadas → compartilhamentos das máquinas citadas → máquinas da rede com a porta 3050 aberta (só teste de porta) e seus compartilhamentos. Com o endereço do servidor (`IP:C:\...\SMALL.FDB`), o gbak copia por ele; achou só o compartilhamento → copia o arquivo por ele. O resultado fica salvo em `fdbArquivo`. Também dá para informar à mão em *Selecionar banco*: `\\SERVIDOR\pasta\SMALL.FDB`, `Z:\...\SMALL.FDB` ou `IP:C:\...\SMALL.FDB`.
 - **Pedir na hora:** clique no selo **Offline** no canto da tela → *Atualizar cópia agora* · bandeja → *Cópia offline do banco → Atualizar a cópia agora* · `POST /api/offline/atualizar`.
 - **Se algo falhar** (banco em manutenção, sem espaço em disco, gbak com erro): os temporários são apagados e o relatório **continua com a cópia anterior**. O motivo aparece no selo, na bandeja e no `relatorio.log` (categoria `[OFFLINE]`).
 - **Banco principal fora do ar:** o selo fica amarelo — *Banco principal indisponível · dados de 14:32*. Quando ele volta, a cópia é atualizada sozinha.
@@ -104,6 +101,7 @@ Botão **Estoque** no canto da tela, bandeja → *Consultar estoque* ou `http://
 - **Filtros:** com estoque, sem estoque, negativo, abaixo do mínimo, só ativos. **Ordem:** relevância, nome, código, estoque, preço.
 - **Detalhe do item:** todas as colunas do cadastro, com botão de copiar código e código de barras.
 - **Totais** do resultado (estoque somado e valor de venda em estoque) e **Exportar** para CSV/Excel com todas as colunas de todos os resultados.
+- **Leitor de código de barras pela câmera** (o mesmo do *Controle de Vencimento*): botão **Ler código** ao lado da busca. Lê EAN-13/8, UPC, Code 128/39/93, ITF, Codabar, QR e Data Matrix; tem flash, troca de câmera, zoom, foco e *Tirar foto do código*. Leu → pesquisa o código e, se bater com um item, abre o detalhe. As bibliotecas de leitura ficam na pasta `leitor/` — **funciona sem internet**. A câmera ao vivo o navegador só libera em página segura (no próprio computador do servidor, `http://localhost:7735`); pela rede (`http://IP:7735`), o botão abre direto a **foto** pela câmera do celular, que é lida do mesmo jeito. Leitor USB (que digita e dá Enter) também funciona no campo de busca.
 - **Contador fixo no topo** que acompanha a rolagem (*mostrando 200 de 1.234 encontrados · 5.000 itens no estoque*) e botão **Topo** para voltar ao início.
 - Atalhos: `/`, `F3` ou `Ctrl+F` vão para a busca; `Esc` limpa/fecha.
 
@@ -118,8 +116,8 @@ Todas as chaves do *Relatórios FDB* continuam valendo (`appName`, `fbUser`/`fbP
 |---|---|---|
 | `porta` | `7735` | Porta HTTP (o *Relatórios FDB* usa 7734) |
 | `fdbArquivo` | automático | Caminho do ARQUIVO do banco para copiar (local, `Z:\...` ou `\\servidor\pasta\SMALL.FDB`) — achado sozinho |
-| `offlineMetodo` | `"auto"` | `auto` (copia o arquivo e converte; gbak direto só de reserva), `arquivo` (nunca conecta no banco) ou `gbak` (só gbak direto) |
-| `offlineQuietoSeg` | `5` | Segundos sem gravação no banco antes de copiar o arquivo (0 a 600) |
+| `offlineMetodo` | `"gbak"` | `gbak` (gbak direto, seguro — padrão), `auto` (copia o arquivo e converte; gbak direto de reserva) ou `arquivo` (só a cópia do arquivo) |
+| `offlineQuietoSeg` | `5` | Métodos `auto`/`arquivo`: segundos sem gravação no banco antes de copiar o arquivo (0 a 600) |
 | `offlineIntervaloMin` | `5` | Intervalo mínimo entre cópias (1 a 1440 min) |
 | `offlineVerificarSeg` | `20` | A cada quantos segundos olha o arquivo do banco principal, sem conectar (5 a 3600) |
 | `offlineMaxIdadeMin` | `180` | Refaz a cópia depois desse tempo mesmo sem mudança detectada |

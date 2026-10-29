@@ -2,10 +2,11 @@
 
 /**
  * offline-copia.js
- * @version 1.2.0
+ * @version 1.2.1
  * @author Ruda Gabriel
  * @description Cópia offline do banco do Small Commerce (Relatórios SmallSoft Offline).
  * @changelog
+ *   1.2.1 - 2026-10-29 - Padrão volta a ser o gbak direto (seguro); cópia pelo arquivo opcional.
  *   1.2.0 - 2026-10-29 - Cópia do ARQUIVO para a pasta temporária (sem conectar), só aceita
  *     se o arquivo não mudou durante a cópia, validação com gfix e gbak sobre a cópia
  *     temporária; gbak direto só como reserva (offlineMetodo "auto"|"arquivo"|"gbak").
@@ -18,7 +19,9 @@
  * continua abrindo quando o banco principal está sendo atualizado, em
  * manutenção, travado ou fora do ar — e o banco principal nunca é alterado.
  *
- * Como a cópia é feita (método "auto", o padrão):
+ * Como a cópia é feita: método "gbak" (o PADRÃO) — gbak -b -g direto pelo servidor
+ * Firebird, seguro para os dados — e restauração como abaixo (passos 3 e 4).
+ * Método "auto" (opcional, offlineMetodo):
  *   1. Copia o ARQUIVO SMALL.FDB para a pasta temporária (copias\temp) só
  *      lendo o arquivo — sem conectar no banco. Espera o banco ficar alguns
  *      segundos sem gravar e só aceita a cópia se tamanho e data do arquivo
@@ -69,7 +72,7 @@ const cp = require("child_process");
 const { pipeline } = require("stream");
 const net = require("net");
 
-const VERSAO = "1.2.0";
+const VERSAO = "1.2.1";
 const MANIFESTO = "copia-offline.json";
 const PREFIXO = "SMALL_OFFLINE_";
 // Únicos nomes que este módulo cria — e os ÚNICOS que ele apaga.
@@ -184,11 +187,12 @@ function criarCopiaOffline(opcoes) {
         try { return fs.statSync(g).isFile() ? g : ""; } catch (_) { return ""; }
     })();
     // Como tirar a cópia do banco principal:
-    //   "auto"    (padrão) copia o ARQUIVO para a pasta temporária e converte de lá;
-    //             se a cópia do arquivo não sair íntegra, usa o gbak direto (reserva);
-    //   "arquivo" só a cópia do arquivo — o gbak nunca conecta no banco principal;
-    //   "gbak"    só o gbak direto pelo servidor Firebird.
-    let metodo = ["auto", "arquivo", "gbak"].indexOf(String(o.metodo || "auto").toLowerCase()) >= 0 ? String(o.metodo || "auto").toLowerCase() : "auto";
+    //   "gbak"    (padrão) gbak direto pelo servidor Firebird — seguro para os dados
+    //             (leitura numa foto da transação, sem coleta de lixo);
+    //   "auto"    copia o ARQUIVO para a pasta temporária e converte de lá; se a cópia
+    //             do arquivo não sair íntegra, usa o gbak direto (reserva);
+    //   "arquivo" só a cópia do arquivo — o gbak nunca conecta no banco principal.
+    let metodo = ["auto", "arquivo", "gbak"].indexOf(String(o.metodo || "gbak").toLowerCase()) >= 0 ? String(o.metodo || "gbak").toLowerCase() : "gbak";
     const quietoMs = _faixa(o.quietoMs, 0, 600000, 5000); // arquivo sem gravação há este tempo antes de copiar
     const tentativasArquivo = _faixa(o.tentativasArquivo, 1, 10, 3);
     const ganchoTeste = o.ganchoTeste || null;
@@ -570,6 +574,9 @@ function criarCopiaOffline(opcoes) {
             });
         };
         if (metodo !== "gbak" && origem.arquivo) viaArquivo();
+        // Método "gbak", mas o banco só é alcançável como arquivo (\\servidor\...: o Firebird
+        // não abre banco por compartilhamento): copia o arquivo — senão não haveria cópia nenhuma.
+        else if (metodo === "gbak" && !podeGbakDireto && origem.arquivo) { log("Cópia offline: banco só acessível como arquivo (" + origem.arquivo + ") — copiando o arquivo em vez do gbak direto."); viaArquivo(); }
         else if (metodo === "arquivo") falhar(new Error("sem acesso ao ARQUIVO do banco principal (pasta local, unidade de rede ou compartilhamento) — com offlineMetodo \"arquivo\" o gbak direto não é usado"), "cópia do arquivo");
         else viaGbakDireto("");
         });

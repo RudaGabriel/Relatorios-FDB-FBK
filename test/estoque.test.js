@@ -115,6 +115,7 @@ const portaLivre = () => new Promise((resolve, reject) => {
 test("servidor: página /estoque, /api/estoque, detalhe e exportação", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "srv-estoque-"));
     for (const f of ["servidor-relatorio.js", "gerar-relatorio-html.js", "offline-copia.js", "estoque-offline.js", "estoque.html"]) fs.copyFileSync(path.join(RAIZ, f), path.join(dir, f));
+    fs.cpSync(path.join(RAIZ, "leitor"), path.join(dir, "leitor"), { recursive: true });
     const mock = path.join(dir, "node_modules", "node-firebird");
     fs.mkdirSync(mock, { recursive: true });
     fs.copyFileSync(path.join(__dirname, "mock-firebird", "index.js"), path.join(mock, "index.js"));
@@ -136,6 +137,18 @@ test("servidor: página /estoque, /api/estoque, detalhe e exportação", async (
         const pag = await (await fetch(base + "/estoque")).text();
         assert.ok(pag.includes("Loja &lt;Teste&gt;") && !pag.includes("Loja <Teste>"), "nome do sistema sem escape na página");
         assert.ok(pag.includes('id="q"'));
+        // Leitor de código de barras: página com o botão e arquivos locais (sem internet).
+        assert.ok(pag.includes('id="bLer"') && pag.includes('import { criarLeitor } from "/leitor/leitor.js"'), "leitor não está na página do estoque");
+        const tipos = { "/leitor/leitor.js": /javascript/, "/leitor/foco.js": /javascript/, "/leitor/vendor/zxing_reader.wasm": /application\/wasm/, "/leitor/vendor/barcode-detector-ponyfill.js": /javascript/, "/leitor/vendor/zxing-library.min.js": /javascript/ };
+        for (const [u, re] of Object.entries(tipos)) {
+            const rr = await fetch(base + u);
+            assert.strictEqual(rr.status, 200, u);
+            assert.match(rr.headers.get("content-type") || "", re, u);
+        }
+        assert.ok(!/cdn\.jsdelivr|https:\/\//.test(await (await fetch(base + "/leitor/leitor.js")).text().then(t => t.replace(/^\s*(\/\/|\*).*$/gm, ""))), "leitor ainda busca biblioteca na internet");
+        const http = require("node:http");
+        const pedir = caminho => new Promise(ok => http.get({ host: "127.0.0.1", port: porta, path: caminho }, rs => { rs.resume(); ok(rs.statusCode); }).on("error", () => ok(0)));
+        for (const ruim of ["/leitor/../config.json", "/leitor/%2e%2e/config.json", "/leitor/vendor/../../servidor-relatorio.js", "/leitor/x.exe"]) assert.strictEqual(await pedir(ruim), 404, ruim);
         const det = await (await fetch(base + "/api/estoque/item?id=" + r.itens[0].id)).json();
         assert.strictEqual(det.ok, true);
         const csv = await fetch(base + "/api/estoque/csv?q=racao");

@@ -8,7 +8,7 @@
   "maquinaIP": "",
   "fbUser": "",
   "fbPass": "",
-  "offlineMetodo": "auto",
+  "offlineMetodo": "gbak",
   "offlineQuietoSeg": 5,
   "offlineIntervaloMin": 5,
   "offlineVerificarSeg": 20,

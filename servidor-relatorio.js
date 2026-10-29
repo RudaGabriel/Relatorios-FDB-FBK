@@ -2,7 +2,7 @@
 
 /**
  * servidor-relatorio.js — Relatórios SmallSoft Offline
- * @version 3.2.0
+ * @version 3.3.0
  * @author Ruda Gabriel
  * @description Servidor HTTP + Firebird de relatórios com SSE, fast-poll e
  *              geração em subprocesso. SOMENTE LEITURA no banco.
@@ -11,6 +11,8 @@
  *              principal em atualização, manutenção ou fora do ar.
  * @changelog
  *   (Histórico completo das versões: CHANGELOG.md no repositório.)
+ *   3.3.0 - 2026-10-29 - Leitor de código de barras (Controle de Vencimento) no estoque, em
+ *     /leitor/ com bibliotecas locais; padrão da cópia volta a ser o gbak direto.
  *   3.2.0 - 2026-10-29 - Cópia pelo ARQUIVO (pasta temporária → gbak local), banco em
  *     rede (unidade/compartilhamento), procura do SMALL.FDB sem conectar (localizar-banco.js).
  *   3.1.0 - 2026-10-28 - Nenhuma conexão direta com o banco principal (só a cópia; sem
@@ -28,7 +30,7 @@
 // Registrada na linha de início do log para que se saiba, ao investigar
 // qualquer ocorrência, qual versão do servidor estava no ar naquele momento
 // (o gerar-relatorio-html.js já faz o mesmo via SCRIPT_VERSION).
-const SERVER_VERSION = "3.2.0";
+const SERVER_VERSION = "3.3.0";
 
 // ===== Logger Global seguro — flush debounced 300ms =====
 const _fs = require('fs');
@@ -1064,7 +1066,7 @@ var _offlineCfg = function(c) {
         verificarMs:    (_naFaixa(c.offlineVerificarSeg, 5, 3600) || 20) * 1000,
         maxIdadeMs:     (_naFaixa(c.offlineMaxIdadeMin, 5, 10080) || 180) * 60000,
         timeoutMs:      (_naFaixa(c.offlineTimeoutMin, 1, 360) || 30) * 60000,
-        metodo:         ["auto", "arquivo", "gbak"].indexOf(String(c.offlineMetodo || "auto").toLowerCase()) >= 0 ? String(c.offlineMetodo || "auto").toLowerCase() : "auto",
+        metodo:         ["auto", "arquivo", "gbak"].indexOf(String(c.offlineMetodo || "gbak").toLowerCase()) >= 0 ? String(c.offlineMetodo || "gbak").toLowerCase() : "gbak",
         quietoMs:       (_naFaixa(c.offlineQuietoSeg, 0, 600) === null ? 5 : _naFaixa(c.offlineQuietoSeg, 0, 600)) * 1000
     };
 };
@@ -1129,6 +1131,10 @@ try {
     });
 } catch (eEst) { logTs("Consulta de estoque indisponível: " + eEst.message, "ESTOQUE"); }
 var _ESTOQUE_HTML = path.join(__dirname, "estoque.html");
+// Leitor de código de barras (do projeto Controle de Vencimento) e suas
+// bibliotecas locais — servidos como arquivos estáticos em /leitor/.
+var _PASTA_LEITOR = path.join(__dirname, "leitor");
+var _TIPOS_LEITOR = { ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".wasm": "application/wasm", ".txt": "text/plain; charset=utf-8" };
 
 var _maquinaIPCfg    = (cfg.maquinaIP && String(cfg.maquinaIP).trim()) ? String(cfg.maquinaIP).trim() : null;
 var _maquinaIPDetect = detectLocalIP(FDB_HOST);
@@ -4418,7 +4424,7 @@ var _offlineSeloCliente = function() {
             if (pop.style.display === "none" || editando) return;
             var h = "<h4>Cópia offline do banco</h4>";
             h += linha("O relatório lê", "só a cópia (nunca o banco principal)");
-            h += linha("Como copia", { auto: "copia o arquivo e converte (gbak direto só de reserva)", arquivo: "só copiando o arquivo", gbak: "gbak direto" }[s.metodo] || s.metodo || "—");
+            h += linha("Como copia", { auto: "copia o arquivo e converte (gbak direto só de reserva)", arquivo: "só copiando o arquivo", gbak: "gbak direto (seguro, somente leitura)" }[s.metodo] || s.metodo || "—");
             if (s.copia) {
                 h += linha("Dados da cópia", quando(s.copia.dadosDe) + " (" + ha(s.copia.dadosDe) + ")");
                 h += linha("Origem", s.copia.origem === "fbk" ? "arquivo de backup (.fbk)" : "banco principal");
@@ -5056,7 +5062,8 @@ var _dispRegistrar = function(req, res, rota, parsed) {
             d.ua = ua; d.desc = _dispDescrever(ua);
         }
         d.ultimo = agora; d.total++;
-        if (_ROTAS_BATIMENTO.indexOf(rota) !== -1) {
+        // Arquivos do leitor de código de barras (/leitor/...): contam, mas não viram linha de log.
+        if (_ROTAS_BATIMENTO.indexOf(rota) !== -1 || rota.indexOf("/leitor/") === 0) {
             d.batimento[rota] = (d.batimento[rota] || 0) + 1;
             return;
         }
@@ -5515,6 +5522,24 @@ var server=http.createServer(function(req,res){
         res.writeHead(200,{"Content-Type":"application/json; charset=utf-8"});
         res.end(JSON.stringify({ok:true,msg:_reiniciar ? "Servidor reiniciando." : "Servidor encerrando."}));
         _encerrarServidor((_reiniciar ? "reinício" : "encerramento") + " solicitado por " + _origem, 0, _reiniciar);
+        return;
+    }
+
+    // /leitor/... — leitor de código de barras (arquivos estáticos, só da pasta "leitor")
+    if(rota.indexOf("/leitor/")===0 && (req.method==="GET" || req.method==="HEAD")){
+        var _relL = "";
+        try { _relL = decodeURIComponent(rota.slice(8)); } catch (_) { _relL = ""; }
+        var _extL = path.extname(_relL).toLowerCase();
+        var _arqL = path.resolve(_PASTA_LEITOR, _relL);
+        if (!/^[A-Za-z0-9._\/-]+$/.test(_relL) || _relL.indexOf("..") >= 0 || !_TIPOS_LEITOR[_extL] || _arqL.indexOf(_PASTA_LEITOR + path.sep) !== 0) {
+            res.writeHead(404,{"Content-Type":"text/plain; charset=utf-8"}); res.end("Não encontrado."); return;
+        }
+        fs.readFile(_arqL, function(eL, dadosL) {
+            if (eL) { res.writeHead(404,{"Content-Type":"text/plain; charset=utf-8"}); res.end("Não encontrado."); return; }
+            // Bibliotecas não mudam (versão fixa); o leitor em si pode mudar com atualizações do sistema.
+            res.writeHead(200, { "Content-Type": _TIPOS_LEITOR[_extL], "Cache-Control": _relL.indexOf("vendor/") === 0 ? "public, max-age=604800" : "no-cache", "X-Content-Type-Options": "nosniff" });
+            res.end(req.method === "HEAD" ? undefined : dadosL);
+        });
         return;
     }
 
