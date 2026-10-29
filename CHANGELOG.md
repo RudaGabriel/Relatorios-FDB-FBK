@@ -1,5 +1,18 @@
 # Changelog
 
+## Relatórios SmallSoft Offline 1.2.0 — 2026-10-29
+
+- **Cópia pelo ARQUIVO** (`offline-copia.js` 1.2.0): o `SMALL.FDB` é copiado para `copias\temp` (só leitura do
+  arquivo, sem conectar), depois de alguns segundos sem gravação; a cópia só vale se tamanho e data do arquivo não
+  mudaram do começo ao fim (senão tenta de novo); é validada com `gfix -v -n` (se existir) e convertida com o gbak
+  local; a cópia temporária é apagada. O gbak direto no banco principal virou **reserva** (método `auto`), usada só
+  quando a cópia do arquivo não sai íntegra; `offlineMetodo: "arquivo"` nunca a usa; `"gbak"` usa só ela.
+- **Banco em rede** (`localizar-banco.js` 1.0.0, novo): procura o `SMALL.FDB` sem conectar no banco — config, pastas
+  do Small, arquivos de configuração do Small, unidades de rede, compartilhamentos (`net view`) e máquinas com a
+  porta 3050 aberta. Copia pelo compartilhamento quando acessível. Novo `fdbArquivo` no `config.json`.
+- **Selecionar banco** aceita `\\servidor\pasta\SMALL.FDB` e `.fbk` (a tela recusava `.fbk` antes de enviar).
+- `servidor-relatorio.js` 3.2.0; testes: 41.
+
 ## Relatórios SmallSoft Offline 1.1.0 — 2026-10-28
 
 - **Nenhuma conexão direta com o banco principal** (`offline-copia.js` 1.1.0, `servidor-relatorio.js` 3.1.0):
