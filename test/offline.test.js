@@ -62,7 +62,7 @@ function montar(extra) {
         pasta, gbak: GBAK, user: "SYSDBA", pass: "senha-secreta-123", Firebird: fb,
         fonte: () => ({ host, path: fonte }),
         aoTrocar: (h, p, info) => trocas.push({ h, p, info }),
-        log: m => logs.push(m), verificarMs: 5000, intervaloMinMs: 600000, quietoMs: 0
+        log: m => logs.push(m), verificarMs: 5000, intervaloMinMs: 600000, quietoMs: 0, metodo: "auto"
     }, extra || {});
     return {
         dir, fonte, pasta, logs, trocas, fb, opcoes, setHost: h => { host = h; },
@@ -255,6 +255,26 @@ test("cópia offline: arquivo gravado durante a cópia é descartado; 'auto' usa
     } finally { oc2.parar(); delete process.env.MOCK_GBAK_LOG; await local.fechar(); }
 });
 
+test("cópia offline: o padrão é o gbak direto (seguro), sem cópia temporária", async () => {
+    const local = await abrirPortaLocal();
+    const logGbak = path.join(os.tmpdir(), "gbak-" + process.pid + "-pad.log");
+    try { fs.unlinkSync(logGbak); } catch (_) {}
+    process.env.MOCK_GBAK_LOG = logGbak;
+    const t = montar({ porta: local.porta });
+    const opcoes = Object.assign({}, t.opcoes); delete opcoes.metodo;
+    const oc = criarCopiaOffline(opcoes);
+    try {
+        assert.strictEqual(oc.status().metodo, "gbak");
+        oc.iniciar();
+        assert.ok(await ate(() => t.trocas.length > 0, 15000), "não copiou: " + t.logs.join(" | "));
+        const bk = lerLog(logGbak).find(c => c.args.includes("-b"));
+        assert.ok(bk && bk.args.includes("-g") && /^127\.0\.0\.1(\/\d+)?:/.test(bk.args[bk.args.length - 2]) && bk.args[bk.args.length - 2].endsWith(":" + t.fonte), "backup não foi direto do banco: " + JSON.stringify(bk));
+        assert.strictEqual(oc.status().copia.metodo, "gbak");
+        assert.deepStrictEqual(fs.readdirSync(path.join(t.pasta, "temp")), [], "usou a pasta temporária no método gbak");
+        t.semConexaoNaFonte();
+    } finally { oc.parar(); delete process.env.MOCK_GBAK_LOG; await local.fechar(); }
+});
+
 test("cópia offline: gfix valida a cópia temporária; com erros, a cópia é recusada", async () => {
     const local = await abrirPortaLocal();
     const logGfix = path.join(os.tmpdir(), "gfix-" + process.pid + ".log");
@@ -353,7 +373,7 @@ test("servidor: espera a cópia sem tocar no banco principal, depois lê só a c
     const porta = await portaLivre();
     fs.writeFileSync(path.join(dir, "config.json"), JSON.stringify({
         appName: "Teste Offline", porta, pollInterval: 200, fbHost: "127.0.0.1", fdbPath: fonte,
-        offlinePasta: path.join(dir, "copias"), gbakPath: GBAK, offlineVerificarSeg: 5
+        offlinePasta: path.join(dir, "copias"), gbakPath: GBAK, offlineVerificarSeg: 5, offlineMetodo: "auto"
     }, null, 2));
     const pad = n => String(n).padStart(2, "0"), d = new Date();
     const hora = [d.getHours(), d.getMinutes(), d.getSeconds()].map(pad).join(":");

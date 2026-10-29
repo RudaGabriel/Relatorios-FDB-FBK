@@ -1,5 +1,16 @@
 # Changelog
 
+## Relatórios SmallSoft Offline 1.3.0 — 2026-10-29
+
+- **Estoque: leitor de código de barras pela câmera** — o leitor do projeto *Controle de Vencimento*
+  (`leitor/leitor.js` e `leitor/foco.js`, com câmera ao vivo, flash, troca de câmera, zoom, foco e foto do código).
+  Bibliotecas locais em `leitor/vendor/` (barcode-detector 3.2.2, zxing-wasm 3.1.3, @zxing/library 0.23.0 —
+  licenças em `leitor/vendor/LICENCAS.txt`): funciona sem internet. Sem página segura (http pela rede), o botão abre
+  direto a foto. Código lido que bate exatamente com um item abre o detalhe. Rota `/leitor/` (só arquivos da pasta).
+- **Cópia offline:** o padrão volta a ser o **gbak direto** (seguro para os dados); a cópia pelo arquivo ficou
+  opcional (`offlineMetodo: "auto"`/`"arquivo"`). Banco alcançável só por compartilhamento é copiado pelo arquivo.
+- `servidor-relatorio.js` 3.3.0, `offline-copia.js` 1.2.1; testes: 42.
+
 ## Relatórios SmallSoft Offline 1.2.0 — 2026-10-29
 
 - **Cópia pelo ARQUIVO** (`offline-copia.js` 1.2.0): o `SMALL.FDB` é copiado para `copias\temp` (só leitura do
