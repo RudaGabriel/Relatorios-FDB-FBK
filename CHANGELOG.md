@@ -1,5 +1,11 @@
 # Changelog
 
+## Relatórios SmallSoft Offline 1.5.6 — 2026-10-29
+
+- Celular: a bolinha do selo "Offline" (e o selo expandido com o botão Estoque) fica no **canto direito**, acima da
+  barra de botões. No computador continua à esquerda.
+- `servidor-relatorio.js` 3.5.4.
+
 ## Relatórios SmallSoft Offline 1.5.5 — 2026-10-29
 
 - **Celular: selo "Offline" e botão Estoque recolhidos.** No celular eles cobriam a lista e as janelas. Agora ficam
