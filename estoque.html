@@ -25,6 +25,14 @@ h1{margin:0;font-size:18px;font-weight:700}
 .busca{margin-top:10px;display:flex;gap:8px}
 .busca input{flex:1;min-width:0;font:inherit;font-size:17px;padding:11px 14px;border-radius:12px;border:1px solid var(--bd);background:var(--pn);color:var(--tx);outline:none}
 .busca input:focus{border-color:var(--ac);box-shadow:0 0 0 3px var(--hl)}
+/* Campo de busca com "X" próprio: o nativo do type=search não aparece no
+   iPhone nem em vários celulares Android. */
+.campo{position:relative;flex:1;min-width:0;display:flex}
+.campo input{width:100%;padding-right:46px}
+.campo input::-webkit-search-cancel-button{-webkit-appearance:none;appearance:none;display:none}
+.limpar{position:absolute;right:4px;top:50%;transform:translateY(-50%);width:38px;height:38px;border:0;border-radius:10px;background:transparent;color:var(--mu,#94a3b8);display:flex;align-items:center;justify-content:center;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.limpar:hover,.limpar:focus-visible{color:var(--tx);background:var(--hl)}
+.limpar[hidden]{display:none}
 .fil{margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .fil select,.fil label{font:inherit;font-size:13px;color:var(--tx);background:var(--pn);border:1px solid var(--bd);border-radius:8px;padding:5px 8px}
 .fil label{display:inline-flex;gap:6px;align-items:center;cursor:pointer}
@@ -139,8 +147,11 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
     <a class="bt" href="/" id="bVolta">Relatório</a>
   </div>
   <div class="busca">
-    <input id="q" type="search" inputmode="search" autocomplete="off" autocapitalize="off" spellcheck="false"
-      placeholder="Nome, código, código de barras, referência, fornecedor..." aria-label="Pesquisar no estoque">
+    <div class="campo">
+      <input id="q" type="search" inputmode="search" autocomplete="off" autocapitalize="off" spellcheck="false"
+        placeholder="Nome, código, código de barras, referência, fornecedor..." aria-label="Pesquisar no estoque">
+      <button type="button" class="limpar" id="bLimpar" hidden title="Limpar a busca" aria-label="Limpar a busca"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
+    </div>
     <button type="button" class="bt pri bt-ler" id="bLer" hidden title="Ler o código de barras com a câmera"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M8 7v10"/><path d="M12 7v10"/><path d="M17 7v10"/></svg><span>Ler código</span></button>
   </div>
   <div class="fil">
@@ -327,10 +338,18 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
   };
 
   var tmr = null;
-  qEl.addEventListener("input", function () { clearTimeout(tmr); tmr = setTimeout(function () { buscar(1); syncUrl(); }, 220); });
+  var bLimpar = $("bLimpar");
+  var olharLimpar = function () { bLimpar.hidden = !qEl.value; };
+  qEl.addEventListener("input", function () { olharLimpar(); clearTimeout(tmr); tmr = setTimeout(function () { buscar(1); syncUrl(); }, 220); });
+  // "search" dispara no X nativo (computador) e no Enter de alguns teclados.
+  qEl.addEventListener("search", olharLimpar);
+  bLimpar.addEventListener("click", function () {
+    clearTimeout(tmr); qEl.value = ""; olharLimpar(); buscar(1); syncUrl();
+    qEl.focus();
+  });
   qEl.addEventListener("keydown", function (e) {
     if (e.key === "Enter") { e.preventDefault(); clearTimeout(tmr); buscar(1, { __enter: "1" }); syncUrl(); }
-    if (e.key === "Escape" && qEl.value) { qEl.value = ""; buscar(1); syncUrl(); }
+    if (e.key === "Escape" && qEl.value) { qEl.value = ""; olharLimpar(); buscar(1); syncUrl(); }
   });
   var syncUrl = function () { try { var u = new URL(location.href); if (qEl.value) u.searchParams.set("q", qEl.value); else u.searchParams.delete("q"); history.replaceState(null, "", u.toString()); } catch (e) {} };
   var CHAVE_FILTRO = { fEst: "est", fOrd: "ord", fAtv: "atv", fCon: "con" };
@@ -402,7 +421,7 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
   // Leitor de código de barras (módulo abaixo) e leitor USB: pesquisa o código
   // lido; se der um item só, o detalhe abre sozinho.
   window.__estoqueBuscarCodigo = function (codigo) {
-    qEl.value = String(codigo || "").trim(); syncUrl(); clearTimeout(tmr); buscar(1, { __enter: "1" });
+    qEl.value = String(codigo || "").trim(); olharLimpar(); syncUrl(); clearTimeout(tmr); buscar(1, { __enter: "1" });
   };
   window.__estoqueAviso = toast;
 
@@ -429,6 +448,7 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
     es.onerror = function () { try { es.close(); } catch (e) {} es = null; esTent++; setTimeout(conectar, Math.min(2000 * esTent, 30000)); };
   };
   conectar();
+  olharLimpar();
   qEl.focus();
   buscar(1);
 })();

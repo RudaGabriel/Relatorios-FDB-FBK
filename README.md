@@ -4,7 +4,7 @@
 
 ### Vendas do dia e consulta de estoque do Small Commerce, lendo uma **cópia offline** do banco Firebird
 
-<img alt="versão: 1.6.0" src="https://img.shields.io/badge/vers%C3%A3o-1.6.0-2563EB?style=flat">
+<img alt="versão: 1.6.1" src="https://img.shields.io/badge/vers%C3%A3o-1.6.1-2563EB?style=flat">
 <img alt="servidor: v3.6.0" src="https://img.shields.io/badge/servidor-v3.6.0-2563EB?style=flat">
 <img alt="cópia offline: v1.4.0" src="https://img.shields.io/badge/c%C3%B3pia%20offline-v1.4.0-0D9488?style=flat">
 <img alt="estoque: v1.1.0" src="https://img.shields.io/badge/estoque-v1.1.0-0D9488?style=flat">
@@ -169,6 +169,7 @@ Todos os itens da tabela `ESTOQUE`, lidos da cópia offline (não pesa no caixa)
   - **Primeira vez no celular:** aparece um aviso de certificado. Toque em *Avançado* / *Mostrar detalhes* e depois em *Continuar* / *Visitar site*. É o certificado do próprio sistema, gerado nesta máquina, válido só na sua rede. Depois disso não pergunta mais.
   - **Sem aviso nenhum:** com o Tailscale nesta máquina e *HTTPS Certificates* ligado em <https://login.tailscale.com/admin/dns>, o sistema usa o certificado oficial do Tailscale ao abrir pelo endereço do Tailscale.
   - Se preferir, *Cancelar* no aviso abre a **foto** pela câmera do celular, lida do mesmo jeito.
+- **Limpar a busca:** botão **X** dentro do campo (computador e celular).
 - **Atalhos:** `/`, `F3` ou `Ctrl+F` vão para a busca; `Esc` limpa ou fecha.
 
 ---

@@ -1,5 +1,11 @@
 # Changelog
 
+## Relatórios SmallSoft Offline 1.6.1 — 2026-10-29
+
+- Estoque: **botão "X" para limpar a busca**, visível em qualquer aparelho (o "X" nativo do campo de busca não
+  aparece no iPhone nem em vários Android). Aparece só quando há texto; limpa, refaz a busca e devolve o foco
+  ao campo.
+
 ## Relatórios SmallSoft Offline 1.6.0 — 2026-10-29
 
 - **Leitor de código de barras AO VIVO no celular.** O navegador só libera a câmera ao vivo em página segura, e por
