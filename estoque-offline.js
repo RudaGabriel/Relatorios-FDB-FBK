@@ -2,7 +2,7 @@
 
 /**
  * estoque-offline.js
- * @version 1.0.0
+ * @version 1.1.0
  * @author Ruda Gabriel
  * @description Consulta de estoque completa (Relatórios SmallSoft Offline).
  *
@@ -18,9 +18,13 @@
  * sistema não conhece aparece no detalhe do item e entra na busca do mesmo jeito.
  *
  * SOMENTE LEITURA: só SELECT, sempre pelo Firebird blindado do servidor.
+ *
+ * 1.1.0 — "Contém" desmarcado = itens que COMEÇAM com o texto (em algum campo);
+ *         sentido da coluna de situação (ativo/inativo) decidido pelos dados.
+ * Histórico completo das versões: CHANGELOG.md no repositório.
  */
 
-const VERSAO = "1.0.0";
+const VERSAO = "1.1.0";
 const TABELAS = ["ESTOQUE", "PRODUTOS", "PRODUTO", "CADPRO", "MERCADORIAS"];
 
 // Papéis das colunas, em ordem de preferência (o 1º nome que existir vence).
@@ -271,7 +275,7 @@ function criarEstoque(opcoes) {
         const qNum = /^\d{3,}$/.test(bruto.trim()) ? bruto.trim() : "";
         // "Contém" (padrão): cada termo pode estar em qualquer parte do texto.
         // Desmarcado: o texto digitado inteiro precisa estar no começo de algum campo
-        // ("PIPICAT" acha "PIPICAT FLORAL 4KG", mas "FLORAL" não). "-termo" continua excluindo.
+        // ("RACAO" acha "RACAO GATO 1KG", mas "GATO" não). "-termo" continua excluindo.
         const soInicio = f.contem === false;
         const prefixo = soInicio ? normalizar(bruto.replace(/"/g, " ").split(/\s+/).filter(t => t && !(t[0] === "-" && t.length > 1)).join(" ")) : "";
         // Código numérico com zeros à esquerda: "4203" também acha "04203".
