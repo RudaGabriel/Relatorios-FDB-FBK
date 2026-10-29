@@ -42,7 +42,7 @@ th{position:sticky;top:0;background:var(--pn2);font-size:12px;color:var(--mu);fo
 tbody tr{cursor:pointer}
 tbody tr:hover{background:var(--hl)}
 tbody tr:last-child td{border-bottom:0}
-.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.num{text-align:center;font-variant-numeric:tabular-nums;white-space:nowrap}
 .mono{font-family:Consolas,"Cascadia Mono",monospace;font-size:13px}
 .neg{color:var(--er);font-weight:700}.zero{color:var(--mu)}.pos{color:var(--ok);font-weight:600}
 .inat{opacity:.55}
@@ -234,7 +234,7 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
   var reaisF = (function () { try { return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }); } catch (e) { return null; } })();
   var reais = function (v) { return v == null ? "" : reaisF ? reaisF.format(v) : "R$ " + Number(v).toFixed(2).replace(".", ","); };
   var qtdF = function (v) { if (v == null) return ""; var n = Number(v); return (Math.round(n * 1000) / 1000).toLocaleString("pt-BR", { maximumFractionDigits: 3 }); };
-  var hm = function (ts) { var d = new Date(ts), p = function (n) { return (n < 10 ? "0" : "") + n; }; return p(d.getDate()) + "/" + p(d.getMonth() + 1) + " " + p(d.getHours()) + ":" + p(d.getMinutes()); };
+  var hm = function (ts) { var d = new Date(ts), p = function (n) { return (n < 10 ? "0" : "") + n; }; return p(d.getDate()) + "/" + p(d.getMonth() + 1) + "/" + d.getFullYear() + " " + p(d.getHours()) + ":" + p(d.getMinutes()); };
   // Destaca os termos pesquisados (sem acento/maiúsculas), escapando o resto.
   var termos = [];
   var marcar = function (txt) {

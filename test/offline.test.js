@@ -275,6 +275,68 @@ test("cópia offline: o padrão é o gbak direto (seguro), sem cópia temporári
     } finally { oc.parar(); delete process.env.MOCK_GBAK_LOG; await local.fechar(); }
 });
 
+test("cópia offline: terminal com o banco na rede — o gbak tenta os endereços candidatos e guarda o que funcionou", async () => {
+    const local = await abrirPortaLocal();
+    const logGbak = path.join(os.tmpdir(), "gbak-" + process.pid + "-term.log");
+    try { fs.unlinkSync(logGbak); } catch (_) {}
+    process.env.MOCK_GBAK_LOG = logGbak;
+    const t = montar({ porta: local.porta });
+    const achados = [];
+    // Como no log do terminal: 127.0.0.1 + caminho que NÃO existe nesta máquina;
+    // o 1º candidato também não existe no "servidor"; o 2º é o certo.
+    const opcoes = Object.assign({}, t.opcoes, {
+        metodo: "gbak",
+        fonte: () => ({ host: "127.0.0.1", path: path.join(t.dir, "nao-existe", "SMALL.FDB"), arquivo: "",
+            candidatos: [{ host: "SERVIDOR", path: path.join(t.dir, "outro", "SMALL.FDB") }, { host: "SERVIDOR", path: t.fonte }] }),
+        aoServidorEncontrado: a => achados.push(a)
+    });
+    const oc = criarCopiaOffline(opcoes);
+    try {
+        oc.iniciar();
+        assert.ok(await ate(() => t.trocas.length > 0, 15000), "não copiou: " + t.logs.join(" | "));
+        const backups = lerLog(logGbak).filter(c => c.args.includes("-b")).map(c => c.args[c.args.length - 2]);
+        assert.ok(!backups.some(b => /^127\.0\.0\.1/.test(b) && b.includes("nao-existe")), "tentou o caminho que não existe nesta máquina: " + backups.join(", "));
+        assert.deepStrictEqual(backups.map(b => b.replace(/^SERVIDOR(\/\d+)?:/, "")), [path.join(t.dir, "outro", "SMALL.FDB"), t.fonte]);
+        assert.deepStrictEqual(achados, [{ host: "SERVIDOR", path: t.fonte }]);
+        assert.strictEqual(oc.status().copia.metodo, "gbak");
+        assert.match(oc.status().servidorUsado, /^SERVIDOR:/);
+    } finally { oc.parar(); delete process.env.MOCK_GBAK_LOG; await local.fechar(); }
+    // Nenhum endereço funciona, mas o arquivo está na unidade de rede: copia o arquivo (último recurso).
+    const local2 = await abrirPortaLocal();
+    const t2 = montar({ porta: local2.porta });
+    const oc2 = criarCopiaOffline(Object.assign({}, t2.opcoes, {
+        metodo: "gbak",
+        fonte: () => ({ host: "127.0.0.1", path: path.join(t2.dir, "nao-existe", "SMALL.FDB"), arquivo: t2.fonte,
+            candidatos: [{ host: "SERVIDOR", path: path.join(t2.dir, "outro", "SMALL.FDB") }] })
+    }));
+    try {
+        oc2.iniciar();
+        assert.ok(await ate(() => t2.trocas.length > 0, 15000), "não copiou pelo arquivo: " + t2.logs.join(" | "));
+        assert.strictEqual(oc2.status().copia.metodo, "arquivo");
+        assert.ok(t2.logs.some(l => /gbak direto não conseguiu abrir o banco/.test(l)));
+    } finally { oc2.parar(); await local2.fechar(); }
+});
+
+test("localizar banco: unidade de rede de um terminal vira candidatos no servidor de origem", async () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), "loc-term-"));
+    const unidade = path.join(base, "H"); fs.mkdirSync(unidade);
+    fs.writeFileSync(path.join(unidade, "SMALL.FDB"), "BANCO");
+    const r = await localizarBanco({
+        configHost: "127.0.0.1", configPath: "C:\\Program Files (x86)\\SmallSoft\\Small Commerce\\SMALL.FDB",
+        pastasIni: [], raizes: [unidade], compartilhamentos: async () => [], maquinasRede: async () => [], prazoMs: 1000,
+        origemUnidade: async a => a.startsWith(unidade) ? { host: "SERVIDOR", share: "Small Commerce", resto: "SMALL.FDB" } : null
+    });
+    assert.strictEqual(r.arquivo, path.join(unidade, "SMALL.FDB"));
+    assert.strictEqual(r.host, "SERVIDOR");
+    assert.strictEqual(r.path, "C:\\Program Files (x86)\\SmallSoft\\Small Commerce\\SMALL.FDB");
+    assert.ok(!r.candidatos.some(c => c.host === "127.0.0.1"), "candidato local com caminho inexistente: " + JSON.stringify(r.candidatos));
+    assert.ok(r.candidatos.length >= 3 && r.candidatos.every(c => c.host === "SERVIDOR"));
+    // Compartilhamento administrativo diz o caminho exato no servidor.
+    const r2 = await localizarBanco({ pastasIni: [], raizes: [unidade], compartilhamentos: async () => [], maquinasRede: async () => [], prazoMs: 1000,
+        origemUnidade: async () => ({ host: "10.0.0.5", share: "c$", resto: "Dados\\SMALL.FDB" }) });
+    assert.deepStrictEqual(r2.candidatos[0], { host: "10.0.0.5", path: "C:\\Dados\\SMALL.FDB" });
+});
+
 test("cópia offline: gfix valida a cópia temporária; com erros, a cópia é recusada", async () => {
     const local = await abrirPortaLocal();
     const logGfix = path.join(os.tmpdir(), "gfix-" + process.pid + ".log");

@@ -67,8 +67,8 @@ Com `"offlineMetodo": "auto"` o sistema copia o arquivo `SMALL.FDB` para `copias
 </details>
 
 - **Nenhuma conexão direta com o banco principal.** O relatório e o estoque leem **só a cópia**. O único contato com o `SMALL.FDB` é o gbak, na hora de copiar — sem consultas de verificação, para não atrapalhar atualização e manutenção do Small Commerce. Enquanto não existe a primeira cópia, a tela mostra *Preparando a cópia offline* e entra sozinha quando ela fica pronta.
-- **Quando atualiza:** a cada 20 s o sistema olha só o **tamanho e a data de alteração do arquivo** do banco (sem abri-lo). Mudou → nova cópia, respeitando o **intervalo mínimo** (padrão 5 min, que cresce sozinho para 3× a duração da última cópia — a cópia nunca ocupa o banco do caixa mais que 1/3 do tempo). Banco em **outra máquina** (não dá para olhar o arquivo): nova cópia a cada 3× o intervalo mínimo. Também atualiza a cada 3 h sem mudança e quando você pede.
-- **Banco em outra máquina (rede):** o sistema procura o `SMALL.FDB` sozinho, **sem conectar no banco**: `config.json` → pastas do Small Commerce → arquivos de configuração do Small (que dizem onde está o banco) → unidades de rede mapeadas → compartilhamentos das máquinas citadas → máquinas da rede com a porta 3050 aberta (só teste de porta) e seus compartilhamentos. Com o endereço do servidor (`IP:C:\...\SMALL.FDB`), o gbak copia por ele; achou só o compartilhamento → copia o arquivo por ele. O resultado fica salvo em `fdbArquivo`. Também dá para informar à mão em *Selecionar banco*: `\\SERVIDOR\pasta\SMALL.FDB`, `Z:\...\SMALL.FDB` ou `IP:C:\...\SMALL.FDB`.
+- **Quando atualiza:** a cada **5 min** (`offlineCopiaACadaMin`) e, antes disso, quando o **tamanho ou a data do arquivo** mudam (olhados a cada 20 s, sem abrir o banco — no Windows a data de um banco aberto quase não muda, por isso a cópia periódica). Sempre respeitando o **intervalo mínimo** (padrão 5 min, que cresce sozinho para 3× a duração da última cópia — a cópia nunca ocupa o banco do caixa mais que 1/3 do tempo). Banco em **outra máquina** (não dá para olhar o arquivo): nova cópia a cada 3× o intervalo mínimo. Também atualiza a cada 3 h sem mudança e quando você pede.
+- **Banco em outra máquina (rede):** o sistema procura o `SMALL.FDB` sozinho, **sem conectar no banco**: `config.json` → pastas do Small Commerce → arquivos de configuração do Small (que dizem onde está o banco) → unidades de rede mapeadas → compartilhamentos das máquinas citadas → máquinas da rede com a porta 3050 aberta (só teste de porta) e seus compartilhamentos. Com o endereço do servidor (`IP:C:\...\SMALL.FDB`), o gbak copia por ele. **Terminal com o banco numa unidade de rede** (ex.: `H:\SMALL.FDB`): o sistema descobre de qual máquina vem a unidade (`net use`) e o gbak tenta o Firebird dela nos caminhos padrão do Small; o endereço que funcionar fica salvo (`fbHost`/`fdbPath`). Se nenhum funcionar, copia o arquivo pela unidade de rede e converte aqui. O resultado fica salvo em `fdbArquivo`. Também dá para informar à mão em *Selecionar banco*: `\\SERVIDOR\pasta\SMALL.FDB`, `Z:\...\SMALL.FDB` ou `IP:C:\...\SMALL.FDB`.
 - **Pedir na hora:** clique no selo **Offline** no canto da tela → *Atualizar cópia agora* · bandeja → *Cópia offline do banco → Atualizar a cópia agora* · `POST /api/offline/atualizar`.
 - **Se algo falhar** (banco em manutenção, sem espaço em disco, gbak com erro): os temporários são apagados e o relatório **continua com a cópia anterior**. O motivo aparece no selo, na bandeja e no `relatorio.log` (categoria `[OFFLINE]`).
 - **Banco principal fora do ar:** o selo fica amarelo — *Banco principal indisponível · dados de 14:32*. Quando ele volta, a cópia é atualizada sozinha.
@@ -118,6 +118,7 @@ Todas as chaves do *Relatórios FDB* continuam valendo (`appName`, `fbUser`/`fbP
 | `fdbArquivo` | automático | Caminho do ARQUIVO do banco para copiar (local, `Z:\...` ou `\\servidor\pasta\SMALL.FDB`) — achado sozinho |
 | `offlineMetodo` | `"gbak"` | `gbak` (gbak direto, seguro — padrão), `auto` (copia o arquivo e converte; gbak direto de reserva) ou `arquivo` (só a cópia do arquivo) |
 | `offlineQuietoSeg` | `5` | Métodos `auto`/`arquivo`: segundos sem gravação no banco antes de copiar o arquivo (0 a 600) |
+| `offlineCopiaACadaMin` | `5` | Refaz a cópia a cada N min, mesmo sem mudança detectada no arquivo (1 a 1440) — no Windows a data de um banco aberto quase não muda |
 | `offlineIntervaloMin` | `5` | Intervalo mínimo entre cópias (1 a 1440 min) |
 | `offlineVerificarSeg` | `20` | A cada quantos segundos olha o arquivo do banco principal, sem conectar (5 a 3600) |
 | `offlineMaxIdadeMin` | `180` | Refaz a cópia depois desse tempo mesmo sem mudança detectada |
@@ -176,7 +177,6 @@ Rodam sem Firebird real (Firebird e `gbak` simulados em `test/`): cópia offline
 | `estoque-offline.js` · `estoque.html` | Consulta de estoque (dados e tela) |
 | `servidor-relatorio.js` · `gerar-relatorio-html.js` | Servidor e gerador (base do *Relatórios FDB*, lendo a cópia) |
 | `iniciar-tray.ps1`, `*.bat`, `*.vbs`, `api.ps1` | Bandeja, instalação, inicialização e cliente da API |
-| `legado/` | Scripts da versão anterior (FBK), mantidos só como referência |
 
 ---
 

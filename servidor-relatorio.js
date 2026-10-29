@@ -2,7 +2,7 @@
 
 /**
  * servidor-relatorio.js — Relatórios SmallSoft Offline
- * @version 3.3.0
+ * @version 3.4.0
  * @author Ruda Gabriel
  * @description Servidor HTTP + Firebird de relatórios com SSE, fast-poll e
  *              geração em subprocesso. SOMENTE LEITURA no banco.
@@ -11,6 +11,8 @@
  *              principal em atualização, manutenção ou fora do ar.
  * @changelog
  *   (Histórico completo das versões: CHANGELOG.md no repositório.)
+ *   3.4.0 - 2026-10-29 - Terminal com banco na rede: endereços candidatos para o gbak e o que
+ *     funcionar fica salvo; cópia periódica (offlineCopiaACadaMin).
  *   3.3.0 - 2026-10-29 - Leitor de código de barras (Controle de Vencimento) no estoque, em
  *     /leitor/ com bibliotecas locais; padrão da cópia volta a ser o gbak direto.
  *   3.2.0 - 2026-10-29 - Cópia pelo ARQUIVO (pasta temporária → gbak local), banco em
@@ -30,7 +32,7 @@
 // Registrada na linha de início do log para que se saiba, ao investigar
 // qualquer ocorrência, qual versão do servidor estava no ar naquele momento
 // (o gerar-relatorio-html.js já faz o mesmo via SCRIPT_VERSION).
-const SERVER_VERSION = "3.3.0";
+const SERVER_VERSION = "3.4.0";
 
 // ===== Logger Global seguro — flush debounced 300ms =====
 const _fs = require('fs');
@@ -1066,14 +1068,18 @@ var _offlineCfg = function(c) {
         verificarMs:    (_naFaixa(c.offlineVerificarSeg, 5, 3600) || 20) * 1000,
         maxIdadeMs:     (_naFaixa(c.offlineMaxIdadeMin, 5, 10080) || 180) * 60000,
         timeoutMs:      (_naFaixa(c.offlineTimeoutMin, 1, 360) || 30) * 60000,
+        periodoMs:      (_naFaixa(c.offlineCopiaACadaMin, 1, 1440) || 5) * 60000,
         metodo:         ["auto", "arquivo", "gbak"].indexOf(String(c.offlineMetodo || "gbak").toLowerCase()) >= 0 ? String(c.offlineMetodo || "gbak").toLowerCase() : "gbak",
         quietoMs:       (_naFaixa(c.offlineQuietoSeg, 0, 600) === null ? 5 : _naFaixa(c.offlineQuietoSeg, 0, 600)) * 1000
     };
 };
+// Outros endereços {host, path} onde o gbak pode achar o banco (servidor da unidade de
+// rede + caminhos padrão do Small) — vêm da procura (localizar-banco.js).
+var FONTE_CANDIDATOS = [];
 var _fonteAtual = function() {
     // UNC não serve para o gbak (o Firebird não abre banco em compartilhamento): só como arquivo.
     var unc = /^\\\\/.test(FONTE_PATH || "");
-    return { host: unc ? "" : FONTE_HOST, path: unc ? "" : FONTE_PATH, arquivo: FONTE_ARQUIVO };
+    return { host: unc ? "" : FONTE_HOST, path: unc ? "" : FONTE_PATH, arquivo: FONTE_ARQUIVO, candidatos: FONTE_CANDIDATOS };
 };
 // Fast-poll lendo a cópia: os dados só mudam na troca de cópia (que já regera
 // tudo), então 1 consulta a cada 2 s basta e não pesa no Firebird do caixa.
@@ -1091,7 +1097,13 @@ if (_FP_COPIA_MS === null) _FP_COPIA_MS = 2000;
             _offline = mod.criarCopiaOffline({
                 appName: APP_NAME, pasta: pasta, gbak: gbak, user: USER, pass: PASS, porta: FIREBIRD_PORT, charset: FB_CHARSET,
                 intervaloMinMs: oc.intervaloMinMs, verificarMs: oc.verificarMs, maxIdadeMs: oc.maxIdadeMs, timeoutMs: oc.timeoutMs,
-                metodo: oc.metodo, quietoMs: oc.quietoMs,
+                metodo: oc.metodo, quietoMs: oc.quietoMs, periodoMs: oc.periodoMs,
+                // O gbak achou o banco num dos endereços candidatos: vira o banco principal.
+                aoServidorEncontrado: function(a) {
+                    if (!a || !a.host || !a.path) return;
+                    FONTE_HOST = a.host; FONTE_PATH = a.path;
+                    saveConfig({ fbHost: FONTE_HOST, fdbPath: FONTE_PATH });
+                },
                 manterFbk: cfg.offlineManterFbk !== false,
                 Firebird: Firebird,
                 fonte: _fonteAtual,
@@ -4394,9 +4406,9 @@ var _offlineSeloCliente = function() {
         var p2 = function(n) { return (n < 10 ? "0" : "") + n; };
         var quando = function(ts) {
             if (!ts) return "—";
-            var d = new Date(ts), h = new Date();
-            var dia = d.toDateString() === h.toDateString() ? "" : p2(d.getDate()) + "/" + p2(d.getMonth() + 1) + " ";
-            return dia + p2(d.getHours()) + ":" + p2(d.getMinutes());
+            // Sempre com a data: a cópia em uso pode ser de outro dia.
+            var d = new Date(ts);
+            return p2(d.getDate()) + "/" + p2(d.getMonth() + 1) + "/" + d.getFullYear() + " " + p2(d.getHours()) + ":" + p2(d.getMinutes());
         };
         var ha = function(ts) {
             if (!ts) return "";
@@ -4549,7 +4561,9 @@ var _procurarBanco = function(motivo) {
             var mudou = (r.arquivo || "") !== (FONTE_ARQUIVO || "") || (r.path && (r.path !== FONTE_PATH || r.host !== FONTE_HOST));
             if (r.arquivo) FONTE_ARQUIVO = r.arquivo;
             if (r.path) { FONTE_HOST = r.host; FONTE_PATH = r.path; }
-            logTs("SMALL.FDB: " + (r.arquivo ? "arquivo " + r.arquivo + " (" + r.origem + ")" : "arquivo não acessível daqui") + (r.path ? " | servidor Firebird " + r.host + ":" + r.path : "") + ".", "OFFLINE");
+            FONTE_CANDIDATOS = Array.isArray(r.candidatos) ? r.candidatos.slice(0, 12) : [];
+            logTs("SMALL.FDB: " + (r.arquivo ? "arquivo " + r.arquivo + " (" + r.origem + ")" : "arquivo não acessível daqui") + (r.path ? " | servidor Firebird " + r.host + ":" + r.path : " | servidor Firebird ainda desconhecido") +
+                  (FONTE_CANDIDATOS.length > 1 ? " | " + FONTE_CANDIDATOS.length + " endereços para o gbak tentar: " + FONTE_CANDIDATOS.map(function(c) { return c.host + ":" + c.path; }).join(", ") : "") + ".", "OFFLINE");
             if (mudou) {
                 saveConfig({ fdbArquivo: FONTE_ARQUIVO, fdbPath: FONTE_PATH, fbHost: FONTE_HOST });
                 if (_offline) _offline.atualizarAgora(function() {});
@@ -6848,9 +6862,12 @@ server.listen(PORT, BIND_ADDR, function(){
     // Cópia offline: começa já (não espera o banco principal — ele pode estar
     // justamente em manutenção; a cópia existente é que mantém o relatório no ar).
     try {
-        var _arqOk = false;
+        var _arqOk = false, _gbakOk = true;
         try { _arqOk = !!FONTE_ARQUIVO && !/^\\\\/.test(FONTE_ARQUIVO) && fs.existsSync(FONTE_ARQUIVO); } catch (_) {}
-        if (!_arqOk) setTimeout(function() { _procurarBanco(FONTE_ARQUIVO ? "conferindo " + FONTE_ARQUIVO : "arquivo do banco ainda não localizado"); }, 2000);
+        // "127.0.0.1 + caminho que não existe nesta máquina" (terminal com o banco na rede):
+        // procura o servidor de verdade, senão o gbak nunca acha o banco.
+        try { if ((!FONTE_HOST || FONTE_HOST === "127.0.0.1" || FONTE_HOST === "localhost") && FONTE_PATH && !/^\\\\/.test(FONTE_PATH) && !fs.existsSync(FONTE_PATH)) _gbakOk = false; } catch (_) {}
+        if (!_arqOk || !_gbakOk) setTimeout(function() { _procurarBanco(FONTE_ARQUIVO ? "conferindo " + FONTE_ARQUIVO : "arquivo do banco ainda não localizado"); }, 2000);
     } catch (_) {}
     try { if (_offline) _offline.iniciar(); } catch (eOff) { logTs("ERRO ao iniciar a cópia offline: " + (eOff && eOff.stack || eOff), "OFFLINE"); }
 

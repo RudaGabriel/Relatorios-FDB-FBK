@@ -2,7 +2,7 @@
 
 /**
  * localizar-banco.js
- * @version 1.0.0
+ * @version 1.1.0
  * @author Ruda Gabriel
  * @description Acha o SMALL.FDB do Small Commerce — nesta máquina ou na rede —
  *              SEM CONECTAR NO BANCO (Relatórios SmallSoft Offline).
@@ -23,6 +23,12 @@
  *   host/path — endereço do banco no servidor Firebird, usado só pelo gbak
  *             direto (reserva da cópia offline); "" se não se sabe.
  * Nada aqui abre o banco: só verifica se o arquivo existe (atributos).
+ *
+ * 1.1.0 - 2026-10-29 - Terminal com o banco numa unidade de rede (ex.: H:\SMALL.FDB):
+ *   descobre a máquina de origem ("net use H:") e devolve `candidatos` {host, path}
+ *   para o gbak tentar no servidor Firebird dela (caminhos padrão do Small). Nunca
+ *   mais devolve 127.0.0.1 + caminho que não existe nesta máquina. Arquivos de
+ *   configuração com servidor e caminho em chaves separadas também são lidos.
  */
 
 const fs = require("fs");
@@ -31,7 +37,7 @@ const os = require("os");
 const net = require("net");
 const cp = require("child_process");
 
-const VERSAO = "1.0.0";
+const VERSAO = "1.1.0";
 const WIN = process.platform === "win32";
 // Onde o SMALL.FDB costuma ficar dentro de uma unidade ou compartilhamento.
 const SUBCAMINHOS = [
@@ -46,6 +52,38 @@ const SUBCAMINHOS = [
 
 const _ehLocal = h => { const s = String(h || "").trim().toLowerCase(); return !s || s === "127.0.0.1" || s === "localhost" || s === "::1"; };
 const _ehUNC = p => /^\\\\[^\\]+\\[^\\]+/.test(String(p || ""));
+// Onde o Small Commerce instala o banco no SERVIDOR (para o gbak pelo Firebird de lá).
+const CAMINHOS_SERVIDOR = [
+    "C:\\Program Files (x86)\\SmallSoft\\Small Commerce\\SMALL.FDB",
+    "C:\\Program Files\\SmallSoft\\Small Commerce\\SMALL.FDB",
+    "C:\\SmallSoft\\Small Commerce\\SMALL.FDB",
+    "D:\\SmallSoft\\Small Commerce\\SMALL.FDB",
+    "C:\\Small Commerce\\SMALL.FDB",
+    "C:\\SmallCommerce\\SMALL.FDB",
+    "C:\\Dados\\SMALL.FDB"
+];
+const _localExiste = p => { try { return fs.statSync(p).isFile(); } catch (_) { return false; } };
+
+/**
+ * De qual máquina vem um caminho de rede: \\host\share\resto, ou unidade mapeada
+ * ("net use H:"). Devolve { host, share, resto } ou null (disco local / desconhecido).
+ */
+function origemDaUnidade(arquivo, prazoMs) {
+    const s = String(arquivo || "");
+    const unc = s.match(/^\\\\([^\\]+)\\([^\\]+)\\?(.*)$/);
+    if (unc) return Promise.resolve({ host: unc[1], share: unc[2], resto: unc[3] || "" });
+    const letra = s.match(/^([A-Za-z]):\\(.*)$/);
+    if (!letra || !WIN) return Promise.resolve(null);
+    return new Promise(resolve => {
+        cp.execFile("net", ["use", letra[1].toUpperCase() + ":"], { timeout: prazoMs || 6000, windowsHide: true, encoding: "latin1" }, (e, out) => {
+            const m = String(out || "").match(/\\\\([^\\\s]+)\\([^\s\\]+(?:[^\r\n]*?[^\s])?)\s*$/m);
+            if (e || !m) { resolve(null); return; }
+            const partes = m[2].split("\\");
+            resolve({ host: m[1], share: partes[0], resto: partes.slice(1).concat(letra[2] ? [letra[2]] : []).join("\\") });
+        });
+    });
+}
+
 const _uniq = a => { const vis = new Set(); return a.filter(x => { const k = String(x || "").toUpperCase(); if (!x || vis.has(k)) return false; vis.add(k); return true; }); };
 
 /** stat com prazo: caminho de rede inacessível pode demorar dezenas de segundos. */
@@ -90,7 +128,11 @@ function lerReferencias(pastas) {
             reUNC.lastIndex = 0;
             while ((m = reUNC.exec(txt))) arquivos.push(m[1].trim());
             reLocal.lastIndex = 0;
-            while ((m = reLocal.exec(txt))) arquivos.push(m[1].trim());
+            const locais = [];
+            while ((m = reLocal.exec(txt))) { arquivos.push(m[1].trim()); locais.push(m[1].trim()); }
+            // Servidor e caminho em chaves separadas (Servidor=SRV / Banco=C:\...\SMALL.FDB).
+            const reHost = /^\s*(?:servidor|server|host|hostname|ip|ipservidor|ip_servidor|computador|maquina|máquina)\s*[=:]\s*"?([A-Za-z0-9][\w.-]*)"?\s*$/gim;
+            while ((m = reHost.exec(txt))) if (!_ehLocal(m[1]) && locais.length) locais.forEach(l => servidores.push({ host: m[1], path: l, de: arq }));
         });
     });
     return { servidores, arquivos: _uniq(arquivos) };
@@ -176,16 +218,32 @@ async function localizarBanco(opcoes) {
     const refs = lerReferencias(pastasSmall.concat(cfgPath && !_ehUNC(cfgPath) && _ehLocal(cfgHost) ? [path.dirname(cfgPath)] : []));
     const servidor = (cfgPath && !_ehLocal(cfgHost) && !_ehUNC(cfgPath)) ? { host: cfgHost, path: cfgPath }
         : (refs.servidores.find(r => !_ehLocal(r.host)) || null);
-    const resultado = (achado) => {
-        const r = { arquivo: achado ? achado.arquivo : "", origem: achado ? achado.origem : "", host: "", path: "" };
-        if (achado && !_ehUNC(achado.arquivo) && /^[A-Za-z]:\\|^\//.test(achado.arquivo) && !(achado.rede)) {
-            // Arquivo nesta máquina: o Firebird local também o alcança pelo mesmo caminho.
-            r.host = "127.0.0.1"; r.path = achado.arquivo;
+    const origemUnidade = typeof o.origemUnidade === "function" ? o.origemUnidade : (a => origemDaUnidade(a, 6000));
+    // Monta o resultado: { arquivo, origem, host, path, candidatos }. host/path = primeiro
+    // candidato para o gbak; candidatos = todos os endereços a tentar, em ordem.
+    const resultado = async (achado) => {
+        const r = { arquivo: achado ? achado.arquivo : "", origem: achado ? achado.origem : "", host: "", path: "", candidatos: [] };
+        const cand = [];
+        const add = (h, p) => {
+            if (!h || !p || _ehUNC(p)) return;
+            if (_ehLocal(h) && !_localExiste(p)) return; // nunca "127.0.0.1 + caminho que não existe aqui"
+            if (!cand.some(c => c.host.toUpperCase() === String(h).toUpperCase() && c.path.toUpperCase() === String(p).toUpperCase())) cand.push({ host: String(h), path: String(p) });
+        };
+        let orig = null;
+        if (achado && (achado.rede || /^[A-Za-z]:\\/.test(achado.arquivo))) { try { orig = await origemUnidade(achado.arquivo); } catch (_) { orig = null; } }
+        if (orig && orig.host) achado.rede = true;
+        if (achado && !achado.rede) add("127.0.0.1", achado.arquivo); // banco nesta máquina
+        if (servidor && (!orig || _ehLocal(servidor.host) || orig.host.toUpperCase() === String(servidor.host).toUpperCase() || !achado)) add(servidor.host, servidor.path);
+        if (orig && orig.host) {
+            // Compartilhamento administrativo (\\SRV\C$\...) já diz o caminho no servidor.
+            if (/^[A-Za-z]\$$/.test(orig.share)) add(orig.host, orig.share[0].toUpperCase() + ":\\" + orig.resto);
+            if (servidor) add(orig.host, servidor.path);
+            CAMINHOS_SERVIDOR.forEach(p => add(orig.host, p));
         }
-        // Arquivo achado na rede: o endereço do gbak só vale se for da MESMA máquina.
-        if (achado && achado.rede && servidor && (!achado.hostRede || achado.hostRede === servidor.host)) { r.host = servidor.host; r.path = servidor.path; }
-        if (!r.path && servidor) { r.host = servidor.host; r.path = servidor.path; }
-        if (!r.path && cfgPath && !_ehUNC(cfgPath)) { r.host = cfgHost || "127.0.0.1"; r.path = cfgPath; }
+        if (servidor) add(servidor.host, servidor.path);
+        if (cfgPath && !_ehUNC(cfgPath)) add(cfgHost || "127.0.0.1", cfgPath);
+        r.candidatos = cand;
+        if (cand.length) { r.host = cand[0].host; r.path = cand[0].path; }
         return r;
     };
 
@@ -237,4 +295,4 @@ async function localizarBanco(opcoes) {
     return resultado(null);
 }
 
-module.exports = { localizarBanco, lerReferencias, existeArquivo, compartilhamentos, maquinasComFirebird, SUBCAMINHOS, VERSAO };
+module.exports = { localizarBanco, origemDaUnidade, CAMINHOS_SERVIDOR, lerReferencias, existeArquivo, compartilhamentos, maquinasComFirebird, SUBCAMINHOS, VERSAO };

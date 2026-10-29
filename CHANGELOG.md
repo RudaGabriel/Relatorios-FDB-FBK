@@ -1,5 +1,22 @@
 # Changelog
 
+## Relatórios SmallSoft Offline 1.4.0 — 2026-10-29
+
+- **Cópias novas não chegavam num terminal** (banco em `H:\SMALL.FDB`, unidade de rede): o gbak tentava
+  `127.0.0.1:C:\...\SMALL.FDB`, que não existe no terminal ("Error while trying to open file").
+  - `localizar-banco.js` 1.1.0: descobre a máquina de origem da unidade (`net use`) e monta os endereços candidatos
+    no Firebird dela (caminhos padrão do Small; `\\SRV\C$\...` dá o caminho exato); nunca devolve 127.0.0.1 com
+    caminho inexistente; lê servidor e caminho em chaves separadas nos arquivos do Small.
+  - `offline-copia.js` 1.3.0: o gbak tenta os candidatos em ordem e o que funcionar fica salvo no `config.json`;
+    último recurso: cópia do arquivo pela unidade de rede. A verificação não para mais num caminho local
+    inexistente quando há candidatos.
+- **Cópia periódica** a cada 5 min (`offlineCopiaACadaMin`): no Windows a data de um `.FDB` aberto quase não muda.
+- A verificação nunca para (erro inesperado → reagenda); cópia "em andamento" além do prazo é liberada.
+- Mensagens do gbak com acento certo (eram lidas como UTF-8: "n�o").
+- Data completa da cópia em uso na bandeja, no selo e no estoque.
+- Estoque: colunas numéricas centralizadas. Pasta `legado/` removida.
+- `servidor-relatorio.js` 3.4.0.
+
 ## Relatórios SmallSoft Offline 1.3.0 — 2026-10-29
 
 - **Estoque: leitor de código de barras pela câmera** — o leitor do projeto *Controle de Vencimento*
