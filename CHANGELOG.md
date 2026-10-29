@@ -1,5 +1,13 @@
 # Changelog
 
+## Relatórios SmallSoft Offline 1.5.5 — 2026-10-29
+
+- **Celular: selo "Offline" e botão Estoque recolhidos.** No celular eles cobriam a lista e as janelas. Agora ficam
+  num botão redondo pequeno, só com a bolinha de status (verde, amarela ou vermelha). Um toque expande
+  ("Offline · dados de…" + Estoque), outro toque abre o detalhe da cópia, e ele recolhe sozinho em 5 s
+  (espera o detalhe ser fechado). No computador nada muda.
+- `servidor-relatorio.js` 3.5.3.
+
 ## Relatórios SmallSoft Offline 1.5.4 — 2026-10-29
 
 - **Microsoft Defender acusava o `bootstrap.vbs`** como `Trojan:Script/ObfusScript.A!ml` (falso positivo do
