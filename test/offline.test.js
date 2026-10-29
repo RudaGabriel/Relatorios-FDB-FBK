@@ -337,6 +337,30 @@ test("localizar banco: unidade de rede de um terminal vira candidatos no servido
     assert.deepStrictEqual(r2.candidatos[0], { host: "10.0.0.5", path: "C:\\Dados\\SMALL.FDB" });
 });
 
+test("cópia offline: progresso da cópia (percentual, tempo) e sem o número do endereço tentado", async () => {
+    const local = await abrirPortaLocal();
+    process.env.MOCK_GBAK_ATRASO_MS = "1500";
+    const t = montar({ porta: local.porta, metodo: "gbak" });
+    const oc = criarCopiaOffline(t.opcoes);
+    const vistos = [];
+    try {
+        assert.strictEqual(oc.status().progresso, null, "progresso sem cópia em andamento");
+        oc.iniciar();
+        const fim = Date.now() + 20000;
+        while (Date.now() < fim && t.trocas.length === 0) {
+            const st = oc.status();
+            if (st.emAndamento && st.progresso) { vistos.push(st.progresso.pct); assert.ok(!/\d+\/\d+/.test(st.etapa || ""), "etapa com contador: " + st.etapa); }
+            await esperar(150);
+        }
+        assert.ok(t.trocas.length > 0, "não copiou");
+        assert.ok(vistos.length >= 3, "progresso não apareceu durante a cópia");
+        for (let i = 1; i < vistos.length; i++) assert.ok(vistos[i] >= vistos[i - 1], "progresso voltou para trás: " + vistos.join(","));
+        assert.ok(vistos[vistos.length - 1] >= 55 && vistos.every(v => v >= 0 && v <= 99), "faixa do progresso: " + vistos.join(","));
+        assert.strictEqual(oc.status().progresso, null);
+        assert.ok(oc.status().copia && oc.status().copia.tamanhoMB >= 0);
+    } finally { delete process.env.MOCK_GBAK_ATRASO_MS; oc.parar(); await local.fechar(); }
+});
+
 test("cópia offline: gfix valida a cópia temporária; com erros, a cópia é recusada", async () => {
     const local = await abrirPortaLocal();
     const logGfix = path.join(os.tmpdir(), "gfix-" + process.pid + ".log");

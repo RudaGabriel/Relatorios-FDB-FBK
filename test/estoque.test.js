@@ -107,6 +107,21 @@ function semearCopia(dir, fonte) {
     return arq;
 }
 
+test("estoque: sentido da coluna de situação decidido pelos dados (Small: \"0\" = ativo)", async () => {
+    const original = fs.readFileSync(path.join(DIR, "estado.json"), "utf8");
+    const itens = [];
+    for (let i = 0; i < 12; i++) itens.push({ CODIGO: String(500 + i), DESCRICAO: "ITEM " + i, QTD_ATUAL: 5, PRECO: 1, ATIVO: "0" });
+    itens.push({ CODIGO: "999", DESCRICAO: "ITEM DESATIVADO", QTD_ATUAL: 0, PRECO: 1, ATIVO: "1" });
+    fs.writeFileSync(path.join(DIR, "estado.json"), JSON.stringify({ nfce: [], pag: [], ger: [], estoque: itens }));
+    try {
+        const r = await buscar(novo(), { q: "" , limite: 1000 });
+        const desativado = r.itens.find(i => i.codigo === "999"), normal = r.itens.find(i => i.codigo === "500");
+        assert.strictEqual(normal.ativo, true, "a maioria (\"0\") deveria ser ativa");
+        assert.strictEqual(desativado.ativo, false);
+        assert.strictEqual((await buscar(novo(), { q: "", ativos: true, limite: 1000 })).total, 12);
+    } finally { fs.writeFileSync(path.join(DIR, "estado.json"), original); }
+});
+
 const portaLivre = () => new Promise((resolve, reject) => {
     const s = net.createServer(); s.once("error", reject);
     s.listen(0, "127.0.0.1", () => { const p = s.address().port; s.close(() => resolve(p)); });
