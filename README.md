@@ -4,7 +4,7 @@
 
 ### Vendas do dia e consulta de estoque do Small Commerce, lendo uma **cópia offline** do banco Firebird
 
-<img alt="versão: 1.5.3" src="https://img.shields.io/badge/vers%C3%A3o-1.5.3-2563EB?style=flat">
+<img alt="versão: 1.5.4" src="https://img.shields.io/badge/vers%C3%A3o-1.5.4-2563EB?style=flat">
 <img alt="servidor: v3.5.2" src="https://img.shields.io/badge/servidor-v3.5.2-2563EB?style=flat">
 <img alt="cópia offline: v1.4.0" src="https://img.shields.io/badge/c%C3%B3pia%20offline-v1.4.0-0D9488?style=flat">
 <img alt="estoque: v1.1.0" src="https://img.shields.io/badge/estoque-v1.1.0-0D9488?style=flat">
@@ -253,6 +253,7 @@ Todas as rotas do *Relatórios FDB* continuam disponíveis (veja o `api.ps1`, co
 | "não permite criar a cópia nesta pasta" | No `firebird.conf`, `DatabaseAccess` está restrito: libere a pasta das cópias ou mude `offlinePasta` |
 | Cópia demora muito | Aumente `offlineIntervaloMin` (e `offlineTimeoutMin` se der tempo esgotado). A barra de progresso mostra quanto falta |
 | Estoque: ativos e inativos trocados | O log mostra a linha *Estoque: coluna de situação …* com a coluna e a interpretação usada; envie essa linha ao suporte |
+| Instalador: "falha ao criar o bootstrap" / antivírus acusa `bootstrap.vbs` | Falso positivo. Em *Segurança do Windows → Proteção contra vírus e ameaças → Histórico de proteção*, escolha *Permitir no dispositivo* e rode o instalador de novo |
 | Qualquer outro problema | `relatorio.log` (bandeja → *Ferramentas → Abrir o log*), categorias `[OFFLINE]` e `[ESTOQUE]` |
 
 ---

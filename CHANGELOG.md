@@ -1,5 +1,17 @@
 # Changelog
 
+## Relatórios SmallSoft Offline 1.5.4 — 2026-10-29
+
+- **Microsoft Defender acusava o `bootstrap.vbs`** como `Trojan:Script/ObfusScript.A!ml` (falso positivo do
+  modelo de aprendizado de máquina), no `.zip` baixado e na cópia feita pelo instalador, que então parava em
+  "falha ao criar o bootstrap".
+  - `bootstrap.vbs` 1.2.0 reescrito de forma simples e legível: sem `ADODB.Stream`, sem montar texto com
+    `Chr`/`ChrW`, sem `On Error Resume Next` geral e sem abrir o launcher em janela oculta. Mesmo comportamento:
+    espera até 30 min pela pasta do sistema e abre o `launcher.vbs`.
+  - `instalar-na-inicializacao.bat` 1.14.0: grava o `launcher.path` em UTF-16 (o bootstrap lê direto, com acentos);
+    confere o bootstrap de novo 2 s depois da cópia e, se o antivírus o apagou, explica como restaurar; a
+    alternativa sem tarefa agendada passa a ser um atalho `.lnk` (em vez de um `.vbs` gerado).
+
 ## Relatórios SmallSoft Offline 1.5.3 — 2026-10-29
 
 - **Ícone da bandeja com bordas pretas**: o ícone era convertido com `Bitmap.GetHicon()`, que descarta a
