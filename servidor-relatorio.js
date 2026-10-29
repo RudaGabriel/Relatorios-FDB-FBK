@@ -2,7 +2,7 @@
 
 /**
  * servidor-relatorio.js — Relatórios SmallSoft Offline
- * @version 3.4.0
+ * @version 3.5.0
  * @author Ruda Gabriel
  * @description Servidor HTTP + Firebird de relatórios com SSE, fast-poll e
  *              geração em subprocesso. SOMENTE LEITURA no banco.
@@ -11,6 +11,7 @@
  *              principal em atualização, manutenção ou fora do ar.
  * @changelog
  *   (Histórico completo das versões: CHANGELOG.md no repositório.)
+ *   3.5.0 - 2026-10-29 - Barra de progresso da cópia offline (selo, painel, tela de espera).
  *   3.4.0 - 2026-10-29 - Terminal com banco na rede: endereços candidatos para o gbak e o que
  *     funcionar fica salvo; cópia periódica (offlineCopiaACadaMin).
  *   3.3.0 - 2026-10-29 - Leitor de código de barras (Controle de Vencimento) no estoque, em
@@ -32,7 +33,7 @@
 // Registrada na linha de início do log para que se saiba, ao investigar
 // qualquer ocorrência, qual versão do servidor estava no ar naquele momento
 // (o gerar-relatorio-html.js já faz o mesmo via SCRIPT_VERSION).
-const SERVER_VERSION = "3.4.0";
+const SERVER_VERSION = "3.5.0";
 
 // ===== Logger Global seguro — flush debounced 300ms =====
 const _fs = require('fs');
@@ -4388,6 +4389,9 @@ var _offlineSeloCliente = function() {
             "#__off_pop .l b{font-weight:600;text-align:right;word-break:break-word}#__off_pop .m{margin:8px 0 0;padding:8px;border-radius:8px;background:rgba(245,158,11,.12);color:#fcd34d;word-break:break-word}" +
             "#__off_pop .ok{background:rgba(34,197,94,.12);color:#86efac}#__off_pop button,#__off_pop select,#__off_pop input{font:inherit}" +
             "#__off_pop .bt{margin-top:10px;width:100%;padding:8px;border:0;border-radius:9px;background:#2563eb;color:#fff;font-weight:600;cursor:pointer}" +
+            "#__off_pop .pb{height:10px;border-radius:999px;background:rgba(148,163,184,.25);overflow:hidden;margin:6px 0 4px}" +
+            "#__off_pop .pbf{height:100%;border-radius:999px;background:linear-gradient(90deg,#2563eb,#22c55e);transition:width .6s ease}" +
+            "#__off_pop .pbt{font-size:12px;color:#94a3b8}#__off_pop .pbe{font-weight:600;color:#e2e8f0}" +
             "#__off_pop .bt[disabled]{opacity:.6;cursor:default}#__off_pop .cf{margin-top:10px;display:grid;grid-template-columns:1fr auto;gap:6px;align-items:center}" +
             "#__off_pop .cf select,#__off_pop .cf input{background:#1e293b;color:#e2e8f0;border:1px solid rgba(148,163,184,.35);border-radius:7px;padding:4px 6px;max-width:150px}" +
             "@media (max-width:680px){#__off_box{bottom:calc(76px + env(safe-area-inset-bottom,0px))}#__off_pop{bottom:calc(116px + env(safe-area-inset-bottom,0px))}}" +
@@ -4416,6 +4420,7 @@ var _offlineSeloCliente = function() {
             return m < 1 ? "agora" : m < 60 ? "há " + m + " min" : m < 1440 ? "há " + Math.floor(m / 60) + " h " + p2(m % 60) + " min" : "há " + Math.floor(m / 1440) + " dia(s)";
         };
         var esc = function(v) { return String(v == null ? "" : v).replace(/[&<>"]/g, function(c) { return c === "&" ? "&amp;" : c === "<" ? "&lt;" : c === ">" ? "&gt;" : "&quot;"; }); };
+        var dur = function(seg) { seg = Math.max(0, Math.round(seg || 0)); return seg < 60 ? seg + " s" : Math.floor(seg / 60) + " min" + (seg % 60 ? " " + (seg % 60) + " s" : ""); };
         var linha = function(k, v) { return "<div class=\"l\"><span>" + esc(k) + "</span><b>" + esc(v) + "</b></div>"; };
         var desenharChip = function(s) {
             if (!s) { chip.style.display = "none"; return; }
@@ -4424,10 +4429,10 @@ var _offlineSeloCliente = function() {
             if (s.lendo === "copia" && s.copia) {
                 if (s.fonteOk === false) { cls = "av"; txt = "Banco principal indisponível · dados de " + dados; }
                 else txt = "Offline · dados de " + dados;
-            } else if (s.emAndamento) { cls = "av"; txt = "Preparando a cópia offline..."; }
+            } else if (s.emAndamento) { cls = "av"; txt = "Preparando a cópia offline" + (s.progresso ? " · " + s.progresso.pct + "%" : "..."); }
             else if (!s.disponivel) { cls = "er"; txt = "Cópia offline indisponível"; }
             else { cls = "av"; txt = "Aguardando a cópia offline"; }
-            if (s.emAndamento && (s.copia || s.lendo === "copia")) { txt += " · atualizando..."; cls += " at"; }
+            if (s.emAndamento && (s.copia || s.lendo === "copia")) { txt += " · atualizando" + (s.progresso ? " " + s.progresso.pct + "%" : "..."); cls += " at"; }
             chip.className = cls;
             chip.querySelector(".t").textContent = txt;
             chip.style.display = "";
@@ -4446,7 +4451,9 @@ var _offlineSeloCliente = function() {
             h += linha("Banco principal (na última cópia)", s.fonteOk === true ? "copiado sem problemas" : s.fonteOk === false ? "indisponível desde " + quando(s.fonteDesde) : "—");
             h += linha("Olha o arquivo do banco a cada", (s.verificarSeg || "?") + " s (sem conectar)");
             h += linha("Intervalo mínimo entre cópias", (s.intervaloMinMin || "?") + " min");
-            if (s.emAndamento) h += "<div class=\"m ok\">Fazendo a cópia agora: " + esc(s.etapa || "") + "...</div>";
+            if (s.emAndamento) h += "<div class=\"m ok\"><span class=\"pbe\">Fazendo a cópia agora" + (s.progresso ? ": " + s.progresso.pct + "%" : "") + "</span>" +
+                "<div class=\"pb\" role=\"progressbar\" aria-valuemin=\"0\" aria-valuemax=\"100\" aria-valuenow=\"" + (s.progresso ? s.progresso.pct : 0) + "\"><div class=\"pbf\" style=\"width:" + (s.progresso ? s.progresso.pct : 2) + "%\"></div></div>" +
+                "<div class=\"pbt\">" + esc(s.etapa || "") + (s.progresso ? " · " + dur(s.progresso.decorridoS) + (s.progresso.restanteS ? " · faltam ~" + dur(s.progresso.restanteS) : "") : "") + "</div></div>";
             if (s.fonteOk === false && s.fonteErro) h += "<div class=\"m\">" + esc(s.fonteErro) + (s.copia ? "<br>O relatório continua com a cópia de " + esc(quando(s.copia.dadosDe)) + "." : "") + "</div>";
             if (s.indisponivel) h += "<div class=\"m\">" + esc(s.indisponivel) + "</div>";
             else if (s.ultimoErro && !s.emAndamento) h += "<div class=\"m\">Última tentativa falhou: " + esc(s.ultimoErro) + "</div>";
@@ -4492,7 +4499,9 @@ var _offlineSeloCliente = function() {
         document.addEventListener("click", function(e) { if (pop.style.display !== "none" && !pop.contains(e.target) && e.target !== chip) pop.style.display = "none"; });
         document.addEventListener("keydown", function(e) { if (e.key === "Escape" && pop.style.display !== "none") pop.style.display = "none"; });
         buscar();
-        setInterval(function() { if (!document.hidden) buscar(); }, 10000);
+        // Durante a cópia, a cada 2 s (a barra anda); fora dela, a cada 10 s.
+        var ciclo = function() { if (!document.hidden) buscar(); setTimeout(ciclo, ult && ult.emAndamento ? 2000 : 10000); };
+        setTimeout(ciclo, 10000);
     } catch (e) {}
 };
 var _OFFLINE_SNIP = "<script>(" + _offlineSeloCliente.toString() + ")();<\/script>";
@@ -4585,17 +4594,23 @@ var _paginaAguardandoCopia = function() {
     return "<!doctype html><html lang=\"pt-br\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">" +
         "<title>Preparando a cópia · " + nome + "</title><style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0b1120;color:#e5e7eb;font:15px/1.5 Inter,'Segoe UI',Arial,sans-serif;padding:16px;box-sizing:border-box}" +
         ".c{max-width:520px;width:100%;background:#111827;border:1px solid rgba(148,163,184,.25);border-radius:16px;padding:24px}h1{font-size:19px;margin:0 0 6px}p{color:#94a3b8;margin:6px 0}" +
+        "#pb{display:none;height:12px;border-radius:999px;background:rgba(148,163,184,.25);overflow:hidden;margin:4px 0 6px}#pbf{height:100%;width:0;border-radius:999px;background:linear-gradient(90deg,#2563eb,#22c55e);transition:width .6s ease}#pbt{display:none;font-size:13px;color:#94a3b8;margin:0 0 10px}" +
         "#et{margin:14px 0;padding:10px 12px;border-radius:10px;background:rgba(59,130,246,.12);color:#bfdbfe}#er{display:none;margin:10px 0;padding:10px 12px;border-radius:10px;background:rgba(245,158,11,.14);color:#fcd34d;word-break:break-word}" +
         "a,button{display:inline-block;margin:6px 8px 0 0;padding:8px 12px;border-radius:9px;border:1px solid rgba(148,163,184,.3);background:#1f2937;color:#e5e7eb;font:inherit;font-weight:600;text-decoration:none;cursor:pointer}" +
         ".sp{display:inline-block;width:12px;height:12px;border:2px solid #60a5fa;border-right-color:transparent;border-radius:50%;animation:g 1s linear infinite;margin-right:8px;vertical-align:-1px}@keyframes g{to{transform:rotate(360deg)}}</style></head><body>" +
         "<div class=\"c\"><h1>" + nome + "</h1><p>Preparando a cópia offline do banco. O relatório lê só a cópia — o banco do caixa não é usado direto.</p>" +
-        "<div id=\"et\"><span class=\"sp\"></span><span id=\"tx\">Verificando...</span></div><div id=\"er\"></div>" +
+        "<div id=\"et\"><span class=\"sp\"></span><span id=\"tx\">Verificando...</span></div>" +
+        "<div id=\"pb\" role=\"progressbar\" aria-valuemin=\"0\" aria-valuemax=\"100\"><div id=\"pbf\"></div></div><p id=\"pbt\"></p><div id=\"er\"></div>" +
         "<p>Esta página entra no relatório sozinha quando a cópia ficar pronta.</p>" +
         "<button type=\"button\" id=\"at\">Tentar a cópia agora</button><a href=\"/selecionar-fdb\">Escolher o banco ou um backup (.fbk)</a><a href=\"/estoque\">Estoque</a></div>" +
         "<script>(function(){var tx=document.getElementById('tx'),er=document.getElementById('er');" +
         "function v(){fetch('/api/offline',{cache:'no-store'}).then(function(r){return r.json();}).then(function(s){" +
         "if(s&&s.lendo==='copia'&&s.copia){location.replace('/');return;}" +
-        "tx.textContent=s&&s.emAndamento?('Fazendo a cópia: '+(s.etapa||'')+'...'):'Aguardando a próxima tentativa...';" +
+        "var pr=s&&s.emAndamento&&s.progresso,pb=document.getElementById('pb'),pbt=document.getElementById('pbt');" +
+        "var du=function(x){x=Math.max(0,Math.round(x||0));return x<60?x+' s':Math.floor(x/60)+' min'+(x%60?' '+(x%60)+' s':'');};" +
+        "tx.textContent=s&&s.emAndamento?('Fazendo a cópia'+(pr?': '+pr.pct+'%':'...')):'Aguardando a próxima tentativa...';" +
+        "pb.style.display=pr?'block':'none';pbt.style.display=pr?'block':'none';" +
+        "if(pr){document.getElementById('pbf').style.width=pr.pct+'%';pb.setAttribute('aria-valuenow',pr.pct);pbt.textContent=(s.etapa||'')+' · '+du(pr.decorridoS)+(pr.restanteS?' · faltam ~'+du(pr.restanteS):'');}" +
         "var m=s&&(s.indisponivel||s.ultimoErro||s.fonteErro);er.style.display=m?'block':'none';er.textContent=m||'';" +
         "}).catch(function(){tx.textContent='Sem resposta do servidor...';});}" +
         "document.getElementById('at').onclick=function(){fetch('/api/offline/atualizar',{method:'POST'}).then(function(r){return r.json();}).then(function(r){tx.textContent=(r&&(r.msg||r.erro))||'Pedido enviado.';}).catch(function(){});};" +

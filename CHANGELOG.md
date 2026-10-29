@@ -1,5 +1,18 @@
 # Changelog
 
+## Relatórios SmallSoft Offline 1.5.0 — 2026-10-29
+
+- **Progresso visível durante a cópia**: barra com porcentagem, tempo decorrido e "faltam ~" no selo, na página de
+  espera e na bandeja ("copiando N%"). O "1/7" que não mudava foi removido. A porcentagem vem do tamanho dos
+  arquivos que o gbak está gravando comparado com a cópia anterior e nunca volta para trás.
+- **Servidor encerrado no meio da cópia** (bandeja ou Gerenciador de Tarefas): a cópia em uso nunca é afetada (a nova
+  só entra depois de conferida). Na próxima inicialização os temporários são apagados e qualquer `gbak.exe`/`gfix.exe`
+  órfão trabalhando na pasta de cópias é encerrado antes de começar de novo.
+- **Estoque: todos os itens apareciam "inativo"**: o sentido da coluna de situação agora é decidido pelos dados
+  (no Small, "0" na maioria dos itens = ativo). O log mostra a coluna e a interpretação usada.
+- Estoque: o botão "Carregar mais (0 restantes)" não aparece mais quando não há mais itens.
+- `offline-copia.js` 1.4.0, `servidor-relatorio.js` 3.5.0.
+
 ## Relatórios SmallSoft Offline 1.4.0 — 2026-10-29
 
 - **Cópias novas não chegavam num terminal** (banco em `H:\SMALL.FDB`, unidade de rede): o gbak tentava

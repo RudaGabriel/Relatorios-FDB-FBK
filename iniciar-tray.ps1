@@ -1160,6 +1160,11 @@ function Update-Cabecalho {
             if ($off -and $off.lendo -eq "copia" -and $off.copia) {
                 try { $bancoTxt = (L "c\u00f3pia offline de ") + ([DateTimeOffset]::FromUnixTimeMilliseconds([int64]$off.copia.dadosDe)).LocalDateTime.ToString("dd/MM/yyyy HH:mm") + $(if ($off.fonteOk -eq $false) { L " (banco principal fora)" } else { "" }) } catch {}
             }
+            # Copia em andamento: percentual (a barra fica na tela do relatorio).
+            if ($off -and $off.emAndamento) {
+                $pctTxt = ""; try { if ($off.progresso) { $pctTxt = " " + [string]$off.progresso.pct + "%" } } catch {}
+                $bancoTxt = $bancoTxt + (L " \u00b7 copiando") + $pctTxt
+            }
             $cabStatus.Text = (L "\u25cf No ar \u00b7 ") + $bancoTxt
             $cabStatus.ForeColor = if ($db.ok) { [System.Drawing.Color]::FromArgb(22, 163, 74) } else { [System.Drawing.Color]::FromArgb(217, 119, 6) }
             $cabContagem.Text = [string]$telas + $(if ($telas -eq 1) { L " tela aberta" } else { L " telas abertas" }) + (L " \u00b7 ") + [string]$aparelhos + $(if ($aparelhos -eq 1) { L " aparelho na rede" } else { L " aparelhos na rede" })

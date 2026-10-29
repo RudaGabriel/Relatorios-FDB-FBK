@@ -71,6 +71,25 @@ function _num(v) {
     return isFinite(n) ? n : null;
 }
 
+/**
+ * Sentido da coluna de situação: cada sistema usa uma convenção (no Small Commerce,
+ * por exemplo, "0" pode ser ATIVO). Decide pelos dados: numa loja a grande maioria dos
+ * itens está ativa — se pela leitura direta quase todos dariam "inativo", inverte.
+ */
+function decidirAtivo(papel, idx, linhas) {
+    if (!papel || idx < 0) return { inverterAtivo: false, contagemAtivo: null };
+    const cont = {};
+    let pos = 0, neg = 0;
+    linhas.forEach(l => {
+        const v = l[idx]; const k = v == null ? "(vazio)" : String(v).trim() || "(vazio)";
+        cont[k] = (cont[k] || 0) + 1;
+        const a = _ativo(papel, v);
+        if (a === true) pos++; else if (a === false) neg++;
+    });
+    const total = pos + neg;
+    return { inverterAtivo: total >= 10 && neg / total > 0.7, contagemAtivo: cont };
+}
+
 /** Item ativo? null = não dá para saber (sem coluna). */
 function _ativo(papel, v) {
     if (!papel || v == null || v === "") return null;
@@ -190,7 +209,8 @@ function criarEstoque(opcoes) {
             });
             return {
                 chave: chaveAlvo(a), carregadoEm: Date.now(), tabela, colunas: usadas.map(c => ({ nome: c.nome, tipo: T_TEXTO[c.tp] || T_DATA[c.tp] || (c.tp === T_BLOB ? "BLOB" : "NUM") })),
-                papeis, idxPapel, linhas, busca, digitos, octets: !octetsRecusado
+                papeis, idxPapel, linhas, busca, digitos, octets: !octetsRecusado,
+                ...decidirAtivo(papeis.ativo, idxPapel.ativo, linhas)
             };
         } finally {
             try { db.detach(() => {}); } catch (_) {}
@@ -213,6 +233,8 @@ function criarEstoque(opcoes) {
             cache = c;
             log("Estoque carregado " + (copia ? "da cópia offline" : "do banco principal") + ": " + c.linhas.length + " itens da tabela " + c.tabela + " em " + (Date.now() - t0) + " ms" +
                 " (código: " + (c.papeis.codigo || "—") + ", descrição: " + (c.papeis.descricao || "—") + ", barras: " + (c.papeis.barras || "—") + ", estoque: " + (c.papeis.qtd || "—") + ", preço: " + (c.papeis.preco || "—") + ").");
+            if (c.papeis.ativo) log("Estoque: coluna de situação " + c.papeis.ativo + " — valores " + Object.keys(c.contagemAtivo || {}).map(k => k + "=" + c.contagemAtivo[k]).join(", ") +
+                (c.inverterAtivo ? " → lida ao contrário (a maioria dos itens daria \"inativo\")." : " → lida direto."));
             if (carregando === meu) carregando = null;
             meu.espera.forEach(f => { try { f(null, c); } catch (_) {} });
         }).catch(e => {
@@ -225,13 +247,14 @@ function criarEstoque(opcoes) {
     };
 
     const valor = (c, i, papel) => { const k = c.idxPapel[papel]; return k >= 0 ? c.linhas[i][k] : null; };
+    const ativoDe = (c, i) => { const a = _ativo(c.papeis.ativo, valor(c, i, "ativo")); return a === null ? null : (c.inverterAtivo ? !a : a); };
     const resumo = (c, i) => {
         const it = { id: i };
         ["codigo", "descricao", "barras", "referencia", "unidade", "grupo", "fornecedor", "ncm", "local"].forEach(p => {
             const v = valor(c, i, p); if (v != null && v !== "") it[p] = typeof v === "string" ? v.trim() : v;
         });
         ["qtd", "qtdMin", "preco", "custo"].forEach(p => { const n = _num(valor(c, i, p)); if (n != null) it[p] = n; });
-        const at = _ativo(c.papeis.ativo, valor(c, i, "ativo"));
+        const at = ativoDe(c, i);
         if (at !== null) it.ativo = at;
         return it;
     };
@@ -272,7 +295,7 @@ function criarEstoque(opcoes) {
                 if (f.estoque === "negativo" && !(q < 0)) continue;
                 if (f.estoque === "abaixo" && !(q != null && _num(valor(c, i, "qtdMin")) != null && q < _num(valor(c, i, "qtdMin")))) continue;
             }
-            if (f.ativos && c.papeis.ativo && _ativo(c.papeis.ativo, valor(c, i, "ativo")) === false) continue;
+            if (f.ativos && c.papeis.ativo && ativoDe(c, i) === false) continue;
             // Relevância: código/barras exatos primeiro, depois começo da descrição.
             let pts = 0;
             if (qNum || termos.length === 1) {

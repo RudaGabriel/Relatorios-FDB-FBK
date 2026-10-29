@@ -2,10 +2,12 @@
 
 /**
  * offline-copia.js
- * @version 1.3.0
+ * @version 1.4.0
  * @author Ruda Gabriel
  * @description Cópia offline do banco do Small Commerce (Relatórios SmallSoft Offline).
  * @changelog
+ *   1.4.0 - 2026-10-29 - Progresso da cópia (status.progresso: pct, decorrido, restante) pelo
+ *     tamanho dos arquivos que o gbak grava; sem o "1/7" (número do endereço tentado).
  *   1.3.0 - 2026-10-29 - Terminal com banco em unidade de rede: o gbak tenta os endereços
  *     candidatos (servidor da unidade + caminhos padrão do Small) e avisa qual funcionou;
  *     último recurso: cópia pelo arquivo. Cópia periódica (a data de um .FDB aberto no
@@ -76,7 +78,7 @@ const cp = require("child_process");
 const { pipeline } = require("stream");
 const net = require("net");
 
-const VERSAO = "1.3.0";
+const VERSAO = "1.4.0";
 const MANIFESTO = "copia-offline.json";
 const PREFIXO = "SMALL_OFFLINE_";
 // Únicos nomes que este módulo cria — e os ÚNICOS que ele apaga.
@@ -312,6 +314,24 @@ function criarCopiaOffline(opcoes) {
         processarPendentes();
     };
 
+    // gbak/gfix de uma execução anterior que ficaram rodando — só os que gravam NA
+    // PASTA DAS CÓPIAS (identificados pela linha de comando); nenhum outro é tocado.
+    const encerrarGbakOrfaos = (cb) => {
+        if (process.platform !== "win32") { cb(); return; }
+        const alvo = pasta.replace(/'/g, "''").replace(/([\[\]*?`])/g, "`$1");
+        const ps = "$ps = Get-CimInstance Win32_Process -Filter \"Name='gbak.exe' OR Name='gfix.exe'\" -ErrorAction SilentlyContinue | " +
+            "Where-Object { $_.CommandLine -and $_.CommandLine -like '*" + alvo + "*' }; " +
+            "foreach ($p in $ps) { try { Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop; Write-Output $p.ProcessId } catch {} }";
+        try {
+            cp.execFile("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", ps], { windowsHide: true, timeout: 20000 }, (e, out) => {
+                const pids = String(out || "").split(/\r?\n/).map(x => x.trim()).filter(x => /^\d+$/.test(x));
+                if (pids.length) log("Cópia offline: encerrado(s) " + pids.length + " gbak/gfix de uma cópia interrompida (PID " + pids.join(", ") + ") — a cópia em uso não foi afetada; uma nova será feita.");
+                // O Firebird leva um instante para soltar os arquivos que o gbak usava.
+                setTimeout(cb, pids.length ? 3000 : 0);
+            });
+        } catch (_) { cb(); }
+    };
+
     // ── Execução do gbak (credenciais por variável de ambiente) ─────────────
     const rodarGbak = (args, rotulo, cb) => rodarFerramenta(gbak, args, rotulo, cb);
     const rodarFerramenta = (exe, args, rotulo, cb) => {
@@ -416,10 +436,34 @@ function criarCopiaOffline(opcoes) {
 
     // ── Um ciclo de cópia ───────────────────────────────────────────────────
     // origem: { tipo: "fdb", host, path, sig } | { tipo: "fbk", arquivo }
-    const etapa = (txt) => { st.etapa = txt; st.etapaDesde = Date.now(); logDebug("Cópia offline: " + txt); };
+    // prog = faixa da barra de progresso desta etapa: { arquivo, esperado, de, ate } —
+    // o percentual vem do tamanho que o arquivo já tem (o gbak grava aos poucos)
+    // comparado com o tamanho esperado (o da cópia anterior, ou uma estimativa).
+    const etapa = (txt, prog) => { st.etapa = txt; st.etapaDesde = Date.now(); st.prog = prog || null; logDebug("Cópia offline: " + txt); };
+    const progresso = () => {
+        if (!st.emAndamento) return null;
+        const p = st.prog;
+        let pct = 0;
+        if (p) {
+            let frac = 0;
+            if (p.arquivo && p.esperado > 0) { try { frac = Math.min(0.99, fs.statSync(p.arquivo).size / p.esperado); } catch (_) { frac = 0; } }
+            else if (p.fixo !== undefined) frac = p.fixo;
+            pct = p.de + (p.ate - p.de) * frac;
+        }
+        pct = Math.max(st.progMax || 0, Math.min(99, pct)); // nunca volta para trás
+        st.progMax = pct;
+        const decorridoS = Math.round((Date.now() - (st.ultimaTentativa || Date.now())) / 1000);
+        const restanteS = pct >= 3 ? Math.max(1, Math.round(decorridoS * (100 - pct) / pct)) : null;
+        return { pct: Math.round(pct), decorridoS, restanteS };
+    };
+    // Tamanhos esperados (para o percentual): os da cópia anterior; na 1ª vez, estimativas.
+    const tamanhoDe = a => { try { return fs.statSync(a).size; } catch (_) { return 0; } };
+    const esperadoFbk = (origem) => (st.ativa && st.ativa.tamanhoFbk) || tamanhoDe(path.join(pasta, FBK_ULTIMO)) || Math.round(tamanhoFonte(origem) * 0.55) || 0;
+    const esperadoFdb = (fbk) => (st.ativa && st.ativa.tamanho) || Math.round(tamanhoDe(fbk) * 1.7) || 0;
     const executarCopia = (origem, motivo, cb) => {
         cb = typeof cb === "function" ? cb : () => {};
         if (st.emAndamento) { cb({ ok: false, erro: "Já existe uma cópia em andamento." }); return; }
+        if (st.limpando) { cb({ ok: false, erro: "Encerrando uma cópia interrompida antes desta — tente de novo em alguns segundos." }); return; }
         if (!gbak) { cb({ ok: false, erro: st.indisponivel || "gbak não encontrado." }); return; }
         const erroPasta = garantirPasta();
         if (erroPasta) { st.ultimoErro = erroPasta; log(erroPasta); cb({ ok: false, erro: erroPasta }); return; }
@@ -433,7 +477,7 @@ function criarCopiaOffline(opcoes) {
             st.ultimoErro = msg; log(msg); cb({ ok: false, erro: msg }); return;
         }
 
-        st.emAndamento = true; st.ultimaTentativa = Date.now(); st.ultimoErro = "";
+        st.emAndamento = true; st.ultimaTentativa = Date.now(); st.ultimoErro = ""; st.progMax = 0;
         etapa("verificando o Firebird desta máquina");
         firebirdLocalNoAr((noAr) => {
         if (!noAr) {
@@ -483,9 +527,12 @@ function criarCopiaOffline(opcoes) {
         };
         const cancelado = () => minhaGer !== geracao || parado;
 
+        let faixaRestauracao = origem.tipo === "fbk" ? 0 : 55;
+        let tamFbk = 0;
         const restaurar = (arquivoFbk, dadosDe) => {
+            tamFbk = tamanhoDe(arquivoFbk);
             if (cancelado()) return falhar(new Error("cancelada"), "restauração");
-            etapa("restaurando a cópia (somente leitura)");
+            etapa("restaurando a cópia (somente leitura)", { arquivo: destinoTmp, esperado: esperadoFdb(arquivoFbk), de: faixaRestauracao, ate: 96 });
             rodarGbak(["-c", "-mode", "read_only", arquivoFbk, _alvoGbak("127.0.0.1", porta, destinoTmp)], "gbak (restauração)", (e2) => {
                 if (e2) return falhar(e2, "restauração");
                 if (cancelado()) return falhar(new Error("cancelada"), "restauração");
@@ -493,7 +540,7 @@ function criarCopiaOffline(opcoes) {
                 renomearComRetry(destinoTmp, destino, 20, (e3) => {
                 if (e3) return falhar(e3, "renomear a cópia");
                 if (cancelado()) return falhar(new Error("cancelada"), "renomear a cópia");
-                etapa("conferindo a cópia nova");
+                etapa("conferindo a cópia nova", { fixo: 0.5, de: 96, ate: 99 });
                 conferir(destino, (e4, info) => {
                     if (e4) return falhar(e4, "conferência");
                     if (cancelado()) return falhar(new Error("cancelada"), "conferência");
@@ -505,7 +552,7 @@ function criarCopiaOffline(opcoes) {
                         fonte: origem.tipo === "fbk" ? { arquivo: origem.arquivo } : { host: origem.host || "", path: origem.path || "", arquivo: origem.arquivo || "" },
                         servidorUsado: metodoUsadoAlvo ? metodoUsadoAlvo.host + ":" + metodoUsadoAlvo.path : null,
                         metodo: metodoUsado,
-                        tamanho: tam, sig: origem.sig || null, duracaoMs: Date.now() - inicio,
+                        tamanho: tam, tamanhoFbk: tamFbk || null, sig: origem.sig || null, duracaoMs: Date.now() - inicio,
                         vendas: info && typeof info.vendas === "number" ? info.vendas : null
                     };
                     if (anterior && anterior.arquivo && _norm(anterior.arquivo) !== _norm(destino)) {
@@ -577,7 +624,10 @@ function criarCopiaOffline(opcoes) {
             const tentar = (k) => {
                 if (cancelado()) return falhar(new Error("cancelada"), "backup");
                 const alvo = alvosGbak[k];
-                etapa("backup pelo servidor Firebird (gbak direto, somente leitura)" + (alvosGbak.length > 1 ? " — " + alvo.host + " (" + (k + 1) + "/" + alvosGbak.length + ")" : ""));
+                // (sem "1/7": o número do endereço tentado não é progresso — a barra é.)
+                etapa("lendo o banco principal (gbak direto, somente leitura)" + (k > 0 || !_ehLocal(alvo.host) ? " — " + alvo.host : ""),
+                    { arquivo: fbkTmp, esperado: esperadoFbk(origem), de: jaTentouArquivo ? 30 : 0, ate: jaTentouArquivo ? 60 : 55 });
+                faixaRestauracao = jaTentouArquivo ? 60 : 55;
                 const dadosDe = Date.now(); // a foto do gbak é tirada no início da transação
                 apagar(fbkTmp);
                 rodarGbak(["-b", "-g", _alvoGbak(alvo.host, porta, alvo.path), fbkTmp], "gbak (backup)", (e1) => {
@@ -617,7 +667,8 @@ function criarCopiaOffline(opcoes) {
                 if (eC) return reservaOuFalha(eC, "cópia do arquivo");
                 if (cancelado()) return reservaOuFalha(new Error("cancelada"), "cópia do arquivo");
                 const converter = () => {
-                    etapa("convertendo a cópia temporária (gbak)");
+                    etapa("convertendo a cópia temporária (gbak)", { arquivo: fbkTmp, esperado: esperadoFbk(origem), de: 30, ate: 60 });
+                    faixaRestauracao = 60;
                     rodarGbak(["-b", "-g", _alvoGbak("127.0.0.1", porta, tempFdb), fbkTmp], "gbak (backup da cópia temporária)", (e1) => {
                         apagar(tempFdb);
                         // gbak recusou a cópia temporária = cópia com defeito: reserva/falha.
@@ -626,7 +677,7 @@ function criarCopiaOffline(opcoes) {
                     });
                 };
                 if (!gfix) return converter();
-                etapa("validando a cópia temporária (gfix)");
+                etapa("validando a cópia temporária (gfix)", { fixo: 0.5, de: 25, ate: 30 });
                 rodarFerramenta(gfix, ["-v", "-full", "-n", _alvoGbak("127.0.0.1", porta, tempFdb)], "gfix (validação)", (eV, saidaV) => {
                     if (eV || /validation error|errors? found|corrupt/i.test(String(saidaV || "")))
                         return reservaOuFalha(new Error("a validação da cópia temporária encontrou problemas" + (eV ? ": " + _txt(eV.message, 200) : ": " + _txt(saidaV, 200))), "validação da cópia temporária");
@@ -662,7 +713,7 @@ function criarCopiaOffline(opcoes) {
                 return;
             }
             tentativa++;
-            etapa("copiando o arquivo do banco para a pasta temporária (sem conectar)" + (tentativa > 1 ? " — tentativa " + tentativa : ""));
+            etapa("copiando o arquivo do banco para a pasta temporária (sem conectar)" + (tentativa > 1 ? " — tentativa " + tentativa : ""), { arquivo: dst, esperado: s0.size, de: 0, ate: 25 });
             const inicio = Date.now();
             let leitor, escritor;
             try {
@@ -743,6 +794,7 @@ function criarCopiaOffline(opcoes) {
     };
     const verificarSeguro = () => {
         if (parado) return;
+        if (st.limpando) { agendarVerificacao(1000); return; } // encerrando gbak de uma execução anterior
         // Cópia "em andamento" além de todo prazo possível (algo travou): libera.
         if (st.emAndamento && st.ultimaTentativa && Date.now() - st.ultimaTentativa > timeoutMs * 2 + 120000) {
             log("Cópia offline: a cópia iniciada às " + new Date(st.ultimaTentativa).toLocaleTimeString("pt-BR") + " não terminou — liberando para tentar de novo.");
@@ -830,6 +882,12 @@ function criarCopiaOffline(opcoes) {
             const erroPasta = garantirPasta();
             if (erroPasta) { st.indisponivel = erroPasta; log(erroPasta); }
             limparOrfaos();
+            // Servidor encerrado à força (Gerenciador de Tarefas, queda): o gbak que estava
+            // copiando pode ter ficado rodando sozinho. Ele só LÊ o banco (não corrompe nada),
+            // mas segura uma conexão e o disco à toa: encerra e apaga o que ele deixou.
+            // Nenhuma cópia nova começa antes disso (senão o gbak NOVO seria encerrado junto).
+            st.limpando = true;
+            encerrarGbakOrfaos(() => { st.limpando = false; if (!parado) limparOrfaos(); });
             log("Cópia offline " + VERSAO + ": método \"" + metodo + "\"" + (metodo !== "gbak" ? " (copia o arquivo para a pasta temporária e converte de lá" + (gfix ? ", validando com gfix" : "") + ")" : "") + " | pasta " + pasta + " | gbak " + (gbak || "não encontrado") +
                 " | verifica o arquivo do banco a cada " + Math.round(verificarMs / 1000) + " s (sem conectar) | intervalo mínimo entre cópias " + Math.round(intervaloMinMs / 60000) + " min" +
                 (st.ativa ? " | cópia em uso: " + path.basename(st.ativa.arquivo) + " (dados de " + new Date(st.ativa.dadosDe).toLocaleString("pt-BR") + ")" : " | ainda sem cópia"));
@@ -892,6 +950,7 @@ function criarCopiaOffline(opcoes) {
                 fonte: (() => { const f = fonteAtual(); return f ? { host: f.host, path: f.path, arquivo: f.arquivo } : null; })(),
                 fonteOk: st.fonteOk, fonteErro: st.fonteErro || null, fonteDesde: st.fonteDesde || null,
                 emAndamento: st.emAndamento, etapa: st.etapa || null, etapaDesde: st.etapaDesde || null,
+                progresso: progresso(),
                 ultimaTentativa: st.ultimaTentativa || null, ultimoOk: st.ultimoOk || null, ultimoErro: st.ultimoErro || null,
                 proximaPermitida: st.proximaPermitida || null, ultimaVerificacao: st.ultimaVerificacao || null,
                 intervaloMinMin: Math.round(intervaloMinMs / 60000), verificarSeg: Math.round(verificarMs / 1000),
