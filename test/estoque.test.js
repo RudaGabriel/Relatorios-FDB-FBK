@@ -59,11 +59,17 @@ test("estoque: lê todos os itens e acha por nome sem acento, código, código d
     // Busca por fornecedor (qualquer coluna de texto).
     assert.strictEqual((await buscar(e, { q: "vet ltda" })).itens[0].codigo, "00200");
     assert.strictEqual(normalizar("  Ração  Gato "), "RACAO GATO");
-    // "Contém" desmarcado: só no começo das palavras.
+    // "Contém" desmarcado: só itens que COMEÇAM com o texto (em algum campo).
     assert.strictEqual((await buscar(e, { q: "ato" })).total, 1, "contém deveria achar GATO");
-    assert.strictEqual((await buscar(e, { q: "ato", contem: false })).total, 0, "início de palavra não deveria achar GATO");
-    assert.deepStrictEqual((await buscar(e, { q: "gat", contem: false })).itens.map(i => i.codigo), ["00123"]);
+    assert.strictEqual((await buscar(e, { q: "ato", contem: false })).total, 0, "início não deveria achar GATO");
+    assert.deepStrictEqual((await buscar(e, { q: "gato", contem: false })).itens.map(i => i.codigo), [], "GATO está no meio de RAÇÃO GATO");
+    assert.deepStrictEqual((await buscar(e, { q: "racao g", contem: false })).itens.map(i => i.codigo), ["00123"]);
+    assert.deepStrictEqual((await buscar(e, { q: "racao", contem: false })).itens.map(i => i.codigo).sort(), ["00123", "00124"]);
+    assert.deepStrictEqual((await buscar(e, { q: "racao -gato", contem: false })).itens.map(i => i.codigo), ["00124"]);
     assert.deepStrictEqual((await buscar(e, { q: "pulgas", contem: false })).itens.map(i => i.codigo), [], "ANTIPULGAS não começa com PULGAS");
+    assert.deepStrictEqual((await buscar(e, { q: "coleira", contem: false })).itens.map(i => i.codigo), ["00200"]);
+    assert.deepStrictEqual((await buscar(e, { q: "pet bra", contem: false })).itens.map(i => i.codigo).sort(), ["00123", "00124"], "fornecedor também é campo");
+    assert.strictEqual((await buscar(e, { q: "123", contem: false })).itens[0].codigo, "00123", "código sem os zeros à esquerda");
     assert.deepStrictEqual((await buscar(e, { q: "pulgas" })).itens.map(i => i.codigo), ["00200"]);
     assert.strictEqual((await buscar(e, { q: "7891000100103", contem: false })).itens[0].codigo, "00123", "código de barras inteiro também vale no modo início");
 });
@@ -164,6 +170,22 @@ test("servidor: página /estoque, /api/estoque, detalhe e exportação", async (
         const http = require("node:http");
         const pedir = caminho => new Promise(ok => http.get({ host: "127.0.0.1", port: porta, path: caminho }, rs => { rs.resume(); ok(rs.statusCode); }).on("error", () => ok(0)));
         for (const ruim of ["/leitor/../config.json", "/leitor/%2e%2e/config.json", "/leitor/vendor/../../servidor-relatorio.js", "/leitor/x.exe"]) assert.strictEqual(await pedir(ruim), 404, ruim);
+        // Comandos da bandeja chegam ao estoque (SSE): "Editar configurações" com o estoque aberto.
+        assert.ok(pag.includes('new EventSource("/api/events")') && pag.includes('irPara("/config")'), "estoque não escuta os comandos da bandeja");
+        const sse = await new Promise((ok, falhou) => {
+            const rq = http.get({ host: "127.0.0.1", port: porta, path: "/api/events" }, rs => {
+                let buf = "";
+                rs.setEncoding("utf8");
+                rs.on("data", ch => {
+                    buf += ch;
+                    if (buf.includes('"connected"') && !rq._pediu) { rq._pediu = true; fetch(base + "/api/navigate/config").then(x => x.json()).then(j => { rq._clients = j.clients; }).catch(falhou); }
+                    if (buf.includes('"navigate-hash"')) { rq.destroy(); ok({ buf, clients: rq._clients }); }
+                });
+            });
+            rq.on("error", e => { if (!rq.destroyed) falhou(e); });
+            setTimeout(() => { rq.destroy(); falhou(new Error("comando de configurações não chegou pelo SSE")); }, 8000);
+        });
+        assert.ok(sse.buf.includes('"hash":"config"'));
         const det = await (await fetch(base + "/api/estoque/item?id=" + r.itens[0].id)).json();
         assert.strictEqual(det.ok, true);
         const csv = await fetch(base + "/api/estoque/csv?q=racao");

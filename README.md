@@ -95,7 +95,7 @@ Botão **Estoque** no canto da tela, bandeja → *Consultar estoque* ou `http://
 | `7891000100103` | código de barras (com ou sem pontos/traços no cadastro) — o exato vem primeiro |
 | `123` | código 00123 em primeiro (zeros à esquerda) |
 
-- **Caixa "Contém"** (marcada por padrão): acha o texto em qualquer parte — `ato` acha *GATO*. Desmarcada: só no começo das palavras — `ato` acha *ATOALHADO*, mas não *GATO*. A escolha fica salva em cada aparelho.
+- **Caixa "Contém"** (marcada por padrão): acha o texto em qualquer parte — `ato` acha *GATO*. Desmarcada: só itens que **começam** com o texto digitado (descrição, código, barras, referência…) — `pipicat` acha *PIPICAT FLORAL 4KG*, mas `floral` não. A escolha fica salva em cada aparelho.
 
 - **Leitor de código de barras:** bipe no campo de busca; se der um só item, o detalhe abre sozinho.
 - **Filtros:** com estoque, sem estoque, negativo, abaixo do mínimo, só ativos. **Ordem:** relevância, nome, código, estoque, preço.
@@ -141,7 +141,7 @@ Todas as rotas do *Relatórios FDB* (veja o `api.ps1`), mais:
 | `/api/offline/atualizar` | POST/GET | Faz uma cópia nova já (rede local) |
 | `/api/offline/importar` | POST | `{ "caminho": "C:\\...\\SMALL.fbk" }` — restaura um backup como cópia (computador do servidor) |
 | `/estoque` | GET | Tela da consulta de estoque |
-| `/api/estoque?q=&estoque=&ordem=&ativos=1&contem=1&pagina=&limite=` | GET | Busca (até 1000 por página; `estoque`: todos/com/sem/negativo/abaixo; `contem=0`: só começo das palavras) |
+| `/api/estoque?q=&estoque=&ordem=&ativos=1&contem=1&pagina=&limite=` | GET | Busca (até 1000 por página; `estoque`: todos/com/sem/negativo/abaixo; `contem=0`: só itens que começam com o texto) |
 | `/api/estoque/item?id=N` | GET | Todas as colunas de um item |
 | `/api/estoque/csv?q=...` | GET | CSV com todos os resultados |
 
