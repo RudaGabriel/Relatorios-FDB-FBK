@@ -3,12 +3,12 @@
 # Instancia unica via mutex global.
 # Abrir Relatorio: se ja tem aba aberta (SSE), foca ela. Se nao, abre browser.
 #
-# @version 1.6.1
+# @version 1.6.2
 # @author Ruda Gabriel
 # @changelog
 #   (Historico completo das versoes: CHANGELOG.md no repositorio.)
-#   1.6.1 - 2026-10-28 21:00 - Dispositivos conectados: mostra o apelido do aparelho (dado em
-#     "Minhas preferencias") com o nome real entre parenteses.
+#   1.6.2 - 2026-10-29 - Icone da bandeja sem bordas pretas: montado como .ico com canal
+#     alfa em varios tamanhos (16 a 64 px) em vez de Bitmap.GetHicon().
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -362,6 +362,7 @@ $csTray = @'
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Text;
 // @@GDI-INICIO
 using System.Drawing;
@@ -705,38 +706,136 @@ namespace RelTray
         }
 
         // Icone da bandeja (quando nao ha favicon.png): quadrado arredondado em degrade
-        // com grafico de barras branco.
+        // com grafico de barras branco. Desenhado em cada tamanho (nitido em qualquer DPI).
         public static Icon Bandeja(int px)
         {
-            using (Bitmap bmp = new Bitmap(px, px, PixelFormat.Format32bppArgb))
+            return IconeMultiTamanho(DesenharBandeja);
+        }
+        static Bitmap DesenharBandeja(int px)
+        {
+            Bitmap bmp = new Bitmap(px, px, PixelFormat.Format32bppArgb);
+            using (Graphics g = Graphics.FromImage(bmp))
             {
-                using (Graphics g = Graphics.FromImage(bmp))
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                g.Clear(Color.Transparent);
+                float r = px * 0.22f, w = px - 1;
+                using (GraphicsPath fundo = new GraphicsPath())
                 {
-                    g.SmoothingMode = SmoothingMode.AntiAlias;
-                    g.Clear(Color.Transparent);
-                    float r = px * 0.22f, w = px - 1;
-                    using (GraphicsPath fundo = new GraphicsPath())
-                    {
-                        fundo.AddArc(0, 0, r * 2, r * 2, 180, 90); fundo.AddArc(w - r * 2, 0, r * 2, r * 2, 270, 90);
-                        fundo.AddArc(w - r * 2, w - r * 2, r * 2, r * 2, 0, 90); fundo.AddArc(0, w - r * 2, r * 2, r * 2, 90, 90);
-                        fundo.CloseFigure();
-                        using (LinearGradientBrush lg = new LinearGradientBrush(new PointF(0, 0), new PointF(px, px), Color.FromArgb(37, 99, 235), Color.FromArgb(14, 165, 233)))
-                            g.FillPath(lg, fundo);
-                    }
-                    float esc = px / 24f;
-                    g.ScaleTransform(esc, esc);
-                    using (Pen p = new Pen(Color.White, 2.6f))
-                    {
-                        p.StartCap = LineCap.Round; p.EndCap = LineCap.Round;
-                        g.DrawLine(p, 7, 17, 7, 12); g.DrawLine(p, 12, 17, 12, 7); g.DrawLine(p, 17, 17, 17, 10);
-                    }
+                    fundo.AddArc(0, 0, r * 2, r * 2, 180, 90); fundo.AddArc(w - r * 2, 0, r * 2, r * 2, 270, 90);
+                    fundo.AddArc(w - r * 2, w - r * 2, r * 2, r * 2, 0, 90); fundo.AddArc(0, w - r * 2, r * 2, r * 2, 90, 90);
+                    fundo.CloseFigure();
+                    using (LinearGradientBrush lg = new LinearGradientBrush(new PointF(0, 0), new PointF(px, px), Color.FromArgb(37, 99, 235), Color.FromArgb(14, 165, 233)))
+                        g.FillPath(lg, fundo);
                 }
-                IntPtr h = bmp.GetHicon();
-                Icon tmp = Icon.FromHandle(h);
-                Icon copia = (Icon)tmp.Clone();
-                tmp.Dispose();
-                DestroyIcon(h);
-                return copia;
+                float esc = px / 24f;
+                g.ScaleTransform(esc, esc);
+                using (Pen p = new Pen(Color.White, 2.6f))
+                {
+                    p.StartCap = LineCap.Round; p.EndCap = LineCap.Round;
+                    g.DrawLine(p, 7, 17, 7, 12); g.DrawLine(p, 12, 17, 12, 7); g.DrawLine(p, 17, 17, 17, 10);
+                }
+            }
+            return bmp;
+        }
+
+        // Icone da bandeja a partir de uma imagem (favicon.png/.ico/.jpg), com a
+        // transparencia preservada. Le os bytes (nao trava o arquivo).
+        public static Icon DeArquivo(string caminho)
+        {
+            byte[] dados = File.ReadAllBytes(caminho);
+            using (MemoryStream ms = new MemoryStream(dados))
+            using (Image img = Image.FromStream(ms))
+            {
+                return IconeMultiTamanho(delegate(int px) { return Redimensionar(img, px); });
+            }
+        }
+        static Bitmap Redimensionar(Image img, int px)
+        {
+            Bitmap bmp = new Bitmap(px, px, PixelFormat.Format32bppArgb);
+            using (Graphics g = Graphics.FromImage(bmp))
+            {
+                g.Clear(Color.Transparent);
+                g.CompositingMode = CompositingMode.SourceOver;
+                g.CompositingQuality = CompositingQuality.HighQuality;
+                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                // Mantem a proporcao (imagem nao quadrada fica centralizada).
+                float k = Math.Min((float)px / Math.Max(1, img.Width), (float)px / Math.Max(1, img.Height));
+                float w = img.Width * k, h = img.Height * k;
+                using (ImageAttributes ia = new ImageAttributes())
+                {
+                    ia.SetWrapMode(WrapMode.TileFlipXY); // sem borda escura do reamostrador
+                    g.DrawImage(img, new Rectangle((int)Math.Round((px - w) / 2), (int)Math.Round((px - h) / 2), (int)Math.Round(w), (int)Math.Round(h)),
+                        0, 0, img.Width, img.Height, GraphicsUnit.Pixel, ia);
+                }
+            }
+            return bmp;
+        }
+
+        // BUG FIX (bordas pretas): Bitmap.GetHicon() descarta a transparencia
+        // suave - o Windows desenhava os pixels semitransparentes da borda como
+        // preto. Aqui o icone e montado como um .ico de verdade (32 bits com canal
+        // alfa + mascara), em varios tamanhos: o Windows escolhe o certo para o
+        // DPI da tela, sem reduzir e sem halo escuro.
+        public delegate Bitmap Desenho(int px);
+        static readonly int[] TAMANHOS = new int[] { 16, 20, 24, 32, 40, 48, 64 };
+        public static Icon IconeMultiTamanho(Desenho desenhar)
+        {
+            List<byte[]> imagens = new List<byte[]>();
+            foreach (int px in TAMANHOS)
+            {
+                using (Bitmap b = desenhar(px)) imagens.Add(DibIcone(b));
+            }
+            using (MemoryStream ico = new MemoryStream())
+            using (BinaryWriter bw = new BinaryWriter(ico))
+            {
+                bw.Write((short)0); bw.Write((short)1); bw.Write((short)TAMANHOS.Length);
+                int deslocamento = 6 + 16 * TAMANHOS.Length;
+                for (int i = 0; i < TAMANHOS.Length; i++)
+                {
+                    int px = TAMANHOS[i];
+                    bw.Write((byte)(px >= 256 ? 0 : px)); bw.Write((byte)(px >= 256 ? 0 : px));
+                    bw.Write((byte)0); bw.Write((byte)0);
+                    bw.Write((short)1); bw.Write((short)32);
+                    bw.Write(imagens[i].Length); bw.Write(deslocamento);
+                    deslocamento += imagens[i].Length;
+                }
+                foreach (byte[] im in imagens) bw.Write(im);
+                bw.Flush();
+                ico.Position = 0;
+                return new Icon(ico, SystemInformation.SmallIconSize);
+            }
+        }
+        // Imagem de icone em DIB 32 bits: BITMAPINFOHEADER (altura x2), pixels BGRA
+        // de baixo para cima e mascara AND de 1 bit (1 = transparente).
+        static byte[] DibIcone(Bitmap b)
+        {
+            int w = b.Width, h = b.Height;
+            byte[] px = new byte[w * h * 4];
+            BitmapData bd = b.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+            try
+            {
+                for (int y = 0; y < h; y++)
+                    System.Runtime.InteropServices.Marshal.Copy(new IntPtr(bd.Scan0.ToInt64() + (long)y * bd.Stride), px, y * w * 4, w * 4);
+            }
+            finally { b.UnlockBits(bd); }
+            int linhaMascara = ((w + 31) / 32) * 4;
+            using (MemoryStream ms = new MemoryStream())
+            using (BinaryWriter bw = new BinaryWriter(ms))
+            {
+                bw.Write(40); bw.Write(w); bw.Write(h * 2); bw.Write((short)1); bw.Write((short)32);
+                bw.Write(0); bw.Write(w * h * 4 + linhaMascara * h); bw.Write(0); bw.Write(0); bw.Write(0); bw.Write(0);
+                for (int y = h - 1; y >= 0; y--) bw.Write(px, y * w * 4, w * 4);
+                for (int y = h - 1; y >= 0; y--)
+                {
+                    byte[] linha = new byte[linhaMascara];
+                    for (int x = 0; x < w; x++)
+                        if (px[(y * w + x) * 4 + 3] == 0) linha[x >> 3] |= (byte)(0x80 >> (x & 7));
+                    bw.Write(linha);
+                }
+                bw.Flush();
+                return ms.ToArray();
             }
         }
         [System.Runtime.InteropServices.DllImport("user32.dll")]
@@ -1074,18 +1173,19 @@ $tray.Visible = $true
 
 $faviconPath = Join-Path $DIR "favicon.png"
 if (Test-Path $faviconPath) {
+    # v1.6.2: icone montado com transparencia de verdade ([RelTray.Icones]::DeArquivo);
+    # o caminho antigo (GetHicon) deixava as bordas pretas. Fica so de reserva.
+    $iconeOk = $false
+    if ($script:visualOk) {
+        try { $tray.Icon = [RelTray.Icones]::DeArquivo($faviconPath); $iconeOk = $true }
+        catch { Write-TrayLog ("Icone personalizado: " + $_.Exception.Message) "AVISO" }
+    }
+    if (-not $iconeOk) {
     try {
         $bmp     = [System.Drawing.Bitmap]::FromFile($faviconPath)
         $resized = New-Object System.Drawing.Bitmap($bmp, 32, 32)
         $hIcon     = $resized.GetHicon()
         $tray.Icon = [System.Drawing.Icon]::FromHandle($hIcon)
-        # LEAK FIX: (1) $resized nunca era descartado - Bitmap intermediario
-        # do redimensionamento ficava preso na memoria pelo resto da sessao.
-        # (2) GetHicon() retorna um HICON nativo (GDI) que .NET NAO libera
-        # sozinho - Icon.FromHandle() apenas "empresta" o handle, nunca o
-        # possui; a documentacao da Microsoft recomenda destruir esse handle
-        # explicitamente via DestroyIcon (P/Invoke) apos clonar o Icon para
-        # um objeto gerenciado independente do handle original.
         Add-Type -Namespace TrayNativo -Name Gdi32 -MemberDefinition '
             [DllImport("user32.dll")] public static extern bool DestroyIcon(IntPtr hIcon);
         ' -ErrorAction SilentlyContinue
@@ -1094,6 +1194,7 @@ if (Test-Path $faviconPath) {
         $resized.Dispose()
         $bmp.Dispose()
     } catch { $tray.Icon = [System.Drawing.SystemIcons]::Application }
+    }
 } else {
     # Sem favicon.png: icone proprio (grafico de barras em degrade azul) em vez do
     # icone generico de aplicativo do Windows.

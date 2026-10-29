@@ -1,5 +1,13 @@
 # Changelog
 
+## Relatórios SmallSoft Offline 1.5.3 — 2026-10-29
+
+- **Ícone da bandeja com bordas pretas**: o ícone era convertido com `Bitmap.GetHicon()`, que descarta a
+  transparência suave e fazia o Windows pintar a borda de preto. Agora é montado como um `.ico` de verdade
+  (32 bits com canal alfa) em vários tamanhos (16 a 64 px), e o Windows escolhe o certo para o DPI da tela.
+  Vale para o ícone padrão e para o `favicon.png` personalizado (que também mantém a proporção).
+- `iniciar-tray.ps1` 1.6.2.
+
 ## Relatórios SmallSoft Offline 1.5.2 — 2026-10-29
 
 - **Configurações abertas pela bandeja voltam para a tela de origem**: com o estoque aberto, o botão da página de
