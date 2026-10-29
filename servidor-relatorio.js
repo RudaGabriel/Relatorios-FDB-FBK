@@ -33,7 +33,7 @@
 // Registrada na linha de início do log para que se saiba, ao investigar
 // qualquer ocorrência, qual versão do servidor estava no ar naquele momento
 // (o gerar-relatorio-html.js já faz o mesmo via SCRIPT_VERSION).
-const SERVER_VERSION = "3.5.3";
+const SERVER_VERSION = "3.5.4";
 
 // ===== Logger Global seguro — flush debounced 300ms =====
 const _fs = require('fs');
@@ -4404,7 +4404,9 @@ var _offlineSeloCliente = function() {
             "#__off_pop .pbt{font-size:12px;color:#94a3b8}#__off_pop .pbe{font-weight:600;color:#e2e8f0}" +
             "#__off_pop .bt[disabled]{opacity:.6;cursor:default}#__off_pop .cf{margin-top:10px;display:grid;grid-template-columns:1fr auto;gap:6px;align-items:center}" +
             "#__off_pop .cf select,#__off_pop .cf input{background:#1e293b;color:#e2e8f0;border:1px solid rgba(148,163,184,.35);border-radius:7px;padding:4px 6px;max-width:150px}" +
-            "@media (max-width:680px){#__off_box{bottom:calc(76px + env(safe-area-inset-bottom,0px))}#__off_pop{bottom:calc(116px + env(safe-area-inset-bottom,0px))}}" +
+            // Celular (v3.5.4): no canto DIREITO, acima da barra de botões.
+            "@media (max-width:680px){#__off_box{left:auto;right:12px;justify-content:flex-end;bottom:calc(76px + env(safe-area-inset-bottom,0px))}" +
+            "#__off_pop{left:auto;right:12px;bottom:calc(116px + env(safe-area-inset-bottom,0px))}}" +
             // Celular (v3.5.3): recolhido = só a bolinha de status num botão redondo,
             // para não cobrir a lista nem as janelas. Tocar expande; recolhe em 5 s.
             "#__off_box.rec #__est_chip,#__off_box.rec #__off_chip .t{display:none}" +
