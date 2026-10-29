@@ -11,6 +11,7 @@
   "offlineMetodo": "gbak",
   "offlineQuietoSeg": 5,
   "offlineIntervaloMin": 5,
+  "offlineCopiaACadaMin": 5,
   "offlineVerificarSeg": 20,
   "offlineMaxIdadeMin": 180,
   "offlineTimeoutMin": 30,
