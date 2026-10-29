@@ -4,12 +4,12 @@
 
 ### Vendas do dia e consulta de estoque do Small Commerce, lendo uma **cópia offline** do banco Firebird
 
-<img alt="versão: 1.5.2" src="https://img.shields.io/badge/vers%C3%A3o-1.5.2-2563EB?style=flat">
+<img alt="versão: 1.5.3" src="https://img.shields.io/badge/vers%C3%A3o-1.5.3-2563EB?style=flat">
 <img alt="servidor: v3.5.2" src="https://img.shields.io/badge/servidor-v3.5.2-2563EB?style=flat">
 <img alt="cópia offline: v1.4.0" src="https://img.shields.io/badge/c%C3%B3pia%20offline-v1.4.0-0D9488?style=flat">
 <img alt="estoque: v1.1.0" src="https://img.shields.io/badge/estoque-v1.1.0-0D9488?style=flat">
 <img alt="gerador: v3.26.1" src="https://img.shields.io/badge/gerador-v3.26.1-2563EB?style=flat">
-<img alt="bandeja: v1.6.1" src="https://img.shields.io/badge/bandeja-v1.6.1-2563EB?style=flat">
+<img alt="bandeja: v1.6.2" src="https://img.shields.io/badge/bandeja-v1.6.2-2563EB?style=flat">
 <img alt="testes: 46 passando" src="https://img.shields.io/badge/testes-46%20passando-22C55E?style=flat">
 
 <img alt="plataforma: Windows 10 | 11" src="https://img.shields.io/badge/plataforma-Windows%2010%20%7C%2011-0078D4?style=flat&logo=windows&logoColor=white">
