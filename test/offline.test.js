@@ -17,6 +17,9 @@ const { spawn } = require("node:child_process");
 const RAIZ = path.join(__dirname, "..");
 const { criarCopiaOffline, RE_COPIA } = require(path.join(RAIZ, "offline-copia.js"));
 const GBAK = path.join(__dirname, "mock-gbak.js");
+const GFIX = path.join(__dirname, "mock-gfix.js");
+const { localizarBanco, lerReferencias } = require(path.join(RAIZ, "localizar-banco.js"));
+const lerLog = f => { try { return fs.readFileSync(f, "utf8").trim().split("\n").filter(Boolean).map(l => JSON.parse(l)); } catch (_) { return []; } };
 const esperar = ms => new Promise(r => setTimeout(r, ms));
 const hash = f => crypto.createHash("sha256").update(fs.readFileSync(f)).digest("hex");
 const ate = async (cond, ms, passo) => { const fim = Date.now() + ms; while (Date.now() < fim) { if (cond()) return true; await esperar(passo || 100); } return cond(); };
@@ -59,7 +62,7 @@ function montar(extra) {
         pasta, gbak: GBAK, user: "SYSDBA", pass: "senha-secreta-123", Firebird: fb,
         fonte: () => ({ host, path: fonte }),
         aoTrocar: (h, p, info) => trocas.push({ h, p, info }),
-        log: m => logs.push(m), verificarMs: 5000, intervaloMinMs: 600000
+        log: m => logs.push(m), verificarMs: 5000, intervaloMinMs: 600000, quietoMs: 0
     }, extra || {});
     return {
         dir, fonte, pasta, logs, trocas, fb, opcoes, setHost: h => { host = h; },
@@ -94,6 +97,12 @@ test("cópia offline: primeira cópia sozinha, conferida e lida; o banco princip
         const chamadas = fs.readFileSync(logGbak, "utf8").trim().split("\n").map(l => JSON.parse(l));
         const bk = chamadas.find(c => c.args.includes("-b")), rs = chamadas.find(c => c.args.includes("-c"));
         assert.ok(bk && bk.args.includes("-g"), "backup sem -g");
+        // Padrão: copia o ARQUIVO para a pasta temporária e o gbak converte a CÓPIA — nunca o banco.
+        const origemBk = bk.args[bk.args.length - 2];
+        assert.ok(/\.copia\.tmp$/.test(origemBk) && origemBk.includes(path.join(t.pasta, "temp")), "o backup não saiu da cópia temporária: " + origemBk);
+        chamadas.forEach(c => assert.ok(!c.args.some(x => x.endsWith(t.fonte)), "o gbak recebeu o banco principal: " + c.args.join(" ")));
+        assert.deepStrictEqual(fs.readdirSync(path.join(t.pasta, "temp")), [], "cópia temporária não foi apagada");
+        assert.strictEqual(oc.status().copia.metodo, "arquivo");
         assert.ok(rs && rs.args.join(" ").includes("-mode read_only"), "restauração sem -mode read_only");
         chamadas.forEach(c => {
             assert.ok(c.senhaPorAmbiente && c.usuarioPorAmbiente, "credenciais não vieram por variável de ambiente");
@@ -214,6 +223,107 @@ test("cópia offline: banco em outra máquina é copiado pelo gbak sem olhar o a
     } finally { oc.parar(); await local.fechar(); }
 });
 
+test("cópia offline: arquivo gravado durante a cópia é descartado; 'auto' usa o gbak direto de reserva, 'arquivo' nunca", async () => {
+    const local = await abrirPortaLocal();
+    const logGbak = path.join(os.tmpdir(), "gbak-" + process.pid + "-7.log");
+    try { fs.unlinkSync(logGbak); } catch (_) {}
+    process.env.MOCK_GBAK_LOG = logGbak;
+    // O "caixa" grava no banco no meio de toda cópia do arquivo.
+    let gravacoes = 0;
+    const gancho = { depoisDeLer: (src) => { gravacoes++; fs.appendFileSync(src, "V" + gravacoes); } };
+    const t = montar({ porta: local.porta, ganchoTeste: gancho, tentativasArquivo: 2 });
+    const oc = criarCopiaOffline(t.opcoes);
+    try {
+        oc.iniciar();
+        assert.ok(await ate(() => t.trocas.length > 0, 20000), "não fez a cópia: " + t.logs.join(" | "));
+        assert.strictEqual(gravacoes, 2, "deveria tentar a cópia do arquivo 2 vezes");
+        assert.strictEqual(oc.status().copia.metodo, "gbak", "deveria ter usado o gbak direto de reserva");
+        assert.ok(t.logs.some(l => /gravado durante a cópia/.test(l)) && t.logs.some(l => /usando o gbak direto/.test(l)));
+        assert.deepStrictEqual(fs.readdirSync(path.join(t.pasta, "temp")), [], "cópia temporária descartada ficou na pasta");
+        t.semConexaoNaFonte();
+    } finally { oc.parar(); }
+    // Método "arquivo": mesma situação → falha, e o gbak NUNCA recebe o banco principal.
+    try { fs.unlinkSync(logGbak); } catch (_) {}
+    const t2 = montar({ porta: local.porta, ganchoTeste: { depoisDeLer: (src) => fs.appendFileSync(src, "X") }, tentativasArquivo: 2, metodo: "arquivo" });
+    const oc2 = criarCopiaOffline(t2.opcoes);
+    try {
+        oc2.iniciar();
+        assert.ok(await ate(() => !!oc2.status().ultimoErro, 20000), "não registrou a falha");
+        assert.match(oc2.status().ultimoErro, /gravado durante a cópia/);
+        assert.strictEqual(t2.trocas.length, 0);
+        assert.ok(!lerLog(logGbak).some(c => c.args.some(x => x.endsWith(t2.fonte))), "método 'arquivo' chamou o gbak no banco principal");
+    } finally { oc2.parar(); delete process.env.MOCK_GBAK_LOG; await local.fechar(); }
+});
+
+test("cópia offline: gfix valida a cópia temporária; com erros, a cópia é recusada", async () => {
+    const local = await abrirPortaLocal();
+    const logGfix = path.join(os.tmpdir(), "gfix-" + process.pid + ".log");
+    try { fs.unlinkSync(logGfix); } catch (_) {}
+    process.env.MOCK_GFIX_LOG = logGfix;
+    const t = montar({ porta: local.porta, gfix: GFIX, metodo: "arquivo" });
+    const oc = criarCopiaOffline(t.opcoes);
+    try {
+        oc.iniciar();
+        assert.ok(await ate(() => t.trocas.length > 0, 15000), "não fez a cópia validada: " + t.logs.join(" | "));
+        const v = lerLog(logGfix);
+        assert.ok(v.length === 1 && v[0].args.includes("-v") && v[0].args.includes("-n") && /\.copia\.tmp$/.test(v[0].args[v[0].args.length - 1]), "gfix não validou a cópia temporária (somente leitura): " + JSON.stringify(v));
+        process.env.MOCK_GFIX_FALHAR = "1";
+        fs.appendFileSync(t.fonte, "MAIS");
+        oc.atualizarAgora();
+        assert.ok(await ate(() => /validação da cópia temporária/.test(oc.status().ultimoErro || ""), 15000), "não recusou a cópia com erros: " + oc.status().ultimoErro);
+        assert.strictEqual(t.trocas.length, 1, "trocou para uma cópia com defeito");
+        assert.deepStrictEqual(fs.readdirSync(path.join(t.pasta, "temp")), []);
+    } finally { delete process.env.MOCK_GFIX_FALHAR; delete process.env.MOCK_GFIX_LOG; oc.parar(); await local.fechar(); }
+});
+
+test("cópia offline: banco só acessível como arquivo de rede (\\\\servidor\\...) é copiado pelo arquivo", async () => {
+    const local = await abrirPortaLocal();
+    const t = montar({ porta: local.porta });
+    const opcoes = Object.assign({}, t.opcoes, { fonte: () => ({ host: "", path: "", arquivo: t.fonte }) });
+    const oc = criarCopiaOffline(opcoes);
+    try {
+        oc.iniciar();
+        assert.ok(await ate(() => t.trocas.length > 0, 15000), "não copiou: " + t.logs.join(" | "));
+        assert.strictEqual(oc.status().copia.metodo, "arquivo");
+        // Arquivo sumiu e não há endereço para o gbak: falha clara, sem tentar o gbak.
+        fs.renameSync(t.fonte, t.fonte + ".x");
+        oc.atualizarAgora(() => {});
+        assert.ok(await ate(() => /não encontrado/.test(oc.status().fonteErro || ""), 15000), "não avisou do arquivo sumido: " + JSON.stringify(oc.status()));
+        assert.strictEqual(oc.status().fonteOk, false);
+        assert.strictEqual(t.trocas.length, 1, "trocou de cópia sem banco");
+    } finally { oc.parar(); await local.fechar(); }
+});
+
+test("localizar banco: acha pela configuração do Small, unidade de rede e compartilhamento — sem conectar", async () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), "loc-teste-"));
+    const small = path.join(base, "small"); fs.mkdirSync(small);
+    fs.writeFileSync(path.join(small, "small.ini"), "[Banco]\r\nServidor=SERVIDOR1:C:\\Program Files (x86)\\SmallSoft\\Small Commerce\\SMALL.FDB\r\nOutro=\\\\NAS\\dados\\SMALL.FDB\r\n", "latin1");
+    const refs = lerReferencias([small]);
+    assert.deepStrictEqual(refs.servidores.map(r => r.host + "|" + r.path), ["SERVIDOR1|C:\\Program Files (x86)\\SmallSoft\\Small Commerce\\SMALL.FDB"]);
+    assert.ok(refs.arquivos.includes("\\\\NAS\\dados\\SMALL.FDB"));
+    // Compartilhamento do SERVIDOR1 com o banco dentro de "Small Commerce".
+    const share = path.join(base, "share"); fs.mkdirSync(path.join(share, "Small Commerce"), { recursive: true });
+    fs.writeFileSync(path.join(share, "Small Commerce", "SMALL.FDB"), "BANCO");
+    const perguntados = [];
+    const r1 = await localizarBanco({ pastasIni: [small], raizes: [], compartilhamentos: async h => { perguntados.push(h); return h === "SERVIDOR1" ? [share] : []; }, maquinasRede: async () => [], prazoMs: 1000 });
+    assert.strictEqual(r1.arquivo, path.join(share, "Small Commerce", "SMALL.FDB"));
+    assert.strictEqual(r1.host, "SERVIDOR1");
+    assert.match(r1.path, /SMALL\.FDB$/);
+    assert.match(r1.origem, /compartilhamento de SERVIDOR1/);
+    // Unidade de rede mapeada (SmallSoft\Small Commerce\SMALL.FDB na raiz).
+    const unidade = path.join(base, "Z"); fs.mkdirSync(path.join(unidade, "SmallSoft", "Small Commerce"), { recursive: true });
+    fs.writeFileSync(path.join(unidade, "SmallSoft", "Small Commerce", "SMALL.FDB"), "BANCO");
+    const r2 = await localizarBanco({ pastasIni: [], raizes: [unidade], compartilhamentos: async () => [], maquinasRede: async () => [], prazoMs: 1000 });
+    assert.strictEqual(r2.arquivo, path.join(unidade, "SmallSoft", "Small Commerce", "SMALL.FDB"));
+    assert.strictEqual(r2.origem, "unidade de rede");
+    // Máquina com Firebird na rede (só teste de porta) e o banco no compartilhamento dela.
+    const r3 = await localizarBanco({ pastasIni: [], raizes: [], compartilhamentos: async h => h === "192.168.1.20" ? [share] : [], maquinasRede: async () => ["192.168.1.20"], prazoMs: 1000 });
+    assert.match(r3.origem, /192\.168\.1\.20/);
+    // Nada em lugar nenhum: arquivo vazio, sem erro.
+    const r4 = await localizarBanco({ pastasIni: [], raizes: [], compartilhamentos: async () => [], maquinasRede: async () => [], prazoMs: 500 });
+    assert.strictEqual(r4.arquivo, "");
+});
+
 // ---------------------------------------------------------------------------
 // Integração com o servidor (Firebird simulado de test/mock-firebird, que
 // registra cada conexão em sql.log com MOCK_LOG_ATTACH=1).
@@ -249,7 +359,8 @@ test("servidor: espera a cópia sem tocar no banco principal, depois lê só a c
     const hora = [d.getHours(), d.getMinutes(), d.getSeconds()].map(pad).join(":");
     fs.writeFileSync(path.join(dir, "estado.json"), JSON.stringify({ nfce: [{ numero: "500", hora }], pag: [], ger: [] }));
     // gbak lento: dá tempo de ver a tela de espera antes da 1ª cópia.
-    const env = Object.assign({}, process.env, { MOCK_SENHA: "s", RELATORIO_FB_PASS: "s", MOCK_FB_DIR: dir, MOCK_LOG_ATTACH: "1", MOCK_GBAK_ATRASO_MS: "2500" });
+    const logGbakSrv = path.join(dir, "gbak.log");
+    const env = Object.assign({}, process.env, { MOCK_SENHA: "s", RELATORIO_FB_PASS: "s", MOCK_FB_DIR: dir, MOCK_LOG_ATTACH: "1", MOCK_GBAK_ATRASO_MS: "2500", MOCK_GBAK_LOG: logGbakSrv });
     const proc = spawn(process.execPath, ["servidor-relatorio.js", "--no-browser"], { cwd: dir, env, stdio: "ignore" });
     const base = "http://127.0.0.1:" + porta;
     const json = async r => (await fetch(base + r, { cache: "no-store" })).json();
@@ -296,6 +407,11 @@ test("servidor: espera a cópia sem tocar no banco principal, depois lê só a c
         attaches.forEach(l => assert.ok(RE_COPIA.test(path.basename(l.slice(7))), "conexão fora da cópia: " + l));
         assert.ok(!/TX_ESCRITA|^UPDATE/m.test(sqlLog()), "houve escrita: " + sqlLog().slice(0, 300));
         assert.strictEqual(fs.readFileSync(fonte, "utf8"), "BANCO", "banco principal foi alterado");
+        // A cópia saiu do ARQUIVO (pasta temporária), não do banco principal pelo gbak.
+        const gb = lerLog(logGbakSrv);
+        assert.ok(gb.some(c => c.args.includes("-b")), "o gbak não rodou");
+        gb.forEach(c => assert.ok(!c.args.some(x => x.endsWith("SMALL.FDB") || x.endsWith("OUTRO.FDB")), "o gbak recebeu o banco principal: " + c.args.join(" ")));
+        assert.strictEqual((await json("/api/offline")).metodo, "auto");
     } finally {
         try { proc.kill(); } catch (_) {}
         await p3050.fechar();

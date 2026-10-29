@@ -2,7 +2,7 @@
 
 /**
  * servidor-relatorio.js — Relatórios SmallSoft Offline
- * @version 3.1.0
+ * @version 3.2.0
  * @author Ruda Gabriel
  * @description Servidor HTTP + Firebird de relatórios com SSE, fast-poll e
  *              geração em subprocesso. SOMENTE LEITURA no banco.
@@ -11,6 +11,8 @@
  *              principal em atualização, manutenção ou fora do ar.
  * @changelog
  *   (Histórico completo das versões: CHANGELOG.md no repositório.)
+ *   3.2.0 - 2026-10-29 - Cópia pelo ARQUIVO (pasta temporária → gbak local), banco em
+ *     rede (unidade/compartilhamento), procura do SMALL.FDB sem conectar (localizar-banco.js).
  *   3.1.0 - 2026-10-28 - Nenhuma conexão direta com o banco principal (só a cópia; sem
  *     verificação por consulta, sem leitura direta, sem varredura de rede); selo "auto" removido.
  *   3.0.0 - 2026-10-28 - Relatórios SmallSoft Offline: cópia offline do banco
@@ -26,7 +28,7 @@
 // Registrada na linha de início do log para que se saiba, ao investigar
 // qualquer ocorrência, qual versão do servidor estava no ar naquele momento
 // (o gerar-relatorio-html.js já faz o mesmo via SCRIPT_VERSION).
-const SERVER_VERSION = "3.1.0";
+const SERVER_VERSION = "3.2.0";
 
 // ===== Logger Global seguro — flush debounced 300ms =====
 const _fs = require('fs');
@@ -1042,6 +1044,16 @@ var FDB = FDB_HOST+":"+FDB_PATH;
 // atrapalhar atualização e manutenção do Small Commerce. Ver offline-copia.js.
 // ---------------------------------------------------------------------------
 var FONTE_HOST = FDB_HOST, FONTE_PATH = FDB_PATH;
+// Caminho pelo qual o ARQUIVO do banco principal pode ser copiado (pasta local,
+// unidade de rede ou \\servidor\compartilhamento) — a cópia offline copia o
+// arquivo e converte de lá, sem conectar no banco (v3.2.0).
+var FONTE_ARQUIVO = (function() {
+    var a = String(cfg.fdbArquivo || "").trim();
+    if (a) return a;
+    if (/^\\\\/.test(FONTE_PATH || "")) return FONTE_PATH;
+    try { if ((!FONTE_HOST || FONTE_HOST === "127.0.0.1" || FONTE_HOST === "localhost") && FONTE_PATH && fs.existsSync(FONTE_PATH)) return FONTE_PATH; } catch (_) {}
+    return "";
+})();
 var _offline = null;
 var _aguardandoCopia = false; // true até a 1ª cópia ficar pronta (nada conecta no banco)
 var _bootPendente = null;     // fim do boot adiado até a 1ª cópia
@@ -1051,10 +1063,16 @@ var _offlineCfg = function(c) {
         intervaloMinMs: (_naFaixa(c.offlineIntervaloMin, 1, 1440) || 5) * 60000,
         verificarMs:    (_naFaixa(c.offlineVerificarSeg, 5, 3600) || 20) * 1000,
         maxIdadeMs:     (_naFaixa(c.offlineMaxIdadeMin, 5, 10080) || 180) * 60000,
-        timeoutMs:      (_naFaixa(c.offlineTimeoutMin, 1, 360) || 30) * 60000
+        timeoutMs:      (_naFaixa(c.offlineTimeoutMin, 1, 360) || 30) * 60000,
+        metodo:         ["auto", "arquivo", "gbak"].indexOf(String(c.offlineMetodo || "auto").toLowerCase()) >= 0 ? String(c.offlineMetodo || "auto").toLowerCase() : "auto",
+        quietoMs:       (_naFaixa(c.offlineQuietoSeg, 0, 600) === null ? 5 : _naFaixa(c.offlineQuietoSeg, 0, 600)) * 1000
     };
 };
-var _fonteAtual = function() { return { host: FONTE_HOST, path: FONTE_PATH }; };
+var _fonteAtual = function() {
+    // UNC não serve para o gbak (o Firebird não abre banco em compartilhamento): só como arquivo.
+    var unc = /^\\\\/.test(FONTE_PATH || "");
+    return { host: unc ? "" : FONTE_HOST, path: unc ? "" : FONTE_PATH, arquivo: FONTE_ARQUIVO };
+};
 // Fast-poll lendo a cópia: os dados só mudam na troca de cópia (que já regera
 // tudo), então 1 consulta a cada 2 s basta e não pesa no Firebird do caixa.
 var _FP_COPIA_MS = _naFaixa(cfg.fastPollCopiaMs, 0, 60000);
@@ -1071,6 +1089,7 @@ if (_FP_COPIA_MS === null) _FP_COPIA_MS = 2000;
             _offline = mod.criarCopiaOffline({
                 appName: APP_NAME, pasta: pasta, gbak: gbak, user: USER, pass: PASS, porta: FIREBIRD_PORT, charset: FB_CHARSET,
                 intervaloMinMs: oc.intervaloMinMs, verificarMs: oc.verificarMs, maxIdadeMs: oc.maxIdadeMs, timeoutMs: oc.timeoutMs,
+                metodo: oc.metodo, quietoMs: oc.quietoMs,
                 manterFbk: cfg.offlineManterFbk !== false,
                 Firebird: Firebird,
                 fonte: _fonteAtual,
@@ -4047,7 +4066,7 @@ var paginaEscolherFdb = function() {
         msgErro +
         "<label>Caminho do arquivo SMALL.FDB</label>" +
         "<div class=\"row-inp\">" +
-        "<input type=\"text\" id=\"fdbPath\" placeholder=\"Ex: C:\\Program Files (x86)\\SmallSoft\\Small Commerce\\SMALL.FDB\">" +
+        "<input type=\"text\" id=\"fdbPath\" placeholder=\"Ex: C:\\Program Files (x86)\\SmallSoft\\Small Commerce\\SMALL.FDB  ou  \\\\SERVIDOR\\pasta\\SMALL.FDB\">" +
         "<button class=\"btn btn-sec\" id=\"btnPicker\" title=\"Abrir seletor de arquivos do Windows\">" + SVG_FOLDER + "Procurar</button>" +
         "</div>" +
         "<p class=\"hint\">Cole o caminho completo ou use o botão <strong>Procurar</strong> para abrir o explorador de arquivos do Windows.</p>" +
@@ -4105,8 +4124,8 @@ var paginaEscolherFdb = function() {
         "var p=document.getElementById('fdbPath').value.trim();" +
         "var btn=document.getElementById('btnSalvar');" +
         "if(!p){mostrarErro('Informe o caminho do arquivo SMALL.FDB.');return;}" +
-        "if(!/\\.fdb$/i.test(p)){mostrarErro('O arquivo deve ter extensão .fdb');return;}" +
-        "btn.disabled=true;btn.textContent='Conectando...';" +
+        "if(!/\\.(fdb|fbk|gbk)$/i.test(p)){mostrarErro('O arquivo deve ser o banco (.fdb) ou um backup (.fbk).');return;}" +
+        "btn.disabled=true;btn.textContent='Salvando...';" +
         "document.getElementById('spin').style.display='block';" +
         "document.getElementById('err').style.display='none';" +
         "fetch('/api/salvar-fdb',{method:'POST'," +
@@ -4263,9 +4282,14 @@ var aplicarNovoFdb = function(caminhoBruto, cb) {
 
     // Offline (v3.1.0): o banco escolhido NÃO é testado nem lido — vira o banco
     // principal de onde o gbak faz a próxima cópia, pedida já.
-    FONTE_HOST = novoHost; FONTE_PATH = novoPath;
-    saveConfig({ fdbPath: novoPath, fbHost: novoHost });
-    logTs("Banco principal definido: " + novoHost + ":" + novoPath + " — fazendo a cópia offline.", "OFFLINE");
+    var _unc = /^\\\\/.test(novoPath);
+    FONTE_HOST = _unc ? "" : novoHost; FONTE_PATH = _unc ? "" : novoPath;
+    // Arquivo alcançável daqui (local ou compartilhamento): copia o arquivo. Banco
+    // em outra máquina ("IP:C:\..."): procura o compartilhamento dele na rede.
+    FONTE_ARQUIVO = (_unc || novoHost === "127.0.0.1") ? novoPath : "";
+    saveConfig({ fdbPath: FONTE_PATH, fbHost: FONTE_HOST, fdbArquivo: FONTE_ARQUIVO });
+    logTs("Banco principal definido: " + (FONTE_ARQUIVO ? "arquivo " + FONTE_ARQUIVO : novoHost + ":" + novoPath) + " — fazendo a cópia offline.", "OFFLINE");
+    if (!FONTE_ARQUIVO) setTimeout(function() { _procurarBanco("banco escolhido em outra máquina"); }, 100);
     if (_offline) _offline.atualizarAgora(function() {});
     cb({ ok: true, msg: "Banco principal salvo. A cópia offline está sendo feita; o relatório abre com ela sozinho." });
     return;
@@ -4394,10 +4418,11 @@ var _offlineSeloCliente = function() {
             if (pop.style.display === "none" || editando) return;
             var h = "<h4>Cópia offline do banco</h4>";
             h += linha("O relatório lê", "só a cópia (nunca o banco principal)");
+            h += linha("Como copia", { auto: "copia o arquivo e converte (gbak direto só de reserva)", arquivo: "só copiando o arquivo", gbak: "gbak direto" }[s.metodo] || s.metodo || "—");
             if (s.copia) {
                 h += linha("Dados da cópia", quando(s.copia.dadosDe) + " (" + ha(s.copia.dadosDe) + ")");
                 h += linha("Origem", s.copia.origem === "fbk" ? "arquivo de backup (.fbk)" : "banco principal");
-                if (s.copia.duracaoS) h += linha("Última cópia levou", s.copia.duracaoS + " s");
+                if (s.copia.duracaoS) h += linha("Última cópia levou", s.copia.duracaoS + " s" + (s.copia.metodo === "gbak" ? " (gbak direto)" : s.copia.metodo === "arquivo" ? " (cópia do arquivo)" : ""));
                 if (s.copia.tamanhoMB) h += linha("Tamanho", s.copia.tamanhoMB + " MB");
             } else h += linha("Dados da cópia", "ainda não há cópia");
             h += linha("Banco principal (na última cópia)", s.fonteOk === true ? "copiado sem problemas" : s.fonteOk === false ? "indisponível desde " + quando(s.fonteDesde) : "—");
@@ -4498,6 +4523,41 @@ var _trocarLeitura = function(host, caminho, info) {
         logTs("ERRO ao trocar a leitura para " + host + ":" + caminho + ": " + (e && e.stack || e), "OFFLINE");
     }
 };
+
+// ---------------------------------------------------------------------------
+// Procura do SMALL.FDB (nesta máquina ou na rede) SEM conectar no banco — ver
+// localizar-banco.js. Roda em segundo plano no início (se o arquivo não estiver
+// acessível) e de 10 em 10 min enquanto a cópia não consegue ler o banco.
+// ---------------------------------------------------------------------------
+var _procurandoBanco = false, _ultimaProcuraBanco = 0;
+var _procurarBanco = function(motivo) {
+    if (_procurandoBanco) return;
+    var loc = null;
+    try { loc = require("./localizar-banco.js"); } catch (e) { logTs("localizar-banco.js não carregou: " + e.message, "OFFLINE"); return; }
+    _procurandoBanco = true; _ultimaProcuraBanco = Date.now();
+    logTs("Procurando o SMALL.FDB (" + motivo + "): pastas do Small, configuração, unidades de rede e compartilhamentos — sem conectar no banco.", "OFFLINE");
+    loc.localizarBanco({ configHost: FONTE_HOST, configPath: FONTE_PATH, configArquivo: FONTE_ARQUIVO, porta: FIREBIRD_PORT, log: function(m) { logTs(m, "OFFLINE"); } })
+        .then(function(r) {
+            _procurandoBanco = false;
+            if (!r || (!r.arquivo && !r.path)) { logTs("SMALL.FDB não encontrado. Escolha o banco em /selecionar-fdb (aceita \\\\servidor\\pasta\\SMALL.FDB, unidade de rede ou IP:C:\\...\\SMALL.FDB).", "OFFLINE"); return; }
+            var mudou = (r.arquivo || "") !== (FONTE_ARQUIVO || "") || (r.path && (r.path !== FONTE_PATH || r.host !== FONTE_HOST));
+            if (r.arquivo) FONTE_ARQUIVO = r.arquivo;
+            if (r.path) { FONTE_HOST = r.host; FONTE_PATH = r.path; }
+            logTs("SMALL.FDB: " + (r.arquivo ? "arquivo " + r.arquivo + " (" + r.origem + ")" : "arquivo não acessível daqui") + (r.path ? " | servidor Firebird " + r.host + ":" + r.path : "") + ".", "OFFLINE");
+            if (mudou) {
+                saveConfig({ fdbArquivo: FONTE_ARQUIVO, fdbPath: FONTE_PATH, fbHost: FONTE_HOST });
+                if (_offline) _offline.atualizarAgora(function() {});
+            }
+        })
+        .catch(function(e) { _procurandoBanco = false; logTs("ERRO na procura do SMALL.FDB: " + (e && e.message || e), "OFFLINE"); });
+};
+setInterval(function() {
+    try {
+        if (!_offline || _procurandoBanco || Date.now() - _ultimaProcuraBanco < 10 * 60000) return;
+        var st = _offline.status();
+        if (st.fonteOk === false || (!st.copia && !st.emAndamento)) _procurarBanco("a cópia não consegue ler o banco principal");
+    } catch (_) {}
+}, 60000).unref();
 
 // Tela enquanto a 1ª cópia não fica pronta: mostra a etapa e entra sozinha.
 var _paginaAguardandoCopia = function() {
@@ -5787,6 +5847,7 @@ var server=http.createServer(function(req,res){
             spawnTimeoutMs:        _SPAWN_TIMEOUT_MS,
             janelaCorrecaoHoraMin: Math.round(_HORA_GERENCIAL_JANELA_MS / 60000),
             offlineIntervaloMin:   Math.round(_offlineCfg(_config).intervaloMinMs / 60000),
+            offlineMetodo:         _offlineCfg(_config).metodo,
             offlineVerificarSeg:   Math.round(_offlineCfg(_config).verificarMs / 1000),
             offlineMaxIdadeMin:    Math.round(_offlineCfg(_config).maxIdadeMs / 60000),
             proibidos:             Array.isArray(_config.proibidos) ? _config.proibidos : [],
@@ -5829,7 +5890,7 @@ var server=http.createServer(function(req,res){
                         var _tdP = parseInt(p.toastDuration, 10);
                         if (!(_tdP >= 500 && _tdP <= 60000)) { sendJson({ok:false, erro:"Duração dos avisos deve ficar entre 500 e 60000 ms."}, 400); return; }
                     }
-                    var _ignP = _cSrvP ? [] : ["appName","pollInterval","maxLogLines","favicon","janelaCorrecaoHoraMin","aplicarTodos","offlineIntervaloMin","offlineVerificarSeg","offlineMaxIdadeMin"].filter(function(k){ return p[k] !== undefined; });
+                    var _ignP = _cSrvP ? [] : ["appName","pollInterval","maxLogLines","favicon","janelaCorrecaoHoraMin","aplicarTodos","offlineMetodo","offlineIntervaloMin","offlineVerificarSeg","offlineMaxIdadeMin"].filter(function(k){ return p[k] !== undefined; });
                     var _novasP = {};
                     _PREFS_CHAVES.forEach(function(k){ if (p[k] !== undefined) _novasP[k] = p[k]; });
                     var _infoP = _prefsDescreverChave(_chP);
@@ -5874,6 +5935,11 @@ var server=http.createServer(function(req,res){
                     obj.janelaCorrecaoHoraMin=jh;
                 }
                 // Cópia offline (v3.0.0): valida e grava; aplicado em memória mais abaixo.
+                if(p.offlineMetodo !== undefined){
+                    var _om = String(p.offlineMetodo||"").toLowerCase();
+                    if(["auto","arquivo","gbak"].indexOf(_om) < 0){ sendJson({ok:false, erro:"offlineMetodo deve ser auto, arquivo ou gbak."}, 400); return; }
+                    obj.offlineMetodo = _om;
+                }
                 var _offFaixas = [["offlineIntervaloMin",1,1440,"Intervalo mínimo entre cópias (min)"],["offlineVerificarSeg",5,3600,"Verificação do banco principal (s)"],["offlineMaxIdadeMin",5,10080,"Idade máxima da cópia (min)"]];
                 for (var _of = 0; _of < _offFaixas.length; _of++) {
                     var _fx = _offFaixas[_of];
@@ -5967,7 +6033,7 @@ var server=http.createServer(function(req,res){
 
                 // Sincroniza _config em memória com o objeto já processado (sem novo readFileSync).
                 try { Object.assign(_config, obj); appCfg = _config; cfg = _config; } catch(_sc) {}
-                if (_offline && (p.offlineIntervaloMin !== undefined || p.offlineVerificarSeg !== undefined || p.offlineMaxIdadeMin !== undefined)) {
+                if (_offline && (p.offlineMetodo !== undefined || p.offlineIntervaloMin !== undefined || p.offlineVerificarSeg !== undefined || p.offlineMaxIdadeMin !== undefined)) {
                     try { _offline.configurar(_offlineCfg(_config)); } catch (_oc) { logTs("ERRO ao aplicar a configuração da cópia offline: " + _oc.message, "OFFLINE"); }
                 }
 
@@ -6756,6 +6822,11 @@ server.listen(PORT, BIND_ADDR, function(){
 
     // Cópia offline: começa já (não espera o banco principal — ele pode estar
     // justamente em manutenção; a cópia existente é que mantém o relatório no ar).
+    try {
+        var _arqOk = false;
+        try { _arqOk = !!FONTE_ARQUIVO && !/^\\\\/.test(FONTE_ARQUIVO) && fs.existsSync(FONTE_ARQUIVO); } catch (_) {}
+        if (!_arqOk) setTimeout(function() { _procurarBanco(FONTE_ARQUIVO ? "conferindo " + FONTE_ARQUIVO : "arquivo do banco ainda não localizado"); }, 2000);
+    } catch (_) {}
     try { if (_offline) _offline.iniciar(); } catch (eOff) { logTs("ERRO ao iniciar a cópia offline: " + (eOff && eOff.stack || eOff), "OFFLINE"); }
 
     var _aoBancoPronto = function(dbOk){
