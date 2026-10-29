@@ -4,8 +4,8 @@
 
 ### Vendas do dia e consulta de estoque do Small Commerce, lendo uma **cópia offline** do banco Firebird
 
-<img alt="versão: 1.5.6" src="https://img.shields.io/badge/vers%C3%A3o-1.5.6-2563EB?style=flat">
-<img alt="servidor: v3.5.4" src="https://img.shields.io/badge/servidor-v3.5.4-2563EB?style=flat">
+<img alt="versão: 1.6.0" src="https://img.shields.io/badge/vers%C3%A3o-1.6.0-2563EB?style=flat">
+<img alt="servidor: v3.6.0" src="https://img.shields.io/badge/servidor-v3.6.0-2563EB?style=flat">
 <img alt="cópia offline: v1.4.0" src="https://img.shields.io/badge/c%C3%B3pia%20offline-v1.4.0-0D9488?style=flat">
 <img alt="estoque: v1.1.0" src="https://img.shields.io/badge/estoque-v1.1.0-0D9488?style=flat">
 <img alt="gerador: v3.26.1" src="https://img.shields.io/badge/gerador-v3.26.1-2563EB?style=flat">
@@ -85,7 +85,7 @@ Na primeira vez aparece **Preparando a cópia offline**, com barra de progresso,
 | Ver as vendas de hoje | Duplo clique no ícone da bandeja · `http://IP:7735/` |
 | Ver uma data ou um período | Botão **Por período** · bandeja → *Gerar por período...* · `gerar_relatorio_por_data.bat` / `gerar_relatorio_intervalo.bat` |
 | Consultar o estoque | Botão **Estoque** · bandeja → *Consultar estoque* · `http://IP:7735/estoque` |
-| Ler um código de barras | No estoque: botão **Ler código** (câmera) ou leitor USB direto no campo de busca |
+| Ler um código de barras | No estoque: botão **Ler código** (câmera ao vivo, também no celular) ou leitor USB direto no campo de busca |
 | Abrir no celular | Botão **Celular** (QR code) · bandeja → *Abrir no celular (QR code)...* |
 | Saber de quando são os dados | Selo **Offline** no canto da tela (no celular fica recolhido numa bolinha no canto direito: toque para ver; recolhe sozinho em 5 s) · cabeçalho do menu da bandeja |
 | Atualizar a cópia agora | Clique no selo → *Atualizar cópia agora* · bandeja → *Cópia offline do banco → Atualizar a cópia agora* |
@@ -165,7 +165,10 @@ Todos os itens da tabela `ESTOQUE`, lidos da cópia offline (não pesa no caixa)
 - **Detalhe do item:** todas as colunas do cadastro, com botão de copiar código e código de barras.
 - **Totais** do resultado (estoque somado e valor de venda) e **Exportar** para CSV/Excel com todas as colunas.
 - **Contador fixo** que acompanha a rolagem (*mostrando 200 de 1.234 encontrados*) e botão **Topo**.
-- **Leitor de código de barras pela câmera** (o mesmo do *Controle de Vencimento*): EAN-13/8, UPC, Code 128/39/93, ITF, Codabar, QR e Data Matrix, com flash, troca de câmera, zoom e *Tirar foto do código*. As bibliotecas ficam na pasta `leitor/`, então **funciona sem internet**. A câmera ao vivo só é liberada pelo navegador em página segura (`http://localhost:7735`); pela rede, o botão abre a **foto** pela câmera do celular, lida do mesmo jeito.
+- **Leitor de código de barras pela câmera** (o mesmo do *Controle de Vencimento*): EAN-13/8, UPC, Code 128/39/93, ITF, Codabar, QR e Data Matrix, com flash, troca de câmera, zoom e *Tirar foto do código*. As bibliotecas ficam na pasta `leitor/`, então **funciona sem internet**. O navegador só libera a câmera ao vivo em página segura (HTTPS). Por isso o sistema também abre na porta **7736** com HTTPS: no celular, ao tocar em **Ler código**, ele leva para esse endereço (mantendo a busca) e abre o leitor ao vivo sozinho.
+  - **Primeira vez no celular:** aparece um aviso de certificado. Toque em *Avançado* / *Mostrar detalhes* e depois em *Continuar* / *Visitar site*. É o certificado do próprio sistema, gerado nesta máquina, válido só na sua rede. Depois disso não pergunta mais.
+  - **Sem aviso nenhum:** com o Tailscale nesta máquina e *HTTPS Certificates* ligado em <https://login.tailscale.com/admin/dns>, o sistema usa o certificado oficial do Tailscale ao abrir pelo endereço do Tailscale.
+  - Se preferir, *Cancelar* no aviso abre a **foto** pela câmera do celular, lida do mesmo jeito.
 - **Atalhos:** `/`, `F3` ou `Ctrl+F` vão para a busca; `Esc` limpa ou fecha.
 
 ---
@@ -209,6 +212,7 @@ A maior parte é editada pela própria tela (**Configurações**), no computador
 | `gbakPath` | automático | Caminho do `gbak.exe` (padrão: o do Firebird em execução) |
 | `offlineManterFbk` | `true` | Guarda o último backup `.fbk` (segurança extra) |
 | `fastPollCopiaMs` | `2000` | Intervalo da verificação interna sobre a cópia (0 a 60000 ms) |
+| `portaHttps` | porta + 1 (`7736`) | Porta HTTPS do leitor ao vivo no celular (`0` desliga). O instalador libera essa porta no firewall |
 
 ---
 
@@ -238,6 +242,7 @@ Todas as rotas do *Relatórios FDB* continuam disponíveis (veja o `api.ps1`, co
 | `/api/estoque?q=&estoque=&ordem=&ativos=1&contem=1&pagina=&limite=` | GET | Busca (até 1000 por página; `estoque`: todos/com/sem/negativo/abaixo; `contem=0`: só itens que começam com o texto) |
 | `/api/estoque/item?id=N` | GET | Todas as colunas de um item |
 | `/api/estoque/csv?q=...` | GET | CSV com todos os resultados |
+| `/api/https` | GET | Endereço HTTPS para quem pediu (`url`, `confiavel` = certificado do Tailscale) |
 | `/api/navigate/config` · `/hash/periodo` · `/hoje` · `/foco` · `/recarregar` · `/aviso` | GET/POST | Comandam as telas abertas via SSE (inclusive o estoque) |
 
 ---
@@ -254,6 +259,8 @@ Todas as rotas do *Relatórios FDB* continuam disponíveis (veja o `api.ps1`, co
 | Cópia demora muito | Aumente `offlineIntervaloMin` (e `offlineTimeoutMin` se der tempo esgotado). A barra de progresso mostra quanto falta |
 | Estoque: ativos e inativos trocados | O log mostra a linha *Estoque: coluna de situação …* com a coluna e a interpretação usada; envie essa linha ao suporte |
 | Instalador: "falha ao criar o bootstrap" / antivírus acusa `bootstrap.vbs` | Falso positivo. Em *Segurança do Windows → Proteção contra vírus e ameaças → Histórico de proteção*, escolha *Permitir no dispositivo* e rode o instalador de novo |
+| Celular: "Ler código" só tira foto / não abre o leitor ao vivo | Rode o instalador de novo (ele libera a porta 7736 no firewall) e aceite o aviso de certificado na primeira vez. O log mostra `HTTPS (leitor ao vivo no celular): porta 7736` |
+| Instalação nova: "Node.js não foi instalado corretamente" na 1ª vez | Corrigido na versão 1.6.0 (o instalador espera o Node terminar e relê o PATH). Se ainda acontecer, rode o instalador de novo |
 | Qualquer outro problema | `relatorio.log` (bandeja → *Ferramentas → Abrir o log*), categorias `[OFFLINE]` e `[ESTOQUE]` |
 
 ---
@@ -298,6 +305,7 @@ npm test
 | `gerar-relatorio-html.js` | Gerador do relatório (lê a cópia) |
 | `offline-copia.js` | Cópia offline: gbak, progresso, conferência, troca atômica, limpeza |
 | `localizar-banco.js` | Localiza o `SMALL.FDB` (local, rede, terminais) sem conectar no banco |
+| `https-local.js` | Endereço HTTPS (porta 7736) com certificado gerado aqui, para a câmera ao vivo no celular |
 | `estoque-offline.js` · `estoque.html` | Consulta de estoque (dados e tela) |
 | `leitor/` | Leitor de código de barras e bibliotecas locais |
 | `iniciar-tray.ps1` · `api.ps1` | Bandeja do Windows e cliente da API |
