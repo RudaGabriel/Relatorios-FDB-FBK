@@ -1,5 +1,11 @@
 # Changelog
 
+## Relatórios SmallSoft Offline 1.6.2 — 2026-10-29
+
+- Celular: o selo "Offline" expandido (com o botão Estoque) **recolhe ao deslizar** para a direita ou para baixo.
+  Ele acompanha o dedo; um deslize curto volta ao lugar, e deslizar sobre o Estoque não abre a página.
+- `servidor-relatorio.js` 3.6.1.
+
 ## Relatórios SmallSoft Offline 1.6.1 — 2026-10-29
 
 - Estoque: **botão "X" para limpar a busca**, visível em qualquer aparelho (o "X" nativo do campo de busca não

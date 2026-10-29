@@ -4,8 +4,8 @@
 
 ### Vendas do dia e consulta de estoque do Small Commerce, lendo uma **cópia offline** do banco Firebird
 
-<img alt="versão: 1.6.1" src="https://img.shields.io/badge/vers%C3%A3o-1.6.1-2563EB?style=flat">
-<img alt="servidor: v3.6.0" src="https://img.shields.io/badge/servidor-v3.6.0-2563EB?style=flat">
+<img alt="versão: 1.6.2" src="https://img.shields.io/badge/vers%C3%A3o-1.6.2-2563EB?style=flat">
+<img alt="servidor: v3.6.1" src="https://img.shields.io/badge/servidor-v3.6.1-2563EB?style=flat">
 <img alt="cópia offline: v1.4.0" src="https://img.shields.io/badge/c%C3%B3pia%20offline-v1.4.0-0D9488?style=flat">
 <img alt="estoque: v1.1.0" src="https://img.shields.io/badge/estoque-v1.1.0-0D9488?style=flat">
 <img alt="gerador: v3.26.1" src="https://img.shields.io/badge/gerador-v3.26.1-2563EB?style=flat">
@@ -87,7 +87,7 @@ Na primeira vez aparece **Preparando a cópia offline**, com barra de progresso,
 | Consultar o estoque | Botão **Estoque** · bandeja → *Consultar estoque* · `http://IP:7735/estoque` |
 | Ler um código de barras | No estoque: botão **Ler código** (câmera ao vivo, também no celular) ou leitor USB direto no campo de busca |
 | Abrir no celular | Botão **Celular** (QR code) · bandeja → *Abrir no celular (QR code)...* |
-| Saber de quando são os dados | Selo **Offline** no canto da tela (no celular fica recolhido numa bolinha no canto direito: toque para ver; recolhe sozinho em 5 s) · cabeçalho do menu da bandeja |
+| Saber de quando são os dados | Selo **Offline** no canto da tela (no celular fica recolhido numa bolinha no canto direito: toque para ver; recolhe sozinho em 5 s ou ao deslizar para o lado/para baixo) · cabeçalho do menu da bandeja |
 | Atualizar a cópia agora | Clique no selo → *Atualizar cópia agora* · bandeja → *Cópia offline do banco → Atualizar a cópia agora* |
 | Acompanhar uma cópia em andamento | Selo e página de espera mostram **porcentagem, tempo decorrido e quanto falta**; a bandeja mostra *copiando N%* |
 | Configurar | Botão **Configurações** · bandeja → *Configurações → Editar configurações...* (funciona com qualquer tela aberta, inclusive o estoque; o botão **Voltar** retorna à tela de onde você veio) |
