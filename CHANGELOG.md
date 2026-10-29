@@ -2,8 +2,10 @@
 
 ## Relatórios SmallSoft Offline 1.6.2 — 2026-10-29
 
-- Celular: o selo "Offline" expandido (com o botão Estoque) **recolhe ao deslizar** para a direita ou para baixo.
-  Ele acompanha o dedo; um deslize curto volta ao lugar, e deslizar sobre o Estoque não abre a página.
+- Celular: o selo "Offline" volta para o **canto esquerdo** (à direita ficava em cima do botão "voltar ao topo"
+  do relatório).
+- Celular: o selo expandido (com o botão Estoque) **recolhe ao deslizar** para a esquerda ou para baixo. Ele
+  acompanha o dedo; um deslize curto volta ao lugar, e deslizar sobre o Estoque não abre a página.
 - `servidor-relatorio.js` 3.6.1.
 
 ## Relatórios SmallSoft Offline 1.6.1 — 2026-10-29
