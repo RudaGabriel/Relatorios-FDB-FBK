@@ -1,6 +1,6 @@
 {
   "name": "relatorios-smallsoft-offline",
-  "version": "1.6.1",
+  "version": "1.6.2",
   "private": true,
   "description": "Relatórios SmallSoft Offline: painel de vendas e consulta de estoque do Small Commerce lendo uma cópia offline do banco Firebird",
   "author": "Ruda Gabriel",

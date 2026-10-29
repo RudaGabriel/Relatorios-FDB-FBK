@@ -33,7 +33,7 @@
 // Registrada na linha de início do log para que se saiba, ao investigar
 // qualquer ocorrência, qual versão do servidor estava no ar naquele momento
 // (o gerar-relatorio-html.js já faz o mesmo via SCRIPT_VERSION).
-const SERVER_VERSION = "3.6.0";
+const SERVER_VERSION = "3.6.1";
 
 // ===== Logger Global seguro — flush debounced 300ms =====
 const _fs = require('fs');
@@ -4404,9 +4404,9 @@ var _offlineSeloCliente = function() {
             "#__off_pop .pbt{font-size:12px;color:#94a3b8}#__off_pop .pbe{font-weight:600;color:#e2e8f0}" +
             "#__off_pop .bt[disabled]{opacity:.6;cursor:default}#__off_pop .cf{margin-top:10px;display:grid;grid-template-columns:1fr auto;gap:6px;align-items:center}" +
             "#__off_pop .cf select,#__off_pop .cf input{background:#1e293b;color:#e2e8f0;border:1px solid rgba(148,163,184,.35);border-radius:7px;padding:4px 6px;max-width:150px}" +
-            // Celular (v3.5.4): no canto DIREITO, acima da barra de botões.
-            "@media (max-width:680px){#__off_box{left:auto;right:12px;justify-content:flex-end;bottom:calc(76px + env(safe-area-inset-bottom,0px))}" +
-            "#__off_pop{left:auto;right:12px;bottom:calc(116px + env(safe-area-inset-bottom,0px))}}" +
+            // Celular: canto ESQUERDO, acima da barra de botões (v3.6.1: à direita ele
+            // ficava em cima do botão "voltar ao topo" do relatório).
+            "@media (max-width:680px){#__off_box{bottom:calc(76px + env(safe-area-inset-bottom,0px))}#__off_pop{bottom:calc(116px + env(safe-area-inset-bottom,0px))}}" +
             // Celular (v3.5.3): recolhido = só a bolinha de status num botão redondo,
             // para não cobrir a lista nem as janelas. Tocar expande; recolhe em 5 s.
             "#__off_box.rec #__est_chip,#__off_box.rec #__off_chip .t{display:none}" +
@@ -4534,13 +4534,48 @@ var _offlineSeloCliente = function() {
         recolher();
         chip.onclick = function(e) {
             e.stopPropagation();
+            if (arrastou) return;
             if (caixa.className === "rec") { expandir(); return; }
             if (pop.style.display === "none") {
                 pop.style.display = ""; msgAcao = ""; if (ult) desenharPop(ult); buscar();
                 clearTimeout(tRecolher); tRecolher = null;
             } else fecharPop();
         };
-        est.addEventListener("click", function() { clearTimeout(tRecolher); tRecolher = null; });
+        est.addEventListener("click", function(e) { if (arrastou) { e.preventDefault(); return; } clearTimeout(tRecolher); tRecolher = null; });
+        // Celular (v3.6.1): expandido, dá para DESLIZAR para recolher — para a
+        // esquerda (borda onde o selo fica) ou para baixo. O selo acompanha o dedo.
+        var tIni = null, arrastou = false;
+        caixa.addEventListener("touchstart", function(e) {
+            if (!ehMovel() || caixa.className === "rec" || !e.touches || e.touches.length !== 1) { tIni = null; return; }
+            tIni = { x: e.touches[0].clientX, y: e.touches[0].clientY }; arrastou = false;
+            caixa.style.transition = "none";
+        }, { passive: true });
+        caixa.addEventListener("touchmove", function(e) {
+            if (!tIni || !e.touches || !e.touches.length) return;
+            var dx = e.touches[0].clientX - tIni.x, dy = e.touches[0].clientY - tIni.y;
+            if (!arrastou && Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+            arrastou = true;
+            var mx = Math.max(0, -dx), my = Math.max(0, dy);
+            caixa.style.transform = mx >= my ? "translateX(" + (-mx) + "px)" : "translateY(" + my + "px)";
+            caixa.style.opacity = String(Math.max(0.35, 1 - Math.max(mx, my) / 160));
+        }, { passive: true });
+        var soltar = function(e) {
+            if (!tIni) return;
+            var t = (e.changedTouches && e.changedTouches[0]) || null;
+            var dx = t ? t.clientX - tIni.x : 0, dy = t ? t.clientY - tIni.y : 0;
+            tIni = null;
+            caixa.style.transition = "transform .18s ease, opacity .18s ease";
+            caixa.style.transform = ""; caixa.style.opacity = "";
+            if (arrastou && (dx < -45 || dy > 35)) {
+                pop.style.display = "none";
+                clearTimeout(tRecolher); tRecolher = null;
+                recolher();
+            }
+            // O toque que virou arrasto não conta como clique (não abre nada).
+            if (arrastou) setTimeout(function() { arrastou = false; }, 350);
+        };
+        caixa.addEventListener("touchend", soltar);
+        caixa.addEventListener("touchcancel", soltar);
         document.addEventListener("click", function(e) { if (pop.style.display !== "none" && !pop.contains(e.target) && !chip.contains(e.target)) fecharPop(); });
         document.addEventListener("keydown", function(e) { if (e.key === "Escape" && pop.style.display !== "none") fecharPop(); });
         buscar();
