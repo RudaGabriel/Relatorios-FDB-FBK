@@ -3,12 +3,12 @@
 # Instancia unica via mutex global.
 # Abrir Relatorio: se ja tem aba aberta (SSE), foca ela. Se nao, abre browser.
 #
-# @version 1.6.3
+# @version 1.6.4
 # @author Ruda Gabriel
 # @changelog
 #   (Historico completo das versoes: CHANGELOG.md no repositorio.)
-#   1.6.3 - 2026-10-30 - Aviso inicial pelo estado da COPIA offline: nao mostra mais
-#     "Nao foi possivel conectar ao banco!" enquanto a primeira copia e' preparada.
+#   1.6.4 - 2026-10-30 - Watchdog mais tolerante em maquina fraca (5 checagens sem resposta,
+#     ~1 min, cada uma no log) e mais threads de E/S para o Node (UV_THREADPOOL_SIZE).
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -160,14 +160,14 @@ function Test-ServidorAtivo {
     # 1) Teste TCP rapido (< 500 ms)
     try {
         $tc = New-Object Net.Sockets.TcpClient
-        $ok = $tc.ConnectAsync("127.0.0.1", $PORT).Wait(500)
+        $ok = $tc.ConnectAsync("127.0.0.1", $PORT).Wait(2000)
         $tc.Close()
         if (-not $ok) { return $false }
     } catch { return $false }
 
     # 2) Confirma via HTTP (garante que o Node ja subiu o listener)
     try {
-        $r = Invoke-WebRequest "$ADDR_LOCAL/api/db-status" -UseBasicParsing -TimeoutSec 3 -ErrorAction Stop
+        $r = Invoke-WebRequest "$ADDR_LOCAL/api/db-status" -UseBasicParsing -TimeoutSec 6 -ErrorAction Stop
         return ($r.StatusCode -eq 200)
     } catch { return $false }
 }
@@ -213,6 +213,8 @@ $psi.Arguments       = "`"$serverScript`" --no-browser"
 # linha de comando). Requer UseShellExecute = $false (definido abaixo).
 $psi.EnvironmentVariables["RELATORIO_FB_USER"] = $FB_USER
 $psi.EnvironmentVariables["RELATORIO_FB_PASS"] = $FB_PASS
+# v1.6.4: mais threads de E/S no Node - uma unidade de rede lenta nao segura o servidor.
+if (-not $psi.EnvironmentVariables["UV_THREADPOOL_SIZE"]) { $psi.EnvironmentVariables["UV_THREADPOOL_SIZE"] = "16" }
 $psi.WindowStyle     = [System.Diagnostics.ProcessWindowStyle]::Hidden
 $psi.CreateNoWindow  = $true
 $psi.UseShellExecute = $false
@@ -1639,12 +1641,17 @@ $watchTimer.Add_Tick({
         }
 
         # Processo "vivo" segundo o SO - confirma que esta REALMENTE respondendo.
+        # v1.6.4: mais tolerante em maquina fraca (TCP 2 s, HTTP 6 s, 5 falhas seguidas,
+        # ~1 min) e cada falha vai para o log - antes 3 falhas de 3 s (~30 s) bastavam
+        # para reiniciar o servidor no meio de uma copia pesada.
         if (Test-ServidorAtivo) {
+            if ($script:falhasConsecutivas -gt 0) { Write-TrayLog "Servidor voltou a responder (apos $($script:falhasConsecutivas) checagem(ns) sem resposta)." }
             $script:falhasConsecutivas = 0
         } else {
             $script:falhasConsecutivas++
-            if ($script:falhasConsecutivas -ge 3) {
-                Write-TrayLog "Servidor nao responde ha ~30s (processo vivo, porem travado) - forcando reinicio." "ERRO"
+            Write-TrayLog "Servidor sem resposta na checagem $($script:falhasConsecutivas)/5." "AVISO"
+            if ($script:falhasConsecutivas -ge 5) {
+                Write-TrayLog "Servidor nao responde ha ~1 min (processo vivo, porem travado) - forcando reinicio." "ERRO"
                 $pidTravado = $script:nodeProc.Id
                 try { Start-Process -FilePath "taskkill.exe" -ArgumentList "/F","/T","/PID","$pidTravado" -WindowStyle Hidden -Wait -ErrorAction Stop } catch {}
                 $script:nodeProc = $null

@@ -2,7 +2,7 @@
 
 /**
  * offline-copia.js
- * @version 1.4.0
+ * @version 1.5.0
  * @author Ruda Gabriel
  * @description Cópia offline do banco do Small Commerce (Relatórios SmallSoft Offline).
  * @changelog
@@ -69,6 +69,14 @@
  *
  * Este arquivo não depende de nada do servidor: tudo chega por `opcoes`
  * (o que também permite testá-lo isolado, com gbak e Firebird simulados).
+ *
+ * 1.5.0 — Atributos do arquivo do banco principal lidos SEM travar o servidor:
+ *         antes era fs.statSync, e com o banco numa unidade de rede lenta ou
+ *         fora do ar (H:\, \\servidor) o servidor inteiro congelava até o
+ *         Windows desistir (20 a 60 s) — a bandeja achava que tinha travado e
+ *         reiniciava em ciclo. Agora é assíncrono, com tempo limite e uma
+ *         leitura por vez.
+ * Histórico completo das versões: CHANGELOG.md no repositório.
  */
 
 const fs = require("fs");
@@ -78,7 +86,7 @@ const cp = require("child_process");
 const { pipeline } = require("stream");
 const net = require("net");
 
-const VERSAO = "1.4.0";
+const VERSAO = "1.5.0";
 const MANIFESTO = "copia-offline.json";
 const PREFIXO = "SMALL_OFFLINE_";
 // Únicos nomes que este módulo cria — e os ÚNICOS que ele apaga.
@@ -422,13 +430,29 @@ function criarCopiaOffline(opcoes) {
         } catch (e) { if (!fim) { fim = true; clearTimeout(t); cb(e); } }
     };
 
+    // ── Atributos de arquivo SEM travar o servidor (1.5.0) ──────────────────
+    // fs.statSync numa unidade de rede lenta/fora do ar congela o processo
+    // inteiro até o Windows desistir. Aqui: fs.stat assíncrono com prazo.
+    // Uma leitura por caminho de cada vez (as que estouram o prazo continuam
+    // pendentes no Windows; não empilha outras atrás delas).
+    const statPendente = new Set();
+    const statLimite = (arq, prazoMs, cb) => {
+        const k = String(arq || "");
+        if (!k) { cb(new Error("caminho vazio")); return; }
+        if (statPendente.has(k)) { const e = new Error("o arquivo ainda não respondeu à leitura anterior (rede lenta ou fora do ar)"); e.code = "ETIMEDOUT"; cb(e); return; }
+        statPendente.add(k);
+        let fim = false;
+        const t = setTimeout(() => { if (fim) return; fim = true; const e = new Error("sem resposta em " + Math.round(prazoMs / 1000) + " s (rede lenta ou fora do ar)"); e.code = "ETIMEDOUT"; cb(e); }, prazoMs);
+        if (t.unref) t.unref();
+        fs.stat(k, (e, s) => { statPendente.delete(k); if (fim) return; fim = true; clearTimeout(t); cb(e, s); });
+    };
     // ── Espaço em disco ─────────────────────────────────────────────────────
     const espacoLivre = () => {
         try { if (fs.statfsSync) { const s = fs.statfsSync(pasta); return Number(s.bavail) * Number(s.bsize); } } catch (_) {}
         return -1; // desconhecido
     };
     const tamanhoFonte = f => {
-        if (f && f.arquivo) { try { return fs.statSync(f.arquivo).size; } catch (_) {} }
+        if (f && f.arquivo && st.tamFonte && st.tamFonte.arq === f.arquivo) return st.tamFonte.tam;
         if (f && f.path && _ehLocal(f.host)) { try { return fs.statSync(f.path).size; } catch (_) {} }
         try { return fs.statSync(path.join(pasta, FBK_ULTIMO)).size * 2; } catch (_) {}
         return st.ativa && st.ativa.tamanho ? st.ativa.tamanho : 0;
@@ -702,8 +726,8 @@ function criarCopiaOffline(opcoes) {
         let tentativa = 0, esperas = 0;
         const tentar = () => {
             if (parado) { cb(new Error("cancelada")); return; }
-            let s0;
-            try { s0 = fs.statSync(src); } catch (e) { cb(e); return; }
+            statLimite(src, 15000, (e0, s0) => {
+            if (e0) { cb(e0); return; }
             if (!s0.isFile() || s0.size <= 0) { cb(new Error("arquivo do banco vazio ou inválido: " + src)); return; }
             if (Date.now() - s0.mtimeMs < quietoMs && esperas < 20) {
                 esperas++;
@@ -723,8 +747,10 @@ function criarCopiaOffline(opcoes) {
             pipeline(leitor, escritor, (e) => {
                 if (e) { cb(e); return; }
                 try { if (ganchoTeste && typeof ganchoTeste.depoisDeLer === "function") ganchoTeste.depoisDeLer(src, tentativa); } catch (_) {}
-                let s1, d;
-                try { s1 = fs.statSync(src); d = fs.statSync(dst); } catch (e2) { cb(e2); return; }
+                statLimite(src, 15000, (e2, s1) => {
+                if (e2) { cb(e2); return; }
+                let d;
+                try { d = fs.statSync(dst); } catch (e3) { cb(e3); return; } // dst: pasta local das cópias
                 const mudou = s1.size !== s0.size || Math.round(s1.mtimeMs) !== Math.round(s0.mtimeMs) || d.size !== s0.size;
                 if (!mudou) { cb(null, inicio); return; }
                 if (tentativa < tentativasArquivo) {
@@ -734,6 +760,8 @@ function criarCopiaOffline(opcoes) {
                     return;
                 }
                 cb(new Error("o banco foi gravado durante a cópia do arquivo em " + tentativa + " tentativa(s) — cópia descartada"));
+                });
+            });
             });
         };
         tentar();
@@ -771,10 +799,13 @@ function criarCopiaOffline(opcoes) {
     // Banco principal nesta máquina: tamanho + data de alteração do arquivo
     // (só leitura dos atributos, nunca abre o banco). Em outra máquina: não dá
     // para olhar o arquivo — a cópia é refeita a cada 3× o intervalo mínimo.
-    const assinaturaArquivo = f => {
-        if (!f || !f.arquivo) return { remoto: true };
-        try { const s = fs.statSync(f.arquivo); return { sig: s.size + "|" + Math.round(s.mtimeMs) }; }
-        catch (e) { return { erro: e && e.code === "ENOENT" ? "Arquivo do banco principal não encontrado: " + f.arquivo : "Não consegui ler os atributos do banco principal (" + f.arquivo + "): " + _txt(e && e.message, 200) }; }
+    const assinaturaArquivo = (f, cb) => {
+        if (!f || !f.arquivo) { cb({ remoto: true }); return; }
+        statLimite(f.arquivo, 8000, (e, s) => {
+            if (e) { cb({ erro: e.code === "ENOENT" ? "Arquivo do banco principal não encontrado: " + f.arquivo : "Não consegui ler os atributos do banco principal (" + f.arquivo + "): " + _txt(e.message, 200) }); return; }
+            st.tamFonte = { arq: f.arquivo, tam: s.size };
+            cb({ sig: s.size + "|" + Math.round(s.mtimeMs) });
+        });
     };
     const chaveFonte = x => [String(x && x.host || ""), _norm(x && x.path), _norm(x && x.arquivo)].join("|");
 
@@ -804,7 +835,16 @@ function criarCopiaOffline(opcoes) {
         const f = fonteAtual();
         if (!f) { agendarVerificacao(verificarMs); return; }
         st.ultimaVerificacao = Date.now();
-        const a = assinaturaArquivo(f);
+        assinaturaArquivo(f, a => {
+            try { continuarVerificacao(f, a); }
+            catch (e) {
+                log("Cópia offline: erro inesperado na verificação (" + _txt(e && (e.stack || e.message || e), 300) + ") — tentando de novo.");
+                agendarVerificacao(verificarMs);
+            }
+        });
+    };
+    const continuarVerificacao = (f, a) => {
+        if (parado) return;
         if (a.erro) {
             if (st.fonteOk !== false || st.fonteErroDe !== "arquivo") {
                 st.fonteOk = false; st.fonteDesde = Date.now(); st.fonteErro = a.erro; st.fonteErroDe = "arquivo";
@@ -830,11 +870,11 @@ function criarCopiaOffline(opcoes) {
                 // O próprio backup mexe no cabeçalho do banco (contador de transações):
                 // a assinatura é lida DEPOIS dele, senão toda cópia pediria outra.
                 setTimeout(() => {
-                    if (r && r.ok && st.ativa && st.ativa.origem === "fdb") {
-                        const d = assinaturaArquivo(f);
-                        if (d.sig) { st.ativa.sig = d.sig; gravarManifesto(); }
-                    }
-                    agendarVerificacao(verificarMs);
+                    if (!(r && r.ok && st.ativa && st.ativa.origem === "fdb")) { agendarVerificacao(verificarMs); return; }
+                    assinaturaArquivo(f, d => {
+                        if (d.sig && st.ativa) { st.ativa.sig = d.sig; gravarManifesto(); }
+                        agendarVerificacao(verificarMs);
+                    });
                 }, 3000);
             });
             return;

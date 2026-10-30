@@ -1,8 +1,11 @@
 "use strict";
+// v3.6.2: leituras de arquivo na rede que demoram ocupam threads de E/S do Node
+// (4 por padrão). Com mais threads, uma unidade de rede lenta não segura o resto.
+if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
 
 /**
  * servidor-relatorio.js — Relatórios SmallSoft Offline
- * @version 3.5.0
+ * @version 3.6.2
  * @author Ruda Gabriel
  * @description Servidor HTTP + Firebird de relatórios com SSE, fast-poll e
  *              geração em subprocesso. SOMENTE LEITURA no banco.
@@ -11,21 +14,10 @@
  *              principal em atualização, manutenção ou fora do ar.
  * @changelog
  *   (Histórico completo das versões: CHANGELOG.md no repositório.)
- *   3.5.0 - 2026-10-29 - Barra de progresso da cópia offline (selo, painel, tela de espera).
- *   3.4.0 - 2026-10-29 - Terminal com banco na rede: endereços candidatos para o gbak e o que
- *     funcionar fica salvo; cópia periódica (offlineCopiaACadaMin).
- *   3.3.0 - 2026-10-29 - Leitor de código de barras (Controle de Vencimento) no estoque, em
- *     /leitor/ com bibliotecas locais; padrão da cópia volta a ser o gbak direto.
- *   3.2.0 - 2026-10-29 - Cópia pelo ARQUIVO (pasta temporária → gbak local), banco em
- *     rede (unidade/compartilhamento), procura do SMALL.FDB sem conectar (localizar-banco.js).
- *   3.1.0 - 2026-10-28 - Nenhuma conexão direta com o banco principal (só a cópia; sem
- *     verificação por consulta, sem leitura direta, sem varredura de rede); selo "auto" removido.
- *   3.0.0 - 2026-10-28 - Relatórios SmallSoft Offline: cópia offline do banco
- *     (gbak somente leitura → cópia local read_only),
- *     /api/offline*, selo "Offline" na tela, importação de .fbk, porta padrão 7735.
- *   2.22.0 - 2026-10-28 22:00 - Recarga desligada: a venda nova entra sem recarregar a página.
- *     - Chama window.__atualizarSemRecarregar (gerador 3.26.0+); o aviso "Há vendas novas"
- *       fica só para quando a troca falhar. Selo do canto: "ao vivo".
+ *   3.6.2 - 2026-10-30 - Servidor nunca trava esperando a rede: atributos do banco principal
+ *     (unidade de rede/compartilhamento) lidos de forma assíncrona e com prazo; mais
+ *     threads de E/S. Antes, com a rede lenta, a bandeja via o servidor "travado" e o
+ *     reiniciava em ciclo.
  */
 
 
@@ -33,7 +25,7 @@
 // Registrada na linha de início do log para que se saiba, ao investigar
 // qualquer ocorrência, qual versão do servidor estava no ar naquele momento
 // (o gerar-relatorio-html.js já faz o mesmo via SCRIPT_VERSION).
-const SERVER_VERSION = "3.6.1";
+const SERVER_VERSION = "3.6.2";
 
 // ===== Logger Global seguro — flush debounced 300ms =====
 const _fs = require('fs');
@@ -1056,7 +1048,15 @@ var FONTE_ARQUIVO = (function() {
     var a = String(cfg.fdbArquivo || "").trim();
     if (a) return a;
     if (/^\\\\/.test(FONTE_PATH || "")) return FONTE_PATH;
-    try { if ((!FONTE_HOST || FONTE_HOST === "127.0.0.1" || FONTE_HOST === "localhost") && FONTE_PATH && fs.existsSync(FONTE_PATH)) return FONTE_PATH; } catch (_) {}
+    // v3.6.2: existsSync só no disco do sistema — numa unidade de rede lenta ele travaria a
+    // inicialização. Outros discos/unidades: a cópia offline confere depois, sem travar.
+    try {
+        if ((!FONTE_HOST || FONTE_HOST === "127.0.0.1" || FONTE_HOST === "localhost") && FONTE_PATH) {
+            var _disco = String(process.env.SystemDrive || "C:").slice(0, 1).toUpperCase();
+            if (process.platform !== "win32" || String(FONTE_PATH).slice(0, 1).toUpperCase() === _disco) { if (fs.existsSync(FONTE_PATH)) return FONTE_PATH; }
+            else if (/^[A-Za-z]:\\/.test(FONTE_PATH)) return FONTE_PATH;
+        }
+    } catch (_) {}
     return "";
 })();
 var _offline = null;
@@ -6994,13 +6994,24 @@ server.listen(PORT, BIND_ADDR, function(){
 
     // Cópia offline: começa já (não espera o banco principal — ele pode estar
     // justamente em manutenção; a cópia existente é que mantém o relatório no ar).
+    // v3.6.2: conferência assíncrona e com prazo (fs.existsSync numa unidade de rede
+    // lenta travava o servidor na inicialização e a bandeja o reiniciava).
     try {
-        var _arqOk = false, _gbakOk = true;
-        try { _arqOk = !!FONTE_ARQUIVO && !/^\\\\/.test(FONTE_ARQUIVO) && fs.existsSync(FONTE_ARQUIVO); } catch (_) {}
-        // "127.0.0.1 + caminho que não existe nesta máquina" (terminal com o banco na rede):
-        // procura o servidor de verdade, senão o gbak nunca acha o banco.
-        try { if ((!FONTE_HOST || FONTE_HOST === "127.0.0.1" || FONTE_HOST === "localhost") && FONTE_PATH && !/^\\\\/.test(FONTE_PATH) && !fs.existsSync(FONTE_PATH)) _gbakOk = false; } catch (_) {}
-        if (!_arqOk || !_gbakOk) setTimeout(function() { _procurarBanco(FONTE_ARQUIVO ? "conferindo " + FONTE_ARQUIVO : "arquivo do banco ainda não localizado"); }, 2000);
+        var _existe = function(arq, cb) {
+            if (!arq || /^\\\\/.test(arq)) { cb(false); return; }
+            var fim = false;
+            var t = setTimeout(function() { if (!fim) { fim = true; cb(false); } }, 6000);
+            fs.stat(arq, function(e, st) { if (fim) return; fim = true; clearTimeout(t); cb(!e && st && st.isFile()); });
+        };
+        _existe(FONTE_ARQUIVO, function(arqOk) {
+            // "127.0.0.1 + caminho que não existe nesta máquina" (terminal com o banco na rede):
+            // procura o servidor de verdade, senão o gbak nunca acha o banco.
+            var local = (!FONTE_HOST || FONTE_HOST === "127.0.0.1" || FONTE_HOST === "localhost") && FONTE_PATH && !/^\\\\/.test(FONTE_PATH);
+            var seguir = function(gbakOk) {
+                if (!arqOk || !gbakOk) setTimeout(function() { _procurarBanco(FONTE_ARQUIVO ? "conferindo " + FONTE_ARQUIVO : "arquivo do banco ainda não localizado"); }, 2000);
+            };
+            if (!local) seguir(true); else _existe(FONTE_PATH, seguir);
+        });
     } catch (_) {}
     try { if (_offline) _offline.iniciar(); } catch (eOff) { logTs("ERRO ao iniciar a cópia offline: " + (eOff && eOff.stack || eOff), "OFFLINE"); }
 

@@ -2,7 +2,7 @@
 
 /**
  * localizar-banco.js
- * @version 1.1.0
+ * @version 1.2.0
  * @author Ruda Gabriel
  * @description Acha o SMALL.FDB do Small Commerce — nesta máquina ou na rede —
  *              SEM CONECTAR NO BANCO (Relatórios SmallSoft Offline).
@@ -24,11 +24,11 @@
  *             direto (reserva da cópia offline); "" se não se sabe.
  * Nada aqui abre o banco: só verifica se o arquivo existe (atributos).
  *
- * 1.1.0 - 2026-10-29 - Terminal com o banco numa unidade de rede (ex.: H:\SMALL.FDB):
- *   descobre a máquina de origem ("net use H:") e devolve `candidatos` {host, path}
- *   para o gbak tentar no servidor Firebird dela (caminhos padrão do Small). Nunca
- *   mais devolve 127.0.0.1 + caminho que não existe nesta máquina. Arquivos de
- *   configuração com servidor e caminho em chaves separadas também são lidos.
+ * 1.2.0 - 2026-10-30 - Nunca trava o servidor: as letras de unidade (D: a Z:) eram
+ *   testadas com fs.existsSync, e uma unidade de rede desconectada ou lenta congelava o
+ *   processo inteiro por dezenas de segundos (a bandeja reiniciava o servidor). Agora o
+ *   teste é assíncrono, em paralelo e com prazo; o caminho local "127.0.0.1" também.
+ * Histórico completo das versões: CHANGELOG.md no repositório.
  */
 
 const fs = require("fs");
@@ -37,7 +37,7 @@ const os = require("os");
 const net = require("net");
 const cp = require("child_process");
 
-const VERSAO = "1.1.0";
+const VERSAO = "1.2.0";
 const WIN = process.platform === "win32";
 // Onde o SMALL.FDB costuma ficar dentro de uma unidade ou compartilhamento.
 const SUBCAMINHOS = [
@@ -62,7 +62,6 @@ const CAMINHOS_SERVIDOR = [
     "C:\\SmallCommerce\\SMALL.FDB",
     "C:\\Dados\\SMALL.FDB"
 ];
-const _localExiste = p => { try { return fs.statSync(p).isFile(); } catch (_) { return false; } };
 
 /**
  * De qual máquina vem um caminho de rede: \\host\share\resto, ou unidade mapeada
@@ -87,6 +86,15 @@ function origemDaUnidade(arquivo, prazoMs) {
 const _uniq = a => { const vis = new Set(); return a.filter(x => { const k = String(x || "").toUpperCase(); if (!x || vis.has(k)) return false; vis.add(k); return true; }); };
 
 /** stat com prazo: caminho de rede inacessível pode demorar dezenas de segundos. */
+/** Raízes (D:\, E:\...) que respondem em até `prazoMs` — em paralelo, sem travar. */
+function raizesExistentes(lista, prazoMs) {
+    return Promise.all(lista.map(r => new Promise(resolve => {
+        let fim = false;
+        const t = setTimeout(() => { if (!fim) { fim = true; resolve(null); } }, prazoMs || 2500);
+        fs.stat(r, e => { if (fim) return; fim = true; clearTimeout(t); resolve(e ? null : r); });
+    }))).then(rs => rs.filter(Boolean));
+}
+
 function existeArquivo(arq, prazoMs) {
     return new Promise(resolve => {
         let fim = false;
@@ -215,7 +223,11 @@ async function localizarBanco(opcoes) {
     };
     // Endereço para o gbak (reserva): o do config, ou o primeiro citado pelo Small.
     const pastasSmall = o.pastasIni || pastasPadrao();
-    const refs = lerReferencias(pastasSmall.concat(cfgPath && !_ehUNC(cfgPath) && _ehLocal(cfgHost) ? [path.dirname(cfgPath)] : []));
+    // Pasta do caminho do config só se estiver no disco do sistema (C:): leitura síncrona
+    // numa unidade de rede lenta travaria o servidor.
+    const _discoSistema = String(process.env.SystemDrive || "C:").slice(0, 1).toUpperCase();
+    const _pastaCfgOk = cfgPath && !_ehUNC(cfgPath) && _ehLocal(cfgHost) && (!WIN || String(cfgPath).slice(0, 1).toUpperCase() === _discoSistema);
+    const refs = lerReferencias(pastasSmall.concat(_pastaCfgOk ? [path.dirname(cfgPath)] : []));
     const servidor = (cfgPath && !_ehLocal(cfgHost) && !_ehUNC(cfgPath)) ? { host: cfgHost, path: cfgPath }
         : (refs.servidores.find(r => !_ehLocal(r.host)) || null);
     const origemUnidade = typeof o.origemUnidade === "function" ? o.origemUnidade : (a => origemDaUnidade(a, 6000));
@@ -224,24 +236,25 @@ async function localizarBanco(opcoes) {
     const resultado = async (achado) => {
         const r = { arquivo: achado ? achado.arquivo : "", origem: achado ? achado.origem : "", host: "", path: "", candidatos: [] };
         const cand = [];
-        const add = (h, p) => {
+        const add = async (h, p) => {
             if (!h || !p || _ehUNC(p)) return;
-            if (_ehLocal(h) && !_localExiste(p)) return; // nunca "127.0.0.1 + caminho que não existe aqui"
+            // nunca "127.0.0.1 + caminho que não existe aqui" (teste assíncrono, com prazo: não trava)
+            if (_ehLocal(h) && !(await existeArquivo(p, 3000))) return;
             if (!cand.some(c => c.host.toUpperCase() === String(h).toUpperCase() && c.path.toUpperCase() === String(p).toUpperCase())) cand.push({ host: String(h), path: String(p) });
         };
         let orig = null;
         if (achado && (achado.rede || /^[A-Za-z]:\\/.test(achado.arquivo))) { try { orig = await origemUnidade(achado.arquivo); } catch (_) { orig = null; } }
         if (orig && orig.host) achado.rede = true;
-        if (achado && !achado.rede) add("127.0.0.1", achado.arquivo); // banco nesta máquina
-        if (servidor && (!orig || _ehLocal(servidor.host) || orig.host.toUpperCase() === String(servidor.host).toUpperCase() || !achado)) add(servidor.host, servidor.path);
+        if (achado && !achado.rede) await add("127.0.0.1", achado.arquivo); // banco nesta máquina
+        if (servidor && (!orig || _ehLocal(servidor.host) || orig.host.toUpperCase() === String(servidor.host).toUpperCase() || !achado)) await add(servidor.host, servidor.path);
         if (orig && orig.host) {
             // Compartilhamento administrativo (\\SRV\C$\...) já diz o caminho no servidor.
-            if (/^[A-Za-z]\$$/.test(orig.share)) add(orig.host, orig.share[0].toUpperCase() + ":\\" + orig.resto);
-            if (servidor) add(orig.host, servidor.path);
-            CAMINHOS_SERVIDOR.forEach(p => add(orig.host, p));
+            if (/^[A-Za-z]\$$/.test(orig.share)) await add(orig.host, orig.share[0].toUpperCase() + ":\\" + orig.resto);
+            if (servidor) await add(orig.host, servidor.path);
+            for (const p of CAMINHOS_SERVIDOR) await add(orig.host, p);
         }
-        if (servidor) add(servidor.host, servidor.path);
-        if (cfgPath && !_ehUNC(cfgPath)) add(cfgHost || "127.0.0.1", cfgPath);
+        if (servidor) await add(servidor.host, servidor.path);
+        if (cfgPath && !_ehUNC(cfgPath)) await add(cfgHost || "127.0.0.1", cfgPath);
         r.candidatos = cand;
         if (cand.length) { r.host = cand[0].host; r.path = cand[0].path; }
         return r;
@@ -257,7 +270,7 @@ async function localizarBanco(opcoes) {
     a = await testar(refs.arquivos, "configuração do Small Commerce");
     if (a) { a.rede = _ehUNC(a.arquivo); return resultado(a); }
     // 4. unidades de rede mapeadas / raízes extras
-    const raizes = o.raizes || (WIN ? "DEFGHIJKLMNOPQRSTUVWXYZ".split("").map(l => l + ":\\").filter(r => { try { return fs.existsSync(r); } catch (_) { return false; } }) : []);
+    const raizes = o.raizes || (WIN ? await raizesExistentes("DEFGHIJKLMNOPQRSTUVWXYZ".split("").map(l => l + ":\\"), 2500) : []);
     const candRaizes = [];
     raizes.forEach(r => SUBCAMINHOS.forEach(s => candRaizes.push(path.join(r, s))));
     a = await testar(candRaizes, "unidade de rede");
