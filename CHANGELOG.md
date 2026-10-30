@@ -1,5 +1,15 @@
 # Changelog
 
+## Relatórios SmallSoft Offline 1.6.6 — 2026-10-30
+
+- **"Erro ao gerar relatório — Falha ao iniciar node: spawn ...\\node.exe ENOENT".** O gerador era sempre aberto
+  pelo mesmo caminho do `node.exe` que iniciou o servidor; se o Node.js fosse atualizado ou reinstalado com o
+  servidor ligado (instalador, atualização automática), esse caminho deixava de existir e todo relatório falhava
+  até reiniciar. Agora o servidor confere o caminho e, se sumiu, procura o Node nas pastas de instalação e no
+  PATH, e **tenta de novo sozinho** (a tela continua em "gerando..."). Se ainda assim não achar, a mensagem diz o
+  que fazer (reiniciar pela bandeja ou rodar o instalador).
+- `servidor-relatorio.js` 3.6.3.
+
 ## Relatórios SmallSoft Offline 1.6.5 — 2026-10-30
 
 - **Servidor reiniciando sozinho a cada minuto.** Com o banco principal numa unidade de rede (`H:\`, `\\servidor`)

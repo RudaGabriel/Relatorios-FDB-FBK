@@ -5,7 +5,7 @@ if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
 
 /**
  * servidor-relatorio.js — Relatórios SmallSoft Offline
- * @version 3.6.2
+ * @version 3.6.3
  * @author Ruda Gabriel
  * @description Servidor HTTP + Firebird de relatórios com SSE, fast-poll e
  *              geração em subprocesso. SOMENTE LEITURA no banco.
@@ -14,10 +14,9 @@ if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
  *              principal em atualização, manutenção ou fora do ar.
  * @changelog
  *   (Histórico completo das versões: CHANGELOG.md no repositório.)
- *   3.6.2 - 2026-10-30 - Servidor nunca trava esperando a rede: atributos do banco principal
- *     (unidade de rede/compartilhamento) lidos de forma assíncrona e com prazo; mais
- *     threads de E/S. Antes, com a rede lenta, a bandeja via o servidor "travado" e o
- *     reiniciava em ciclo.
+ *   3.6.3 - 2026-10-30 - Gerador não falha mais com "spawn ...node.exe ENOENT" quando o Node é
+ *     atualizado/reinstalado com o servidor ligado: procura o node.exe de novo (pastas de
+ *     instalação e PATH) e tenta outra vez sozinho.
  */
 
 
@@ -25,7 +24,7 @@ if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
 // Registrada na linha de início do log para que se saiba, ao investigar
 // qualquer ocorrência, qual versão do servidor estava no ar naquele momento
 // (o gerar-relatorio-html.js já faz o mesmo via SCRIPT_VERSION).
-const SERVER_VERSION = "3.6.2";
+const SERVER_VERSION = "3.6.3";
 
 // ===== Logger Global seguro — flush debounced 300ms =====
 const _fs = require('fs');
@@ -1892,11 +1891,37 @@ var _BOOT_GERADOR =
     "process.stdin.removeListener('end',fim);process.stdin.removeAllListeners('data');process.stdin.pause();" +
     "var m=JSON.parse(b.slice(0,i));var e=m.env||{};Object.keys(e).forEach(function(k){process.env[k]=e[k];});" +
     "process.argv=[process.execPath].concat(m.argv);require(m.argv[0]);});";
+// Node.exe para os processos do gerador (v3.6.3). Antes era sempre process.execPath:
+// se o Node fosse atualizado/reinstalado com o servidor rodando, aquele caminho deixava
+// de existir e toda geração falhava com "spawn ...\\node.exe ENOENT" até reiniciar.
+// Agora confere o caminho e, se sumiu, procura o Node nos lugares de instalação e no PATH.
+var _nodeExeCache = { exe: "", ts: 0 };
+var _nodeExe = function(forcar) {
+    var agora = Date.now();
+    if (!forcar && _nodeExeCache.exe && agora - _nodeExeCache.ts < 10000) return _nodeExeCache.exe;
+    var win = process.platform === "win32", nome = win ? "node.exe" : "node";
+    var cands = [process.execPath];
+    if (win) {
+        [process.env.ProgramFiles, process.env["ProgramFiles(x86)"], process.env.ProgramW6432].forEach(function(b) { if (b) cands.push(path.join(b, "nodejs", nome)); });
+        if (process.env.LOCALAPPDATA) cands.push(path.join(process.env.LOCALAPPDATA, "Programs", "nodejs", nome));
+    }
+    String(process.env.PATH || process.env.Path || "").split(path.delimiter).forEach(function(d) {
+        d = String(d || "").replace(/^"|"$/g, "").trim();
+        // Só pastas do disco do sistema: pasta de rede (\\srv ou unidade mapeada) travaria o servidor.
+        if (d && !/^\\\\/.test(d) && (!win || d.slice(0, 1).toUpperCase() === String(process.env.SystemDrive || "C:").slice(0, 1).toUpperCase())) cands.push(path.join(d, nome));
+    });
+    var achado = "";
+    for (var i = 0; i < cands.length && !achado; i++) { try { if (fs.statSync(cands[i]).isFile()) achado = cands[i]; } catch (_) {} }
+    if (!achado) achado = process.execPath;
+    if (achado !== process.execPath && achado !== _nodeExeCache.exe) logTs("Node.js do servidor não está mais em " + process.execPath + " (atualizado ou reinstalado?) — o gerador usa " + achado + ". Reinicie o servidor pela bandeja quando puder.");
+    _nodeExeCache = { exe: achado, ts: agora };
+    return achado;
+};
 var _geradorReserva = null;
 var _prepararReserva = function() {
     if (_geradorReserva || _encerrando) return;
     try {
-        var p = spawn(process.execPath, ["-e", _BOOT_GERADOR, __dirname],
+        var p = spawn(_nodeExe(), ["-e", _BOOT_GERADOR, __dirname],
                       {stdio:["pipe","pipe","pipe"], env:_ENV_FILHO, windowsHide:true});
         p.on("error", function() { if (_geradorReserva === p) _geradorReserva = null; });
         p.on("exit",  function() { if (_geradorReserva === p) _geradorReserva = null; });
@@ -1917,7 +1942,7 @@ var _obterGerador = function(nArgs) {
             proc = p;
         } catch (_) { try { p.kill(); } catch (__) {} }
     } else if (p) { try { p.kill(); } catch (_) {} }
-    if (!proc) proc = spawn(process.execPath, nArgs, {stdio:["ignore","pipe","pipe"], env:_ENV_FILHO, windowsHide:true});
+    if (!proc) proc = spawn(_nodeExe(), nArgs, {stdio:["ignore","pipe","pipe"], env:_ENV_FILHO, windowsHide:true});
     setImmediate(_prepararReserva); // repõe a reserva para a próxima geração
     return proc;
 };
@@ -2197,7 +2222,23 @@ var gerarEmBackground=function(inicio,fim,chave,_pollTriggered){
         _limparRecursosProprios();
         _liberarKillProprio();
         if (_ehSupersedida()) return; // não sobrescreve a entrada da geração nova
-        cache[chave]={html:null,gerando:false,erro:"Falha ao iniciar node: "+e.message};
+        // v3.6.3: Node.exe sumiu (atualização/reinstalação do Node com o servidor
+        // rodando): procura de novo e tenta outra vez sozinho, sem página de erro.
+        if (e && e.code === "ENOENT" && _tentativa < MAX_TENTATIVAS) {
+            _nodeExeCache.ts = 0; _descartarReserva();
+            logTs("Node.js não encontrado ao gerar o relatório (" + label + ") — procurando de novo e tentando outra vez em 3 s (" + _tentativa + "/" + MAX_TENTATIVAS + ").");
+            // "matando" (como no retry por tempo esgotado): a tela segue em "gerando..." e
+            // gerarEmBackground não é barrado por gerando:true.
+            cache[chave] = {html:null, gerando:false, erro:null, qt:0, tot:0, matando:true, tentativa:_tentativa};
+            setTimeout(function() {
+                if (_ehSupersedida()) return;
+                try { _nodeExe(true); gerarEmBackground(inicio, fim, chave, _pollTriggered); } catch (_) {}
+            }, 3000);
+            return;
+        }
+        cache[chave]={html:null,gerando:false,erro:(e && e.code === "ENOENT")
+            ? "O Node.js não foi encontrado (foi atualizado ou removido com o servidor ligado?). Reinicie o servidor pela bandeja (Reiniciar servidor) ou rode o instalador de novo. Detalhe: " + e.message
+            : "Falha ao iniciar node: "+e.message};
         _gerarTentativas[chave] = 0;
     });
     // CONCLUSÃO ANTECIPADA (v2.13.0): o gerador imprime "@@RELATORIO_PRONTO@@"
