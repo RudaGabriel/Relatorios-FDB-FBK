@@ -4,8 +4,8 @@
 
 ### Vendas do dia e consulta de estoque do Small Commerce, lendo uma **cópia offline** do banco Firebird
 
-<img alt="versão: 1.6.5" src="https://img.shields.io/badge/vers%C3%A3o-1.6.5-2563EB?style=flat">
-<img alt="servidor: v3.6.2" src="https://img.shields.io/badge/servidor-v3.6.2-2563EB?style=flat">
+<img alt="versão: 1.6.6" src="https://img.shields.io/badge/vers%C3%A3o-1.6.6-2563EB?style=flat">
+<img alt="servidor: v3.6.3" src="https://img.shields.io/badge/servidor-v3.6.3-2563EB?style=flat">
 <img alt="cópia offline: v1.5.0" src="https://img.shields.io/badge/c%C3%B3pia%20offline-v1.5.0-0D9488?style=flat">
 <img alt="estoque: v1.1.0" src="https://img.shields.io/badge/estoque-v1.1.0-0D9488?style=flat">
 <img alt="gerador: v3.26.2" src="https://img.shields.io/badge/gerador-v3.26.2-2563EB?style=flat">
@@ -264,6 +264,7 @@ Todas as rotas do *Relatórios FDB* continuam disponíveis (veja o `api.ps1`, co
 | Instalação nova: "Node.js não foi instalado corretamente" na 1ª vez | Corrigido na versão 1.6.0 (o instalador espera o Node terminar e relê o PATH). Se ainda acontecer, rode o instalador de novo |
 | Bandeja avisa "Preparando a cópia offline do banco" | Normal na primeira vez (ou depois de apagar as cópias): o relatório abre sozinho quando a cópia ficar pronta. O banco principal só é lido pelo gbak, em modo leitura |
 | Servidor reinicia sozinho a cada minuto | Corrigido na 1.6.5: com o banco numa unidade de rede lenta ou fora do ar, o servidor travava esperando a rede e a bandeja o reiniciava. Se continuar, veja no `relatorio.log` as linhas `[TRAY]` ("sem resposta na checagem", "forçando reinício" ou "processo não está mais ativo") |
+| "Falha ao iniciar node: spawn ... node.exe ENOENT" | O Node.js foi atualizado ou reinstalado com o servidor ligado. Desde a 1.6.6 o servidor acha o Node de novo sozinho; se a mensagem continuar, use *Reiniciar servidor* na bandeja |
 | Qualquer outro problema | `relatorio.log` (bandeja → *Ferramentas → Abrir o log*), categorias `[OFFLINE]` e `[ESTOQUE]` |
 
 ---
