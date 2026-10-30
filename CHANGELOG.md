@@ -1,5 +1,21 @@
 # Changelog
 
+## Relatórios SmallSoft Offline 1.6.5 — 2026-10-30
+
+- **Servidor reiniciando sozinho a cada minuto.** Com o banco principal numa unidade de rede (`H:\`, `\\servidor`)
+  lenta ou fora do ar, o servidor lia os atributos do `SMALL.FDB` de forma síncrona e ficava **congelado** até o
+  Windows desistir (20 a 60 s); a bandeja via o servidor sem responder e o reiniciava — em ciclo.
+  - `offline-copia.js` 1.5.0: atributos do banco principal (tamanho/data) lidos de forma assíncrona, com prazo de
+    8 s e uma leitura por vez; a cópia pelo arquivo também.
+  - `localizar-banco.js` 1.2.0: as letras de unidade (D: a Z:) são testadas em paralelo, assíncronas e com prazo
+    (antes `existsSync` em cada uma — uma unidade de rede desconectada travava tudo); o teste de caminho local
+    também ficou assíncrono.
+  - `servidor-relatorio.js` 3.6.2: conferência do banco na inicialização assíncrona; mais threads de E/S
+    (`UV_THREADPOOL_SIZE` 16).
+  - `iniciar-tray.ps1` 1.6.4: watchdog mais tolerante em máquina fraca (5 checagens sem resposta, ~1 min, cada uma
+    registrada no log) antes de reiniciar.
+  - Novo teste: rede que não responde não trava o servidor (47 testes).
+
 ## Relatórios SmallSoft Offline 1.6.4 — 2026-10-30
 
 - **Bandeja: aviso "Não foi possível conectar ao banco!" enganoso.** O relatório nunca conecta no banco principal,

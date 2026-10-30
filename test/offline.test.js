@@ -523,3 +523,24 @@ test("servidor: espera a cópia sem tocar no banco principal, depois lê só a c
         await p3050.fechar();
     }
 });
+
+test("cópia offline: banco numa rede que não responde não trava o servidor (atributos com prazo)", async () => {
+    const t = montar({ verificarMs: 5000 });
+    // Simula a unidade de rede pendurada: fs.stat do banco principal nunca responde.
+    const statOriginal = fs.stat;
+    fs.stat = function (p, ...r) {
+        if (path.resolve(String(p)) === path.resolve(t.fonte)) return; // nunca chama o callback
+        return statOriginal.call(fs, p, ...r);
+    };
+    const oc = criarCopiaOffline(t.opcoes);
+    let maiorAtraso = 0, ultimo = Date.now();
+    const relogio = setInterval(() => { const agora = Date.now(); maiorAtraso = Math.max(maiorAtraso, agora - ultimo - 100); ultimo = agora; }, 100);
+    try {
+        oc.iniciar();
+        assert.ok(await ate(() => t.logs.some(l => /sem resposta em 8 s/.test(l)), 20000), "não registrou a rede sem resposta: " + t.logs.slice(-3).join(" | "));
+        assert.ok(maiorAtraso < 1500, "o servidor ficou travado " + maiorAtraso + " ms esperando a rede");
+        assert.strictEqual(oc.status().fonteOk, false);
+        assert.ok(/sem resposta/.test(oc.status().fonteErro || ""), oc.status().fonteErro);
+        t.semConexaoNaFonte();
+    } finally { clearInterval(relogio); fs.stat = statOriginal; oc.parar(); }
+});
