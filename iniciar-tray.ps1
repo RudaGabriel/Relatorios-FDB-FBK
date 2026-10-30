@@ -3,12 +3,12 @@
 # Instancia unica via mutex global.
 # Abrir Relatorio: se ja tem aba aberta (SSE), foca ela. Se nao, abre browser.
 #
-# @version 1.6.2
+# @version 1.6.3
 # @author Ruda Gabriel
 # @changelog
 #   (Historico completo das versoes: CHANGELOG.md no repositorio.)
-#   1.6.2 - 2026-10-29 - Icone da bandeja sem bordas pretas: montado como .ico com canal
-#     alfa em varios tamanhos (16 a 64 px) em vez de Bitmap.GetHicon().
+#   1.6.3 - 2026-10-30 - Aviso inicial pelo estado da COPIA offline: nao mostra mais
+#     "Nao foi possivel conectar ao banco!" enquanto a primeira copia e' preparada.
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -1669,14 +1669,45 @@ $dbTimer.Add_Tick({
     if ($script:dbChecked) { $dbTimer.Stop(); return }
     $script:dbChecked = $true
     $dbTimer.Stop()
+    # v1.6.3: o relatorio le SO a copia offline - nunca conecta no banco principal.
+    # Antes esta checagem usava /api/db-status (o banco que o relatorio le) e, com a
+    # primeira copia ainda sendo feita, mostrava "Nao foi possivel conectar ao banco!",
+    # como se houvesse uma conexao falhando. Agora consulta o estado da copia.
+    $o = $null
+    try { $o = (Invoke-WebRequest "$ADDR_LOCAL/api/offline" -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop).Content | ConvertFrom-Json } catch {}
+    if (-not $o) { return }
     try {
-        $r  = Invoke-WebRequest "$ADDR_LOCAL/api/db-status" -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
-        $st = $r.Content | ConvertFrom-Json
-        if ($st.scanCompleto -and -not $st.ok) {
-            Write-TrayLog "Banco de dados inacessivel na checagem inicial: $($st.erro)" "ERRO"
-            $tray.BalloonTipTitle = "$APP_NAME - Atencao!"
-            $tray.BalloonTipText  = "Nao foi possivel conectar ao banco!`n$($st.erro)`nVerifique se o servidor esta ligado."
-            $tray.BalloonTipIcon  = [System.Windows.Forms.ToolTipIcon]::Error
+        $titulo = $null; $texto = $null; $icone = "Info"
+        if ($o.lendo -eq "copia" -and $o.copia) {
+            # Copia pronta: so avisa se o relatorio nao conseguiu ABRIR a copia (arquivo local).
+            $st = $null
+            try { $st = (Invoke-WebRequest "$ADDR_LOCAL/api/db-status" -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop).Content | ConvertFrom-Json } catch {}
+            if ($st -and $st.scanCompleto -and -not $st.ok) {
+                $titulo = "$APP_NAME - " + (L "Aten\u00e7\u00e3o")
+                $texto  = (L "N\u00e3o foi poss\u00edvel abrir a c\u00f3pia offline (arquivo nesta m\u00e1quina): ") + [string]$st.erro + "`n" + (L "O banco principal n\u00e3o \u00e9 afetado.")
+                $icone  = "Warning"
+            }
+        } elseif ($o.emAndamento) {
+            $pct = ""
+            if ($o.progresso -and $null -ne $o.progresso.pct) { $pct = " (" + [int]$o.progresso.pct + "%)" }
+            $titulo = $APP_NAME
+            $texto  = (L "Preparando a c\u00f3pia offline do banco") + $pct + ".`n" + (L "O relat\u00f3rio abre sozinho quando ela ficar pronta. O banco principal s\u00f3 \u00e9 lido pelo gbak, em modo leitura.")
+        } elseif (-not $o.disponivel) {
+            $titulo = "$APP_NAME - " + (L "Aten\u00e7\u00e3o")
+            $texto  = (L "C\u00f3pia offline indispon\u00edvel: ") + [string]$o.indisponivel + "`n" + (L "Veja em C\u00f3pia offline do banco > Situa\u00e7\u00e3o da c\u00f3pia.")
+            $icone  = "Warning"
+        } elseif (-not $o.copia) {
+            $titulo = "$APP_NAME - " + (L "Aten\u00e7\u00e3o")
+            $motivo = if ($o.ultimoErro) { [string]$o.ultimoErro } else { L "aguardando a primeira c\u00f3pia" }
+            $texto  = (L "Ainda n\u00e3o h\u00e1 c\u00f3pia offline: ") + $motivo + "`n" + (L "O sistema tenta de novo sozinho.")
+            $icone  = "Warning"
+        }
+        if ($texto) {
+            if ($texto.Length -gt 250) { $texto = $texto.Substring(0, 247) + "..." }
+            Write-TrayLog ("Checagem inicial da copia offline: " + ($texto -replace "`n", " | ")) $(if ($icone -eq "Info") { "INFO" } else { "AVISO" })
+            $tray.BalloonTipTitle = $titulo
+            $tray.BalloonTipText  = $texto
+            $tray.BalloonTipIcon  = [System.Windows.Forms.ToolTipIcon]::$icone
             $tray.ShowBalloonTip(10000)
         }
     } catch {}
