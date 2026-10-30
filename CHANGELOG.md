@@ -1,5 +1,16 @@
 # Changelog
 
+## Relatórios SmallSoft Offline 1.6.4 — 2026-10-30
+
+- **Bandeja: aviso "Não foi possível conectar ao banco!" enganoso.** O relatório nunca conecta no banco principal,
+  mas a checagem de 20 s depois de abrir (herdada do Relatórios FDB) perguntava se o banco que o relatório lê
+  estava pronto; numa instalação nova esse banco é a cópia offline, ainda sendo feita, e o aviso vermelho
+  aparecia. Agora a bandeja consulta o estado da cópia:
+  - cópia sendo feita → aviso informativo "Preparando a cópia offline do banco (N%)";
+  - cópia indisponível ou sem cópia ainda → aviso amarelo com o motivo;
+  - cópia pronta → nada (só avisa se a própria cópia não abrir).
+- `iniciar-tray.ps1` 1.6.3.
+
 ## Relatórios SmallSoft Offline 1.6.3 — 2026-10-29
 
 - **Botões do mesmo tamanho** (o maior como referência):
