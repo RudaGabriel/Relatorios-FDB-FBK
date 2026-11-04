@@ -1,12 +1,11 @@
 /**
  * gerar-relatorio-html.js
- * @version 3.26.2
+ * @version 3.26.3
  * @author Ruda Gabriel
  * @description Gerador de relatório HTML (subprocesso spawnado pelo servidor). SOMENTE LEITURA.
  * @changelog (único, exclusivo desta versão — sem acumular histórico de versões anteriores)
  *   (Histórico completo das versões: CHANGELOG.md no repositório.)
- *   3.26.2 - 2026-10-29 16:00 - Botões do mesmo tamanho (o maior como referência): cabeçalho da janela da venda
- *     e Importar/Juntar do servidor (lado a lado).
+ *   3.26.3 - 2026-11-04 - Recarga automática (opção ligada) volta limpa, como F5 (igual ao Relatórios FDB 3.28.1).
  */
 
 (function() {
@@ -14,7 +13,7 @@
     // Embutida no HTML gerado (comentário + atributo data-*) para rastreabilidade:
     // suporte técnico consegue identificar qual versão do script gerou um relatório
     // específico sem precisar abrir o gerar-relatorio-html.js.
-    const SCRIPT_VERSION = "3.26.2";
+    const SCRIPT_VERSION = "3.26.3";
     // Lista-mestra dos temas. id = valor de data-theme no HTML e de "fdb_theme" salvo no navegador;
     // ordem = ordem no menu e no "próximo tema". O CSS de cada id é o bloco [data-theme="id"] do <style>
     // (variáveis) mais, nos temas de estilo, as regras html[data-theme="id"] (forma: cantos, bordas,
@@ -3858,7 +3857,7 @@ const _htmlPrefsTela = () => '<div class="tmPerf"><div class="tmHead tmPerfHead"
         + '</div>'
         + '<div class="tmPerf"><div class="tmHead tmPerfHead"><span class="tmTitulo">Atualização</span><span class="tmAtual tmRecEstado"></span></div>'
         +   '<label class="tmRecLbl"><input type="checkbox" id="tmRecAuto"><span>Recarregar relatório ao detectar mudanças</span></label>'
-        +   '<div class="tmPerfDica">Desligado: as vendas novas continuam entrando sozinhas, mas a página não recarrega — filtros, busca, rolagem e janelas abertas ficam como estão. Vale só para este aparelho.</div>'
+        +   '<div class="tmPerfDica">Ligado: a cada venda a página recarrega como um F5 — limpa busca, filtros e janelas abertas e volta ao topo. Desligado: as vendas novas entram sozinhas sem recarregar — filtros, busca, rolagem e janelas abertas ficam como estão. Vale só para este aparelho.</div>'
         + '</div>'
         + '<div class="tmPerf tmZoom"><div class="tmHead tmPerfHead"><span class="tmTitulo">Tamanho do texto</span><span class="tmAtual tmZoomEstado"></span></div>'
         +   '<div class="tmPerfOps tmZoomOps" role="group" aria-label="Tamanho do texto">'
@@ -6313,7 +6312,7 @@ const _recMarcarMenu = () => {
 const _recEscolher = (ligar) => {
     try { localStorage.setItem("fdb_recarga_auto", ligar ? "1" : "0"); } catch (e) {}
     _recMarcarMenu();
-    toast("Atualização", ligar ? "A página recarrega sozinha quando entrar venda." : "As vendas novas continuam entrando, sem recarregar a página.");
+    toast("Atualização", ligar ? "A cada venda a página recarrega e limpa filtros e janelas (como F5)." : "As vendas novas continuam entrando, sem recarregar a página.");
     try { if (typeof window.__srvRecargaMudou === "function") window.__srvRecargaMudou(!!ligar); } catch (e) {}
 };
 const _visMarcarMenu = () => {
@@ -7217,7 +7216,7 @@ var __abrirModalQr = function() {
     _img.addEventListener("error", function() {
         var cx = _img.parentNode; if (cx) cx.innerHTML = '<div class="qrDica" style="padding:90px 10px">Não foi possível gerar o QR code — o servidor está ligado?</div>';
     });
-    var _qrDados = { url: location.origin + "/", externo: null };
+    var _qrDados = { url: location.origin + "/", externo: null, externoNome: null, externoIP: null };
     var _DICA_LOJA = 'O celular precisa estar no <b>mesmo Wi-Fi</b> desta máquina. Também dá para digitar o endereço no navegador do celular.';
     var _DICA_FORA = 'Funciona em qualquer lugar (4G, outro Wi-Fi) com o app <b>Tailscale</b> ligado no celular, na <b>mesma conta</b> desta máquina. Rede privada e criptografada — só os seus aparelhos entram.';
     var _DICA_SEM_TS = '<b>Para acessar fora da loja:</b><br>1. Instale o <b>Tailscale</b> nesta máquina (tailscale.com/download) e entre com uma conta.<br>2. Instale o app <b>Tailscale</b> no celular e entre com a <b>mesma conta</b>.<br>3. Abra esta janela de novo: aparece o QR code para usar em qualquer lugar.<br>Grátis, criptografado e sem abrir porta no roteador.';
@@ -7231,12 +7230,18 @@ var __abrirModalQr = function() {
         if (u) { u.style.display = end ? "" : "none"; u.textContent = end || ""; }
         if (cp) cp.style.display = end ? "" : "none";
         if (end) _img.src = "/qr.svg?" + (fora ? "externo=1&" : "") + "t=" + Date.now();
-        if (d) d.innerHTML = fora ? (end ? _DICA_FORA : _DICA_SEM_TS) : _DICA_LOJA;
+        if (d) d.innerHTML = fora
+            ? (end ? _DICA_FORA + (_qrDados.externoNome
+                ? '<br><br>Endereço <b>fixo</b> (nome do Tailscale — não muda sozinho). Também funciona pelo IP: <b>' + esc(String(_qrDados.externoIP || "")) + '</b>'
+                : '<br><br>Dica: ative o <b>MagicDNS</b> no painel do Tailscale para usar um nome fixo no lugar do IP.') : _DICA_SEM_TS)
+            : _DICA_LOJA;
     };
     _bg.querySelectorAll(".qrAba").forEach(function(b) { b.addEventListener("click", function() { _mostrarAba(b.getAttribute("data-aba")); }); });
     _fetchJSON("/api/qr", {cache: "no-store"}).then(function(r) {
         if (r && r.url) _qrDados.url = r.url;
         _qrDados.externo = (r && r.externo) ? String(r.externo) : null;
+        _qrDados.externoNome = (r && r.externoNome) ? String(r.externoNome) : null;
+        _qrDados.externoIP = (r && r.externoIP) ? String(r.externoIP) : null;
         var u = document.getElementById("qrUrl"); if (u && _abaQr === "loja") u.textContent = _qrDados.url;
     }).catch(function() { var u = document.getElementById("qrUrl"); if (u) u.textContent = location.origin + "/"; });
     document.getElementById("qrCopiar").addEventListener("click", function() {
@@ -7868,8 +7873,15 @@ const fixHead=()=>{
 // Antes de recarregar sozinha (venda nova), a página guarda rolagem e filtros; a nova
 // os aplica antes do 1º desenho (filtros) e logo depois (rolagem, quando a lista já
 // tem altura). Chamado pelo script do servidor (window.__antesRecarga).
-window.__antesRecarga = () => {
+// { limpar: true } (recarga automática com "Recarregar relatório ao detectar mudanças"
+// LIGADO) guarda só o necessário para não piscar — a página volta limpa, como um F5:
+// sem busca, filtro de tipo/vendedor, rolagem nem janelas abertas (igual ao Relatórios FDB 3.28.1).
+window.__antesRecarga = (opcoes) => {
     try {
+        if (opcoes && opcoes.limpar) {
+            sessionStorage.setItem("__recarga_auto__", JSON.stringify({ ts: Date.now(), url: location.pathname + location.search, limpo: true }));
+            return;
+        }
         const tb = document.querySelector("table");
         sessionStorage.setItem("__recarga_auto__", JSON.stringify({
             ts: Date.now(), url: location.pathname + location.search,
@@ -7882,7 +7894,10 @@ window.__antesRecarga = () => {
     } catch (e) {}
 };
 const _recInfo = window.__recargaInfo || null;
-if (_recInfo) {
+if (_recInfo && _recInfo.limpo) {
+    // Recarga "limpa": garante a busca vazia mesmo se o navegador tentar devolver o texto.
+    try { if (qs("#q")) qs("#q").value = ""; } catch (e) {}
+} else if (_recInfo) {
     try {
         const rq = String(_recInfo.q || "").slice(0, 500);
         if (rq && qs("#q")) { qs("#q").value = rq; qAtual = rq.trim(); qInc = parseBusca(qAtual).inc; }

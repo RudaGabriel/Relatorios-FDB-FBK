@@ -3,12 +3,14 @@
 # Instancia unica via mutex global.
 # Abrir Relatorio: se ja tem aba aberta (SSE), foca ela. Se nao, abre browser.
 #
-# @version 1.6.4
+# @version 1.7.1
 # @author Ruda Gabriel
 # @changelog
 #   (Historico completo das versoes: CHANGELOG.md no repositorio.)
-#   1.6.4 - 2026-10-30 - Watchdog mais tolerante em maquina fraca (5 checagens sem resposta,
-#     ~1 min, cada uma no log) e mais threads de E/S para o Node (UV_THREADPOOL_SIZE).
+#   1.7.1 - 2026-11-04 - Vigia do servidor igual ao do Relatorios FDB 1.7.0/1.7.1: porta testada
+#     pela lista do Windows (sem espera); porta "incerta" nao abre outro servidor; checagem
+#     2 s/6 s sem proxy, reinicio so' apos ~60 s; motivo e codigo de saida no log; freio para
+#     quedas em sequencia. Mantem UV_THREADPOOL_SIZE 16 para o Node.
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -157,19 +159,35 @@ function Get-SseClients {
 # Usa TCP primeiro (rapido), depois confirma com HTTP.
 # ---------------------------------------------------------------------------
 function Test-ServidorAtivo {
-    # 1) Teste TCP rapido (< 500 ms)
+    # v1.7.0: tolerante a maquina lenta. Antes: 0,5 s para conectar e 3 s para o HTTP
+    # (Invoke-WebRequest, que ainda consulta o proxy do Windows a cada chamada) - num
+    # momento de pico o servidor, so' lento, era dado como travado e reiniciado em ciclo.
+    # Agora: 2 s para conectar, 6 s para responder, sem proxy. O motivo de cada falha
+    # fica em $script:falhaVigia (vai para o log).
+    $script:falhaVigia = ""
+    $estado = Get-EstadoPorta -Porta $PORT
+    if ($estado -ne "ocupada") {
+        $script:falhaVigia = if ($estado -eq "livre") { "porta $PORT fechada" } else { "porta $PORT sem resposta em 3 s" }
+        return $false
+    }
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    $resp = $null
     try {
-        $tc = New-Object Net.Sockets.TcpClient
-        $ok = $tc.ConnectAsync("127.0.0.1", $PORT).Wait(2000)
-        $tc.Close()
-        if (-not $ok) { return $false }
-    } catch { return $false }
-
-    # 2) Confirma via HTTP (garante que o Node ja subiu o listener)
-    try {
-        $r = Invoke-WebRequest "$ADDR_LOCAL/api/db-status" -UseBasicParsing -TimeoutSec 6 -ErrorAction Stop
-        return ($r.StatusCode -eq 200)
-    } catch { return $false }
+        $req = [System.Net.HttpWebRequest]::Create("$ADDR_LOCAL/api/db-status")
+        $req.Proxy = $null
+        $req.Timeout = 6000
+        $req.ReadWriteTimeout = 6000
+        $req.KeepAlive = $false
+        $resp = $req.GetResponse()
+        if ([int]$resp.StatusCode -eq 200) { return $true }
+        $script:falhaVigia = "HTTP " + [int]$resp.StatusCode
+        return $false
+    } catch {
+        $script:falhaVigia = "sem resposta HTTP em " + $sw.ElapsedMilliseconds + " ms (" + $_.Exception.Message + ")"
+        return $false
+    } finally {
+        try { if ($resp) { $resp.Close() } } catch {}
+    }
 }
 
 # ---------------------------------------------------------------------------
@@ -227,19 +245,36 @@ $psi.UseShellExecute = $false
 # watchdog a cada 10s e pelo clique em "Reiniciar servidor"), um travamento
 # aqui congelava o icone inteiro da bandeja. ConnectAsync(...).Wait(500) usa
 # o mesmo padrao ja correto de Test-ServidorAtivo neste arquivo.
-function Test-PortaLivre {
-    param([int]$Porta)
+# Estado da porta: "livre", "ocupada" ou "incerto".
+# v1.7.1: pergunta ao proprio Windows quem esta escutando (GetActiveTcpListeners) -
+# resposta imediata, sem tempo de espera e sem precisar de administrador. Na 1.7.0 o
+# teste era so' por conexao com 2 s de espera, mas no Windows uma porta FECHADA demora
+# ~2 s para recusar a conexao: ao ligar o computador a porta saia "incerta", a bandeja
+# achava que o servidor ja estava rodando e nao o iniciava (so' "Reiniciar" resolvia).
+# A conexao fica so' como reserva, com 3 s.
+function Get-EstadoPorta {
+    param([int]$Porta, [int]$EsperaMs = 3000)
+    try {
+        $escutando = [System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners()
+        foreach ($ep in $escutando) { if ($ep.Port -eq $Porta) { return "ocupada" } }
+        return "livre"
+    } catch {}
     $tc = $null
     try {
         $tc = New-Object Net.Sockets.TcpClient
-        $ok = $tc.ConnectAsync("127.0.0.1", $Porta).Wait(500)
-        if ($ok -and $tc.Connected) { return $false }  # porta ocupada
-        return $true                                    # porta livre (ou timeout = trata como livre)
+        $ok = $tc.ConnectAsync("127.0.0.1", $Porta).Wait($EsperaMs)
+        if ($ok -and $tc.Connected) { return "ocupada" }
+        if ($ok) { return "livre" }
+        return "incerto"
     } catch {
-        return $true   # porta livre (conexao recusada)
+        return "livre"   # conexao recusada
     } finally {
         try { if ($tc) { $tc.Close() } } catch {}
     }
+}
+function Test-PortaLivre {
+    param([int]$Porta)
+    return ((Get-EstadoPorta -Porta $Porta) -eq "livre")
 }
 
 # ---------------------------------------------------------------------------
@@ -1611,7 +1646,7 @@ $tray.Add_DoubleClick({ Open-Relatorio "/" })
 
 # ---------------------------------------------------------------------------
 # Timer 1: Reinicia node se cair (verifica processo E porta) OU se travar
-# (processo vivo mas sem responder ao HTTP por 3 verificacoes seguidas ~30s).
+# (processo vivo mas sem responder ao HTTP por 6 verificacoes seguidas ~60s - v1.7.0).
 # ROBUSTEZ FIX: a versao anterior so' detectava PROCESSO MORTO (HasExited).
 # Um processo travado (deadlock, loop infinito no event loop do Node) fica
 # "vivo" para o Windows para sempre e nunca era reiniciado automaticamente.
@@ -1619,39 +1654,76 @@ $tray.Add_DoubleClick({ Open-Relatorio "/" })
 # causa de uma lentidao pontual (ex: geracao de relatorio de periodo longo).
 # ---------------------------------------------------------------------------
 $script:falhasConsecutivas = 0
+$script:quedasRapidas = 0
+$script:esperarAte = [DateTime]::MinValue
+$script:avisouQuedas = $false
+$script:incertoSeguidos = 0
+# v1.7.0: so' reinicia apos ~60 s sem resposta (6 checagens), registra o motivo de cada
+# falha, o codigo de saida e o tempo no ar quando o Node cai, e freia reinicios em
+# sequencia (3 quedas logo apos iniciar = espera 1 min e avisa uma vez).
+$LIMITE_FALHAS = 6
 $watchTimer = New-Object System.Windows.Forms.Timer
 $watchTimer.Interval = 10000
 $watchTimer.Add_Tick({
     try {
+        if ([DateTime]::Now -lt $script:esperarAte) { return }
         $procMorreu = ($null -eq $script:nodeProc -or $script:nodeProc.HasExited)
         if ($procMorreu) {
             $script:falhasConsecutivas = 0
-            $portaLivre = Test-PortaLivre -Porta $PORT
-            if ($portaLivre) {
-                Write-TrayLog "Processo do servidor nao esta mais ativo - reiniciando automaticamente." "AVISO"
+            if ($null -ne $script:nodeProc) {
+                $codigo = "?"; $noAr = -1
+                try { $codigo = $script:nodeProc.ExitCode } catch {}
+                try { $noAr = [int]($script:nodeProc.ExitTime - $script:nodeProc.StartTime).TotalSeconds } catch {}
+                Write-TrayLog ("O processo do servidor terminou (codigo de saida " + $codigo + $(if ($noAr -ge 0) { ", " + $noAr + " s no ar" } else { "" }) + "). Veja as linhas [SERVIDOR] e [UNCAUGHT EXCEPTION] logo antes no relatorio.log.") "AVISO"
+                if ($noAr -ge 0 -and $noAr -lt 30) { $script:quedasRapidas++ } else { $script:quedasRapidas = 0; $script:avisouQuedas = $false }
+                $script:nodeProc = $null
+                if ($script:quedasRapidas -ge 3) {
+                    $script:esperarAte = [DateTime]::Now.AddSeconds(60)
+                    $script:quedasRapidas = 0
+                    Write-TrayLog "O servidor caiu 3 vezes logo depois de iniciar - aguardando 1 min antes de tentar de novo (evita reinicios em sequencia)." "ERRO"
+                    if (-not $script:avisouQuedas) {
+                        $script:avisouQuedas = $true
+                        $tray.BalloonTipTitle = "$APP_NAME - Atencao"
+                        $tray.BalloonTipText  = "O servidor esta caindo logo apos iniciar. Nova tentativa em 1 minuto. Detalhes em Ferramentas > Abrir o log."
+                        $tray.BalloonTipIcon  = [System.Windows.Forms.ToolTipIcon]::Warning
+                        $tray.ShowBalloonTip(6000)
+                    }
+                    return
+                }
+            }
+            $estado = Get-EstadoPorta -Porta $PORT
+            # Rede de seguranca (v1.7.1): porta "incerta" por 3 checagens seguidas (~30 s) com o
+            # servidor fora -> inicia mesmo assim (se outro servidor ja ocupa a porta, o novo
+            # so' se encerra com "porta ja em uso").
+            if ($estado -eq "incerto") { $script:incertoSeguidos++ } else { $script:incertoSeguidos = 0 }
+            if ($estado -eq "incerto" -and $script:incertoSeguidos -ge 3) {
+                $script:incertoSeguidos = 0
+                Write-TrayLog "Porta $PORT sem resposta clara ha ~30 s e servidor fora do ar - iniciando assim mesmo." "AVISO"
+                $estado = "livre"
+            }
+            if ($estado -eq "livre") {
+                Write-TrayLog "Servidor fora do ar e porta $PORT livre - iniciando de novo." "AVISO"
                 $script:nodeProc = [System.Diagnostics.Process]::Start($psi)
                 $tray.BalloonTipTitle = $APP_NAME
                 $tray.BalloonTipText  = "Servidor reiniciado automaticamente."
                 $tray.BalloonTipIcon  = [System.Windows.Forms.ToolTipIcon]::Warning
                 $tray.ShowBalloonTip(2500)
-            } else {
-                $script:nodeProc = $null
             }
+            # "ocupada" (outro servidor ja atende) ou "incerto" (maquina lenta): nao abre outro.
             return
         }
 
         # Processo "vivo" segundo o SO - confirma que esta REALMENTE respondendo.
-        # v1.6.4: mais tolerante em maquina fraca (TCP 2 s, HTTP 6 s, 5 falhas seguidas,
-        # ~1 min) e cada falha vai para o log - antes 3 falhas de 3 s (~30 s) bastavam
-        # para reiniciar o servidor no meio de uma copia pesada.
         if (Test-ServidorAtivo) {
-            if ($script:falhasConsecutivas -gt 0) { Write-TrayLog "Servidor voltou a responder (apos $($script:falhasConsecutivas) checagem(ns) sem resposta)." }
+            if ($script:falhasConsecutivas -gt 0) { Write-TrayLog ("Servidor voltou a responder apos " + $script:falhasConsecutivas + " checagem(ns) sem resposta.") }
             $script:falhasConsecutivas = 0
         } else {
             $script:falhasConsecutivas++
-            Write-TrayLog "Servidor sem resposta na checagem $($script:falhasConsecutivas)/5." "AVISO"
-            if ($script:falhasConsecutivas -ge 5) {
-                Write-TrayLog "Servidor nao responde ha ~1 min (processo vivo, porem travado) - forcando reinicio." "ERRO"
+            if ($script:falhasConsecutivas -eq 1 -or $script:falhasConsecutivas -eq 3) {
+                Write-TrayLog ("Servidor demorou a responder (" + $script:falhasConsecutivas + "/" + $LIMITE_FALHAS + "): " + $script:falhaVigia) "AVISO"
+            }
+            if ($script:falhasConsecutivas -ge $LIMITE_FALHAS) {
+                Write-TrayLog ("Servidor nao responde ha ~" + ($LIMITE_FALHAS * 10) + " s (processo vivo, porem travado; ultimo motivo: " + $script:falhaVigia + ") - forcando reinicio.") "ERRO"
                 $pidTravado = $script:nodeProc.Id
                 try { Start-Process -FilePath "taskkill.exe" -ArgumentList "/F","/T","/PID","$pidTravado" -WindowStyle Hidden -Wait -ErrorAction Stop } catch {}
                 $script:nodeProc = $null

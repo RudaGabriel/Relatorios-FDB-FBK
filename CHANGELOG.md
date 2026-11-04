@@ -1,5 +1,25 @@
 # Changelog
 
+## Relatórios SmallSoft Offline 1.7.0 — 2026-11-04
+
+Melhorias recentes do *Relatórios FDB* (os dois projetos são praticamente iguais; só muda a forma de ler o banco):
+
+- **Bandeja: vigia sem reinícios falsos** (`iniciar-tray.ps1` 1.7.1, igual ao Relatórios FDB 1.7.0/1.7.1):
+  - a porta é conferida pela lista do próprio Windows, na hora e sem espera; com isso o servidor volta a iniciar
+    sozinho com o Windows;
+  - porta que não responde com clareza **não abre um segundo servidor** (antes, com a máquina carregada, a bandeja
+    abria outro, que se encerrava na hora com "porta já em uso", e o aviso de reiniciado se repetia);
+  - checagem com 2 s para conectar e 6 s para responder, sem passar pelo proxy do Windows; só reinicia depois de
+    ~60 s sem resposta;
+  - motivo de cada falha, código de saída e tempo no ar ficam no log; 3 quedas logo depois de iniciar = espera
+    1 min e avisa uma vez.
+  - Mantém as threads extras de E/S do Node (1.6.4).
+- **Fora da loja pelo nome fixo do Tailscale** (MagicDNS) no lugar do IP, com o IP como alternativa; trocar do IP
+  para o nome não perde o apelido nem as preferências do aparelho.
+- **"Recarregar ao detectar mudanças" ligado recarrega como F5**: limpa busca, filtros, rolagem e janelas
+  (a recarga forçada continua mantendo o estado).
+- `servidor-relatorio.js` 3.6.4, `gerar-relatorio-html.js` 3.26.3.
+
 ## Relatórios SmallSoft Offline 1.6.6 — 2026-10-30
 
 - **"Erro ao gerar relatório — Falha ao iniciar node: spawn ...\\node.exe ENOENT".** O gerador era sempre aberto
