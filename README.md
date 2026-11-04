@@ -4,12 +4,12 @@
 
 ### Vendas do dia e consulta de estoque do Small Commerce, lendo uma **cópia offline** do banco Firebird
 
-<img alt="versão: 1.8.0" src="https://img.shields.io/badge/vers%C3%A3o-1.8.0-2563EB?style=flat">
-<img alt="servidor: v3.7.0" src="https://img.shields.io/badge/servidor-v3.7.0-2563EB?style=flat">
+<img alt="versão: 1.8.1" src="https://img.shields.io/badge/vers%C3%A3o-1.8.1-2563EB?style=flat">
+<img alt="servidor: v3.7.1" src="https://img.shields.io/badge/servidor-v3.7.1-2563EB?style=flat">
 <img alt="cópia offline: v1.5.0" src="https://img.shields.io/badge/c%C3%B3pia%20offline-v1.5.0-0D9488?style=flat">
 <img alt="estoque: v1.2.0" src="https://img.shields.io/badge/estoque-v1.2.0-0D9488?style=flat">
 <img alt="gerador: v3.26.3" src="https://img.shields.io/badge/gerador-v3.26.3-2563EB?style=flat">
-<img alt="bandeja: v1.7.1" src="https://img.shields.io/badge/bandeja-v1.7.1-2563EB?style=flat">
+<img alt="bandeja: v1.7.2" src="https://img.shields.io/badge/bandeja-v1.7.2-2563EB?style=flat">
 <img alt="testes: 48 passando" src="https://img.shields.io/badge/testes-48%20passando-22C55E?style=flat">
 
 <img alt="plataforma: Windows 10 | 11" src="https://img.shields.io/badge/plataforma-Windows%2010%20%7C%2011-0078D4?style=flat&logo=windows&logoColor=white">
@@ -182,9 +182,9 @@ Cada aparelho que abre o estoque **guarda uma cópia dele** (todos os itens, com
 - a busca continua funcionando **com as mesmas regras** (nome, código, código de barras, "Contém", filtros, ordem), inclusive pelo leitor de código de barras;
 - o detalhe do item mostra os campos principais (todas as colunas voltam com o servidor) e **Exportar** gera o CSV da cópia;
 - quando o servidor volta, a página percebe sozinha (a cada 15 s) e volta a usar o servidor;
-- no relatório, a faixa "servidor encerrado / sem conexão" também avisa que só o estoque está disponível, com a data e o link **Abrir o estoque**.
+- no relatório (computador e celular), a faixa "servidor encerrado / sem conexão" avisa **"Somente o estoque está disponível"**, com a data, os itens e o tamanho, e o botão **Abrir o estoque**: ele abre em tela cheia a cópia da página do estoque guardada no aparelho — funciona em qualquer celular, sem o servidor.
 
-**Abrir o estoque com o servidor já desligado** (fechou a página ou reiniciou o aparelho): funciona pelo endereço seguro `https://IP:7736/estoque` ou no próprio computador (`localhost`), onde o navegador guarda a página no aparelho. Por `http://IP:7735`, a cópia funciona enquanto a página estiver aberta.
+**Abrir o estoque com o servidor já desligado** (fechou a página ou reiniciou o aparelho): no próprio computador (`localhost`) ou pelo endereço seguro com o **certificado do Tailscale** (HTTPS ligado no painel do Tailscale), o navegador guarda a página e ela abre direto. Com o certificado próprio do sistema (o que mostra aviso), o navegador não deixa guardar a página: use o botão **Abrir o estoque** do relatório.
 
 ---
 
@@ -280,6 +280,7 @@ Todas as rotas do *Relatórios FDB* continuam disponíveis (veja o `api.ps1`, co
 | Bandeja avisa "Preparando a cópia offline do banco" | Normal na primeira vez (ou depois de apagar as cópias): o relatório abre sozinho quando a cópia ficar pronta. O banco principal só é lido pelo gbak, em modo leitura |
 | Servidor reinicia sozinho a cada minuto | Corrigido na 1.6.5: com o banco numa unidade de rede lenta ou fora do ar, o servidor travava esperando a rede e a bandeja o reiniciava. Se continuar, veja no `relatorio.log` as linhas `[TRAY]` ("sem resposta na checagem", "forçando reinício" ou "processo não está mais ativo") |
 | "Falha ao iniciar node: spawn ... node.exe ENOENT" | O Node.js foi atualizado ou reinstalado com o servidor ligado. Desde a 1.6.6 o servidor acha o Node de novo sozinho; se a mensagem continuar, use *Reiniciar servidor* na bandeja |
+| Fica em "Iniciando servidor de relatórios..." / log diz "Outra instância já está rodando" | Corrigido na 1.8.1: depois de **Sair**, a bandeja ficava presa esperando o OK de uma janela escondida. Agora ela termina de verdade, e uma bandeja presa é encerrada sozinha ao abrir de novo (~20 s). Na primeira vez depois de atualizar, se ainda acontecer, reinicie o computador |
 | Qualquer outro problema | `relatorio.log` (bandeja → *Ferramentas → Abrir o log*), categorias `[OFFLINE]` e `[ESTOQUE]` |
 
 ---

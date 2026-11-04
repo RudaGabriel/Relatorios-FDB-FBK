@@ -1,5 +1,19 @@
 # Changelog
 
+## Relatórios SmallSoft Offline 1.8.1 — 2026-11-04
+
+- **Não abria mais depois de "Sair" ("Iniciando servidor de relatórios..." e "Outra instância já está rodando" no
+  log).** Ao sair, a bandeja mostrava a janela "servidor encerrado" ANTES de soltar a trava de instância única;
+  sem o ícone, a janela abria atrás das outras e o processo ficava esperando um OK que ninguém via. Bandeja 1.7.2:
+  - solta a trava e tira o ícone antes da janela, que agora abre sempre na frente; o processo termina de verdade;
+  - as janelas de erro da inicialização também soltam a trava antes;
+  - ao abrir de novo com uma bandeja antiga presa (sem servidor no ar por ~20 s), ela é encerrada sozinha.
+- **Servidor fora do ar, no celular:** a faixa do relatório traz o botão **Abrir o estoque**, que abre em tela cheia a
+  cópia da página do estoque guardada no aparelho (funciona em qualquer celular, sem o servidor), com a data, os
+  itens e o tamanho. A dica de abrir pelo endereço seguro só aparece com o certificado do Tailscale (com o
+  certificado próprio o navegador não guarda a página).
+- `servidor-relatorio.js` 3.7.1, `iniciar-tray.ps1` 1.7.2.
+
 ## Relatórios SmallSoft Offline 1.8.0 — 2026-11-04
 
 - **Estoque sem o servidor.** Cada aparelho que abre o estoque guarda uma cópia dele (IndexedDB), atualizada sozinha

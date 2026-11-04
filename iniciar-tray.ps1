@@ -3,14 +3,13 @@
 # Instancia unica via mutex global.
 # Abrir Relatorio: se ja tem aba aberta (SSE), foca ela. Se nao, abre browser.
 #
-# @version 1.7.1
+# @version 1.7.2
 # @author Ruda Gabriel
 # @changelog
 #   (Historico completo das versoes: CHANGELOG.md no repositorio.)
-#   1.7.1 - 2026-11-04 - Vigia do servidor igual ao do Relatorios FDB 1.7.0/1.7.1: porta testada
-#     pela lista do Windows (sem espera); porta "incerta" nao abre outro servidor; checagem
-#     2 s/6 s sem proxy, reinicio so' apos ~60 s; motivo e codigo de saida no log; freio para
-#     quedas em sequencia. Mantem UV_THREADPOOL_SIZE 16 para o Node.
+#   1.7.2 - 2026-11-04 - "Sair" nao deixa mais a bandeja presa: o mutex e' liberado antes da
+#     janela de aviso (que agora abre sempre na frente) e o processo termina de verdade. Uma
+#     bandeja antiga presa (sem servidor no ar por ~20 s) e' encerrada sozinha ao abrir de novo.
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -43,6 +42,25 @@ $ErrorActionPreference = 'SilentlyContinue'
 # ---------------------------------------------------------------------------
 $DIR      = Split-Path -Parent $MyInvocation.MyCommand.Path
 $LOG_PATH = Join-Path $DIR "relatorio.log"
+# v1.7.2: janela de aviso sempre NA FRENTE de tudo. Sem dono, a MessageBox de um
+# processo oculto (sem icone visivel) abria atras das outras janelas e o processo
+# ficava parado esperando um OK que ninguem via.
+function Show-AvisoFrente([string]$Texto, [string]$Titulo, [string]$Icone = "Information") {
+    $dono = $null
+    try {
+        $dono = New-Object System.Windows.Forms.Form
+        $dono.TopMost = $true; $dono.ShowInTaskbar = $false; $dono.Opacity = 0
+        $dono.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
+        $dono.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen
+        $dono.Size = New-Object System.Drawing.Size(1, 1)
+        $dono.Show(); $dono.Activate()
+        [System.Windows.Forms.MessageBox]::Show($dono, $Texto, $Titulo, [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::$Icone) | Out-Null
+    } catch {
+        try { [System.Windows.Forms.MessageBox]::Show($Texto, $Titulo, [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::$Icone) | Out-Null } catch {}
+    } finally {
+        try { if ($dono) { $dono.Close(); $dono.Dispose() } } catch {}
+    }
+}
 function Write-TrayLog {
     param([string]$Msg, [string]$Nivel = "INFO")
     try {
@@ -68,8 +86,46 @@ try { $acquired = $mutex.WaitOne(0) }
 catch [System.Threading.AbandonedMutexException] { $acquired = $true }
 catch { $acquired = $false }
 if (-not $acquired) {
-    Write-TrayLog "Outra instancia ja esta rodando (mutex ja em uso) - encerrando esta sem fazer nada."
-    exit 0
+    # v1.7.2: a bandeja antiga pode ter ficado presa (ex.: versoes anteriores esperando o OK
+    # de uma janela escondida depois de "Sair"), segurando o mutex SEM servidor nenhum - e o
+    # sistema nunca mais abria ate reiniciar o Windows. Se por ~20 s o servidor nao aparecer
+    # na porta, encerra a bandeja antiga DESTA pasta (aberta ha mais de 1 min) e assume.
+    $portaCfg = 7735
+    try { $pc = ([System.IO.File]::ReadAllText((Join-Path $DIR "config.json"), [System.Text.Encoding]::UTF8).TrimStart([char]0xFEFF) | ConvertFrom-Json).porta; if ($pc -gt 0) { $portaCfg = [int]$pc } } catch {}
+    $servidorNoAr = $false
+    for ($i = 0; $i -lt 10 -and -not $servidorNoAr; $i++) {
+        try {
+            foreach ($ep in [System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners()) { if ($ep.Port -eq $portaCfg) { $servidorNoAr = $true; break } }
+        } catch { $servidorNoAr = $true }
+        if (-not $servidorNoAr) { Start-Sleep -Seconds 2 }
+    }
+    if ($servidorNoAr) {
+        Write-TrayLog "Outra instancia ja esta rodando (mutex ja em uso) - encerrando esta sem fazer nada."
+        exit 0
+    }
+    $presas = @()
+    try {
+        $rxPasta = [regex]::Escape($DIR.TrimEnd('\'))
+        $presas = @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe' OR Name='pwsh.exe'" -ErrorAction Stop | Where-Object {
+            $_.ProcessId -ne $PID -and $_.CommandLine -match 'iniciar-tray\.ps1' -and $_.CommandLine -match $rxPasta -and
+            $_.CreationDate -and ((Get-Date) - $_.CreationDate).TotalSeconds -gt 60
+        })
+    } catch {}
+    if (-not $presas.Count) {
+        Write-TrayLog "Outra instancia ja esta rodando (mutex ja em uso) e o servidor nao responde, mas a outra bandeja nao foi encontrada - encerrando esta." "AVISO"
+        exit 0
+    }
+    foreach ($pp in $presas) {
+        Write-TrayLog ("Bandeja anterior presa (PID " + $pp.ProcessId + ", sem servidor no ar) - encerrando para iniciar de novo.") "AVISO"
+        try { Stop-Process -Id $pp.ProcessId -Force -ErrorAction Stop } catch {}
+    }
+    try { $acquired = $mutex.WaitOne(10000) }
+    catch [System.Threading.AbandonedMutexException] { $acquired = $true }
+    catch { $acquired = $false }
+    if (-not $acquired) {
+        Write-TrayLog "Nao foi possivel assumir o mutex depois de encerrar a bandeja presa - encerrando esta." "ERRO"
+        exit 0
+    }
 }
 Write-TrayLog "Mutex adquirido - nenhuma outra instancia ativa."
 
@@ -214,13 +270,8 @@ while (-not (Test-Path $serverScript) -and $tentativa -lt $maxTentativas) {
 }
 if (-not (Test-Path $serverScript)) {
     Write-TrayLog "servidor-relatorio.js CONTINUA ausente apos 30min de espera - desistindo. Verifique se o arquivo existe em '$DIR'." "ERRO"
-    [System.Windows.Forms.MessageBox]::Show(
-        "Nao foi possivel encontrar servidor-relatorio.js em:`n$DIR`n`nReinstale ou verifique se a pasta do sistema esta completa.",
-        "$APP_NAME - Erro",
-        [System.Windows.Forms.MessageBoxButtons]::OK,
-        [System.Windows.Forms.MessageBoxIcon]::Error
-    ) | Out-Null
-    try { $mutex.ReleaseMutex() } catch {}
+    try { $mutex.ReleaseMutex() } catch {}   # v1.7.2: antes da janela - nunca segura a proxima abertura
+    Show-AvisoFrente "Nao foi possivel encontrar servidor-relatorio.js em:`n$DIR`n`nReinstale ou verifique se a pasta do sistema esta completa." "$APP_NAME - Erro" "Error"
     exit 1
 }
 
@@ -325,13 +376,8 @@ if (Test-PortaLivre -Porta $PORT) {
         Write-TrayLog "Servidor iniciado (PID $($script:nodeProc.Id))."
     } catch {
         Write-TrayLog "Falha ao iniciar o servidor: $($_.Exception.Message)" "ERRO"
-        [System.Windows.Forms.MessageBox]::Show(
-            "Nao foi possivel iniciar o servidor.`nVerifique se o Node.js esta instalado.",
-            "$APP_NAME - Erro",
-            [System.Windows.Forms.MessageBoxButtons]::OK,
-            [System.Windows.Forms.MessageBoxIcon]::Error
-        ) | Out-Null
-        try { $mutex.ReleaseMutex() } catch {}
+        try { $mutex.ReleaseMutex() } catch {}   # v1.7.2: antes da janela
+        Show-AvisoFrente "Nao foi possivel iniciar o servidor.`nVerifique se o Node.js esta instalado." "$APP_NAME - Erro" "Error"
         exit 1
     }
 } else {
@@ -364,12 +410,7 @@ if ($_portaAbriu) {
     Write-TrayLog "Servidor respondendo na porta $PORT apos $([math]::Round($_espera*0.5,1))s."
 } elseif ($script:nodeProc -and $script:nodeProc.HasExited) {
     Write-TrayLog "Processo do servidor encerrou sozinho logo apos iniciar (codigo de saida: $($script:nodeProc.ExitCode)). Verifique relatorio.log na pasta do sistema para o motivo (Node.js ausente, modulo faltando, ou erro ao conectar no Firebird sao as causas mais comuns)." "ERRO"
-    [System.Windows.Forms.MessageBox]::Show(
-        "O servidor iniciou mas fechou sozinho logo em seguida.`nConsulte relatorio.log na pasta do sistema para o motivo.`n`nCausas comuns: Node.js nao instalado corretamente, ou banco de dados Firebird inacessivel.",
-        "$APP_NAME - Erro",
-        [System.Windows.Forms.MessageBoxButtons]::OK,
-        [System.Windows.Forms.MessageBoxIcon]::Error
-    ) | Out-Null
+    Show-AvisoFrente "O servidor iniciou mas fechou sozinho logo em seguida.`nConsulte relatorio.log na pasta do sistema para o motivo.`n`nCausas comuns: Node.js nao instalado corretamente, ou banco de dados Firebird inacessivel." "$APP_NAME - Erro" "Error"
 } elseif ($script:nodeProc) {
     Write-TrayLog "Servidor ainda nao respondeu na porta $PORT apos 30s, mas o processo continua vivo (PID $($script:nodeProc.Id)) - pode estar demorando para conectar ao Firebird. Continuando." "AVISO"
 }
@@ -1041,7 +1082,7 @@ function Show-Balao([string]$Titulo, [string]$Texto, [string]$Tipo = "Info", [in
     } catch {}
 }
 function Show-Mensagem([string]$Texto, [string]$Titulo, [string]$Icone = "Information") {
-    [System.Windows.Forms.MessageBox]::Show($Texto, $Titulo, [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::$Icone) | Out-Null
+    Show-AvisoFrente $Texto $Titulo $Icone
 }
 function Get-MaquinaIP {
     try {
@@ -1630,14 +1671,13 @@ $menu.Items.Add((New-ItemMenu "Sair" "sair" "#DC2626" {
     $comoParou = Stop-ServidorOrdenado
     Write-TrayLog "Servidor encerrado pela bandeja ($comoParou). Bandeja finalizada."
     $script:nodeProc = $null
-    # Mensagem clara: antes o icone so' sumia, sem confirmar nada.
-    [System.Windows.Forms.MessageBox]::Show(
-        "O servidor de relatorios foi encerrado.`n`nOs relatorios abertos no navegador mostram o aviso 'Servidor encerrado' e voltam sozinhos quando o servidor for iniciado de novo.`n`nPara iniciar novamente: abra gerar_relatorio_do_dia.bat ou reinicie o computador.",
-        "$APP_NAME - Servidor encerrado",
-        [System.Windows.Forms.MessageBoxButtons]::OK,
-        [System.Windows.Forms.MessageBoxIcon]::Information
-    ) | Out-Null
+    # v1.7.2: libera o mutex e tira o icone ANTES da janela. Antes a janela (que abria
+    # atras das outras) segurava o mutex ate alguem clicar OK: abrir o sistema de novo
+    # dizia "outra instancia ja esta rodando" e ficava em "Iniciando..." para sempre.
     try { $mutex.ReleaseMutex() } catch {}
+    try { $dbTimer.Stop() } catch {}
+    try { $tray.Dispose() } catch {}
+    Show-AvisoFrente "O servidor de relatorios foi encerrado.`n`nOs relatorios abertos no navegador mostram o aviso 'Servidor encerrado' e voltam sozinhos quando o servidor for iniciado de novo. No celular, o estoque continua disponivel pela copia salva no aparelho.`n`nPara iniciar novamente: abra gerar_relatorio_do_dia.bat ou reinicie o computador." "$APP_NAME - Servidor encerrado" "Information"
     [System.Windows.Forms.Application]::Exit()
 })) | Out-Null
 
@@ -1810,6 +1850,8 @@ $tray.ShowBalloonTip(3500)
 # ---------------------------------------------------------------------------
 [System.Windows.Forms.Application]::Run()
 
-$watchTimer.Stop(); $dbTimer.Stop()
-$tray.Visible = $false; $tray.Dispose()
+try { $watchTimer.Stop(); $dbTimer.Stop() } catch {}
+try { $tray.Visible = $false; $tray.Dispose() } catch {}   # ja descartado no "Sair"
 try { $mutex.ReleaseMutex() } catch {}
+# v1.7.2: o processo termina de verdade (nada de PowerShell oculto segurando o mutex).
+[System.Environment]::Exit(0)

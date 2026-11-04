@@ -5,7 +5,7 @@ if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
 
 /**
  * servidor-relatorio.js — Relatórios SmallSoft Offline
- * @version 3.7.0
+ * @version 3.7.1
  * @author Ruda Gabriel
  * @description Servidor HTTP + Firebird de relatórios com SSE, fast-poll e
  *              geração em subprocesso. SOMENTE LEITURA no banco.
@@ -14,9 +14,8 @@ if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
  *              principal em atualização, manutenção ou fora do ar.
  * @changelog
  *   (Histórico completo das versões: CHANGELOG.md no repositório.)
- *   3.7.0 - 2026-11-04 - Estoque sem o servidor: /api/estoque/pacote (cópia do estoque para o
- *     aparelho guardar, gzip), /estoque-busca.js e /estoque-sw.js; o aviso de servidor fora do ar
- *     diz que só o estoque está disponível, com data/hora, itens e tamanho da cópia.
+ *   3.7.1 - 2026-11-04 - Servidor fora do ar no celular: o aviso do relatório leva ao estoque
+ *     guardado no endereço seguro (https), com botão "Abrir o estoque".
  */
 
 
@@ -24,7 +23,7 @@ if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
 // Registrada na linha de início do log para que se saiba, ao investigar
 // qualquer ocorrência, qual versão do servidor estava no ar naquele momento
 // (o gerar-relatorio-html.js já faz o mesmo via SCRIPT_VERSION).
-const SERVER_VERSION = "3.7.0";
+const SERVER_VERSION = "3.7.1";
 
 // ===== Logger Global seguro — flush debounced 300ms =====
 const _fs = require('fs');
@@ -2427,15 +2426,39 @@ var gerarEmBackground=function(inicio,fim,chave,_pollTriggered){
             // v3.7.0: com o servidor fora do ar, só o ESTOQUE salvo neste aparelho continua
             // disponível (estoque.html guarda a cópia e os dados dela em estoqueOffline.meta).
             "var _srvEstoque=function(b){try{" +
-            "var m=JSON.parse(localStorage.getItem('estoqueOffline.meta')||'null');if(!m||!m.carregadoEm)return;" +
-            "var p2=function(n){return(n<10?'0':'')+n;},dt=new Date(m.dadosDe||m.carregadoEm);" +
-            "var quando=p2(dt.getDate())+'/'+p2(dt.getMonth()+1)+'/'+dt.getFullYear()+' '+p2(dt.getHours())+':'+p2(dt.getMinutes());" +
+            "var m=JSON.parse(localStorage.getItem('estoqueOffline.meta')||'null');" +
+            // v3.7.1: no celular (http) o estoque sem servidor abre pelo endereço seguro (https,
+            // porta 7736), onde o navegador guarda a página — o link vai para lá.
+            "var hs=localStorage.getItem('estoqueOffline.https')||'';" +
+            "var sw=!!(navigator.serviceWorker&&navigator.serviceWorker.controller);" +
+            // Sem página segura: abre a cópia da página do estoque guardada neste endereço
+            // (estoqueOffline.kit), em tela cheia, sem precisar do servidor.
+            "var kit=localStorage.getItem('estoqueOffline.kit')||'';" +
+            "var hsOk=localStorage.getItem('estoqueOffline.httpsConfiavel')==='1';" +
+            "var href=sw?'/estoque':(kit&&m&&m.carregadoEm?'#estoque':(hs&&hsOk?hs+'/estoque':''));" +
+            "if(!(m&&m.carregadoEm)&&!href)return;" +
+            "var p2=function(n){return(n<10?'0':'')+n;};" +
+            "var info='';if(m&&m.carregadoEm){var dt=new Date(m.dadosDe||m.carregadoEm);" +
             "var by=Number(m.bytes)||0,tam=by>=1073741824?(by/1073741824).toFixed(2).replace('.',',')+' GB':by>=1048576?(by/1048576).toFixed(1).replace('.',',')+' MB':Math.max(1,Math.round(by/1024))+' KB';" +
+            "info=' — estoque atualizado em '+p2(dt.getDate())+'/'+p2(dt.getMonth()+1)+'/'+dt.getFullYear()+' '+p2(dt.getHours())+':'+p2(dt.getMinutes())+' · '+Number(m.itens||0).toLocaleString('pt-BR')+' itens · '+tam+' (cópia neste aparelho)';}" +
             "var e=document.createElement('div');e.style.cssText='font-weight:600;font-size:13px;margin-top:8px';" +
-            "e.textContent='Somente o estoque está disponível — estoque atualizado em '+quando+' · '+Number(m.itens||0).toLocaleString('pt-BR')+' itens · '+tam+' (cópia neste aparelho). ';" +
-            "if(navigator.serviceWorker&&navigator.serviceWorker.controller){var a=document.createElement('a');a.href='/estoque';a.textContent='Abrir o estoque';" +
-            "a.style.cssText='color:#fff;text-decoration:underline;font-weight:800';e.appendChild(a);}" +
+            "e.textContent='Somente o estoque está disponível'+info+'. ';" +
+            "if(href){var a=document.createElement('a');a.href=href;a.textContent='Abrir o estoque';" +
+            "a.style.cssText='display:inline-block;margin-top:6px;padding:8px 14px;border-radius:10px;background:#fff;color:#b91c1c;text-decoration:none;font-weight:800';" +
+            "if(href==='#estoque')a.onclick=function(ev){ev.preventDefault();_srvAbrirEstoque(kit);};" +
+            "e.appendChild(a);}" +
             "b.appendChild(e);}catch(_){}};" +
+            // Estoque em tela cheia por cima do relatório (iframe com a página guardada: mesmo
+            // endereço, então lê a cópia do estoque deste aparelho). Quando o servidor volta, o
+            // relatório recarrega sozinho e a tela some.
+            "var _srvAbrirEstoque=function(kit){try{" +
+            "var f=document.getElementById('__srv_estoque');if(f){f.style.display='block';return;}" +
+            "f=document.createElement('iframe');f.id='__srv_estoque';f.title='Estoque';" +
+            "f.style.cssText='position:fixed;inset:0;width:100%;height:100%;border:0;z-index:2147483647;background:#0b1120';" +
+            "f.srcdoc=kit;document.body.appendChild(f);}catch(_){}};" +
+            // Guarda o endereço seguro (https) enquanto o servidor está no ar, para o link acima.
+            "try{if(!window.isSecureContext)fetch('/api/https',{cache:'no-store'}).then(function(r){return r.ok?r.json():null;})" +
+            ".then(function(d){if(d&&d.ok&&d.url&&String(d.url).indexOf('https://')===0&&String(d.url).length<200)localStorage.setItem('estoqueOffline.https',String(d.url));}).catch(function(){});}catch(_){}" +
             "var _srvAvisoEncerrado=function(reiniciando){_srvAviso(" +
             "reiniciando?'Servidor reiniciando...':'Servidor de relatórios encerrado'," +
             "reiniciando?'O relatório volta sozinho em alguns segundos.':" +
