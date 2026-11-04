@@ -128,6 +128,44 @@ test("estoque: sentido da coluna de situação decidido pelos dados (Small: \"0\
     } finally { fs.writeFileSync(path.join(DIR, "estado.json"), original); }
 });
 
+test("estoque sem o servidor: pacote para o aparelho e busca local com as MESMAS respostas do servidor", async () => {
+    const e = novo();
+    const pacote = await new Promise((ok, falha) => e.pacote("", (err, r) => err ? falha(err) : ok(r)));
+    assert.strictEqual(pacote.ok, true);
+    assert.strictEqual(pacote.linhas.length, 4);
+    assert.strictEqual(pacote.busca.length, 4);
+    assert.ok(pacote.versao && pacote.carregadoEm, "pacote sem versão/data");
+    // Mesma versão no aparelho: nada a baixar.
+    const igual = await new Promise((ok, falha) => e.pacote(pacote.versao, (err, r) => err ? falha(err) : ok(r)));
+    assert.deepStrictEqual(igual, { ok: true, igual: true, versao: pacote.versao });
+    // O navegador monta a "fonte" pelo pacote (como em estoque.html) e usa estoque-busca.js.
+    const Busca = require(path.join(RAIZ, "estoque-busca.js"));
+    const pkg = JSON.parse(JSON.stringify(pacote)); // ida e volta como no IndexedDB
+    const ix = {}; pkg.campos.forEach((c, k) => { ix[c] = k; });
+    const fonte = {
+        n: pkg.linhas.length, busca: i => pkg.busca[i], digitos: i => pkg.digitos[i],
+        val: (i, p) => ix[p] == null ? null : pkg.linhas[i][ix[p]],
+        ativo: i => { const v = pkg.linhas[i][ix.ativo]; return v === true || v === false ? v : null; },
+        temQtd: pkg.temQtd, temPreco: pkg.temPreco, temAtivo: pkg.temAtivo
+    };
+    const resumo = i => { const it = { id: i }; pkg.campos.forEach((c, k) => { const v = pkg.linhas[i][k]; if (v != null && v !== "") it[c] = v; }); return it; };
+    const casos = [
+        { q: "" }, { q: "racao" }, { q: "racao gato" }, { q: "\"cao filhote\"" }, { q: "racao -gato" }, { q: "7891000100103" },
+        { q: "789.1000.2002-04" }, { q: "123" }, { q: "ato" }, { q: "ato", contem: false }, { q: "racao", contem: false },
+        { q: "", estoque: "com" }, { q: "", estoque: "sem" }, { q: "", estoque: "negativo" }, { q: "", ativos: true },
+        { q: "", ordem: "preco" }, { q: "", ordem: "qtdAsc" }, { q: "", ordem: "codigo" }, { q: "vet ltda" }
+    ];
+    for (const c of casos) {
+        const srv = await buscar(e, c);
+        const loc = Busca.pesquisar(fonte, c, resumo); delete loc._res;
+        assert.deepStrictEqual(loc.itens.map(i => i.codigo), srv.itens.map(i => i.codigo), "resultado diferente para " + JSON.stringify(c));
+        assert.strictEqual(loc.total, srv.total, JSON.stringify(c));
+        assert.strictEqual(loc.somaQtd, srv.somaQtd, JSON.stringify(c));
+        assert.strictEqual(loc.somaValorVenda, srv.somaValorVenda, JSON.stringify(c));
+        assert.deepStrictEqual(loc.itens, srv.itens, "itens diferentes para " + JSON.stringify(c));
+    }
+});
+
 const portaLivre = () => new Promise((resolve, reject) => {
     const s = net.createServer(); s.once("error", reject);
     s.listen(0, "127.0.0.1", () => { const p = s.address().port; s.close(() => resolve(p)); });
@@ -135,7 +173,7 @@ const portaLivre = () => new Promise((resolve, reject) => {
 
 test("servidor: página /estoque, /api/estoque, detalhe e exportação", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "srv-estoque-"));
-    for (const f of ["servidor-relatorio.js", "gerar-relatorio-html.js", "offline-copia.js", "estoque-offline.js", "estoque.html", "https-local.js"]) fs.copyFileSync(path.join(RAIZ, f), path.join(dir, f));
+    for (const f of ["servidor-relatorio.js", "gerar-relatorio-html.js", "offline-copia.js", "estoque-offline.js", "estoque-busca.js", "estoque-sw.js", "estoque.html", "https-local.js"]) fs.copyFileSync(path.join(RAIZ, f), path.join(dir, f));
     fs.cpSync(path.join(RAIZ, "leitor"), path.join(dir, "leitor"), { recursive: true });
     const mock = path.join(dir, "node_modules", "node-firebird");
     fs.mkdirSync(mock, { recursive: true });
@@ -213,6 +251,20 @@ test("servidor: página /estoque, /api/estoque, detalhe e exportação", async (
         assert.strictEqual(apiH.confiavel, false);
         assert.strictEqual(JSON.parse((await pedirHttps("/api/https")).corpo).seguro, true);
         assert.ok(pag.includes("irParaSeguro") && pag.includes('get("ler") === "1"'), "estoque não leva ao leitor ao vivo pelo HTTPS");
+        // Estoque sem o servidor: pacote compactado, arquivos do aparelho e aviso no relatório.
+        const zlib = require("node:zlib");
+        const pacoteGz = await new Promise((ok, falha) => http.get({ host: "127.0.0.1", port: porta, path: "/api/estoque/pacote", headers: { "Accept-Encoding": "gzip" } }, rs => {
+            const partes = []; rs.on("data", d => partes.push(d)); rs.on("end", () => ok({ enc: rs.headers["content-encoding"], corpo: Buffer.concat(partes) }));
+        }).on("error", falha));
+        assert.strictEqual(pacoteGz.enc, "gzip", "pacote não veio compactado");
+        const pac = JSON.parse(zlib.gunzipSync(pacoteGz.corpo).toString("utf8"));
+        assert.ok(pac.ok && pac.linhas.length === ITENS.length && pac.versao, "pacote inválido");
+        assert.strictEqual((await (await fetch(base + "/api/estoque/pacote?versao=" + encodeURIComponent(pac.versao))).json()).igual, true);
+        const sw = await fetch(base + "/estoque-sw.js");
+        assert.strictEqual(sw.status, 200); assert.strictEqual(sw.headers.get("service-worker-allowed"), "/");
+        assert.ok((await sw.text()).includes("somente o estoque está disponível".replace("somente", "Somente")), "página de reserva sem o aviso");
+        assert.strictEqual((await fetch(base + "/estoque-busca.js")).status, 200);
+        assert.ok(pag.includes('<script src="/estoque-busca.js"></script>') && pag.includes("somente o estoque está disponível"), "estoque sem o modo sem servidor");
         const det = await (await fetch(base + "/api/estoque/item?id=" + r.itens[0].id)).json();
         assert.strictEqual(det.ok, true);
         const csv = await fetch(base + "/api/estoque/csv?q=racao");

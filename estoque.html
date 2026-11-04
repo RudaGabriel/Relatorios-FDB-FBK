@@ -42,6 +42,10 @@ h1{margin:0;font-size:18px;font-weight:700}
 .topo.on{opacity:1;transform:none;pointer-events:auto}
 .res b{color:var(--tx)}
 .aviso{margin:8px 16px;padding:10px 12px;border-radius:10px;background:rgba(245,158,11,.14);color:var(--av);display:none}
+/* Servidor fora do ar: só o estoque (cópia salva no aparelho) continua disponível. */
+.semsrv{margin:10px 0 0;padding:12px 14px;border-radius:12px;background:rgba(239,68,68,.14);border:1px solid rgba(239,68,68,.45);color:var(--er);font-weight:600;line-height:1.4}
+.semsrv small{display:block;font-weight:400;color:var(--tx);opacity:.9;margin-top:4px}
+.semsrv[hidden]{display:none}
 .erro{background:rgba(239,68,68,.14);color:var(--er)}
 .wrap{padding:0 16px 90px}
 table{width:100%;border-collapse:separate;border-spacing:0;background:var(--pn);border:1px solid var(--bd);border-radius:12px;overflow:hidden}
@@ -146,6 +150,7 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
     <button class="bt" id="bRec" title="Ler o estoque de novo">Recarregar</button>
     <a class="bt" href="/" id="bVolta">Relatório</a>
   </div>
+  <div class="semsrv" id="semSrv" role="alert" hidden></div>
   <div class="busca">
     <div class="campo">
       <input id="q" type="search" inputmode="search" autocomplete="off" autocapitalize="off" spellcheck="false"
@@ -224,6 +229,7 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
 </div>
 <input type="file" id="arquivoFotoCodigo" accept="image/*" capture="environment" hidden>
 <button type="button" class="topo" id="bTopo" aria-label="Voltar ao topo">&#8593; Topo</button>
+<script src="/estoque-busca.js"></script>
 <script>
 (function () {
   "use strict";
@@ -283,16 +289,114 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
       "<td class=\"c-grp\">" + marcar(it.grupo || "") + "</td></tr>";
   };
 
-  var buscar = function (pagina, extra) {
-    var meu = ++estado.seq;
-    estado.carregando = true; bMais.disabled = true;
-    if (pagina === 1) res.textContent = "Pesquisando...";
-    fetch("/api/estoque?" + params(pagina, extra), { cache: "no-store" })
-      .then(function (r) { return r.json().catch(function () { return { ok: false, erro: "Resposta inválida do servidor (" + r.status + ")." }; }); })
-      .then(function (d) {
-        if (meu !== estado.seq) return;
-        estado.carregando = false; bMais.disabled = false;
-        if (!d || !d.ok) { mostrarErro(d && d.erro || "Não foi possível ler o estoque."); return; }
+  // ── Estoque sem o servidor ────────────────────────────────────────────────
+  // A página guarda NESTE APARELHO (IndexedDB) uma cópia do estoque inteiro, atualizada
+  // sozinha quando o estoque muda. Se o servidor de relatórios cair, a busca continua
+  // aqui mesmo, com as mesmas regras (estoque-busca.js), e a faixa avisa que só o
+  // estoque está disponível e de quando é a cópia.
+  var Local = { pkg: null, semServidor: false };
+  var idb = function (modo, fn) {
+    return new Promise(function (ok, falha) {
+      if (!window.indexedDB) { falha(new Error("sem IndexedDB")); return; }
+      var r; try { r = indexedDB.open("estoqueOffline", 1); } catch (e) { falha(e); return; }
+      r.onupgradeneeded = function () { try { r.result.createObjectStore("pacote"); } catch (e) {} };
+      r.onerror = function () { falha(r.error || new Error("IndexedDB")); };
+      r.onblocked = function () { falha(new Error("IndexedDB bloqueado")); };
+      r.onsuccess = function () {
+        var db = r.result, q = null;
+        try {
+          var tx = db.transaction("pacote", modo);
+          q = fn(tx.objectStore("pacote"));
+          tx.oncomplete = function () { db.close(); ok(q ? q.result : undefined); };
+          tx.onerror = tx.onabort = function () { db.close(); falha(tx.error || new Error("IndexedDB")); };
+        } catch (e) { try { db.close(); } catch (_) {} falha(e); }
+      };
+    });
+  };
+  var tamanhoTxt = function (b) { b = Number(b) || 0; return b >= 1073741824 ? (b / 1073741824).toFixed(2).replace(".", ",") + " GB" : b >= 1048576 ? (b / 1048576).toFixed(1).replace(".", ",") + " MB" : Math.max(1, Math.round(b / 1024)) + " KB"; };
+  // dadosDe = data dos dados (a da cópia offline lida pelo servidor); sem ela, quando o servidor leu o estoque.
+  var metaDe = function (pkg) { return { versao: pkg.versao, carregadoEm: pkg.carregadoEm, dadosDe: pkg.dadosDe || null, itens: pkg.linhas.length, bytes: pkg.bytes, salvoEm: pkg.salvoEm }; };
+  var metaTxt = function (m) { return "estoque atualizado em " + hm(m.dadosDe || m.carregadoEm) + " · " + Number(m.itens || 0).toLocaleString("pt-BR") + " itens · " + tamanhoTxt(m.bytes); };
+  var prepararFonte = function (pkg) {
+    var ix = {}; pkg.campos.forEach(function (c, k) { ix[c] = k; });
+    pkg._fonte = {
+      n: pkg.linhas.length,
+      busca: function (i) { return pkg.busca[i] || ""; },
+      digitos: function (i) { return pkg.digitos[i] || ""; },
+      val: function (i, papel) { var k = ix[papel]; return k == null ? null : pkg.linhas[i][k]; },
+      ativo: function (i) { var k = ix.ativo, v = k == null ? null : pkg.linhas[i][k]; return v === true || v === false ? v : null; },
+      temQtd: !!pkg.temQtd, temPreco: !!pkg.temPreco, temAtivo: !!pkg.temAtivo
+    };
+    pkg._resumo = function (i) { var it = { id: i }; pkg.campos.forEach(function (c, k) { var v = pkg.linhas[i][k]; if (v != null && v !== "") it[c] = v; }); return it; };
+    return pkg;
+  };
+  // "cópia neste aparelho: N itens · X MB" vai junto da linha de origem (online).
+  var copiaTxt = function () { return Local.pkg ? " · cópia neste aparelho: " + Number(Local.pkg.linhas.length).toLocaleString("pt-BR") + " itens · " + tamanhoTxt(Local.pkg.bytes) : ""; };
+  var origemBase = "";
+  var mostrarCopia = function () { if (origemBase && !Local.semServidor) $("origem").textContent = origemBase + copiaTxt(); };
+  var gravarMeta = function (m) { try { localStorage.setItem(LS + "meta", JSON.stringify(m)); } catch (e) {} };
+  var localPronto = idb("readonly", function (st) { return st.get("atual"); })
+    .then(function (pkg) { if (pkg && pkg.linhas && pkg.campos && pkg.busca) { Local.pkg = prepararFonte(pkg); gravarMeta(metaDe(pkg)); mostrarCopia(); } })
+    .catch(function () {});
+  // Pede ao navegador para não apagar a cópia sozinho quando faltar espaço.
+  try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(function () {}); } catch (e) {}
+  var sincronizando = false;
+  var sincronizar = function () {
+    if (sincronizando || Local.semServidor) return;
+    sincronizando = true;
+    // Cópia guardada antes de existir "dadosDe": baixa de novo uma vez.
+    var versao = Local.pkg && Local.pkg.dadosDe !== undefined ? Local.pkg.versao : "";
+    fetch("/api/estoque/pacote?versao=" + encodeURIComponent(versao || ""), { cache: "no-store" })
+      .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.text(); })
+      .then(function (txt) {
+        var d = JSON.parse(txt);
+        if (!d || !d.ok) throw new Error((d && d.erro) || "pacote inválido");
+        if (d.igual) return;
+        if (!Array.isArray(d.linhas) || !Array.isArray(d.campos) || !Array.isArray(d.busca)) throw new Error("pacote incompleto");
+        d.salvoEm = Date.now(); if (d.dadosDe === undefined) d.dadosDe = null;
+        d.bytes = window.Blob ? new Blob([txt]).size : txt.length;
+        return idb("readwrite", function (st) { return st.put(d, "atual"); }).then(function () {
+          Local.pkg = prepararFonte(d); gravarMeta(metaDe(d)); mostrarCopia();
+        });
+      })
+      .catch(function (e) { try { console.warn("[estoque] cópia no aparelho não atualizada:", e); } catch (_) {} })
+      .then(function () { sincronizando = false; });
+  };
+  var semSrvEl = $("semSrv"), vigiaTmr = null;
+  var entrarSemServidor = function () {
+    var primeira = !Local.semServidor;
+    Local.semServidor = true;
+    semSrvEl.hidden = false;
+    semSrvEl.innerHTML = "Servidor de relatórios fora do ar — <b>somente o estoque está disponível</b>." +
+      "<small>" + (Local.pkg ? "Usando a cópia salva neste aparelho: " + esc(metaTxt(metaDe(Local.pkg))) + "." : "Este aparelho ainda não tem uma cópia do estoque salva — ela é guardada sozinha na próxima vez que o estoque abrir com o servidor ligado.") + "</small>";
+    if (primeira) { toast("Servidor fora do ar: somente o estoque está disponível."); vigiarVolta(); }
+  };
+  var vigiarVolta = function () {
+    clearTimeout(vigiaTmr);
+    vigiaTmr = setTimeout(function () {
+      var ctrl = window.AbortController ? new AbortController() : null;
+      var t = setTimeout(function () { try { if (ctrl) ctrl.abort(); } catch (e) {} }, 5000);
+      fetch("/api/db-status", { cache: "no-store", signal: ctrl ? ctrl.signal : undefined })
+        .then(function (r) {
+          clearTimeout(t);
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          Local.semServidor = false; semSrvEl.hidden = true;
+          toast("Servidor de relatórios de volta.");
+          buscar(1); localPronto.then(sincronizar);
+        })
+        .catch(function () { clearTimeout(t); vigiarVolta(); });
+    }, 15000);
+  };
+  var buscarLocal = function (pagina) {
+    var p = { q: qEl.value, estoque: $("fEst").value, ordem: $("fOrd").value, ativos: $("fAtv").checked, contem: $("fCon").checked, pagina: pagina, limite: LIMITE };
+    var d = window.EstoqueBusca.pesquisar(Local.pkg._fonte, p, Local.pkg._resumo);
+    delete d._res;
+    d.tabela = Local.pkg.tabela; d.carregadoEm = Local.pkg.carregadoEm; d.local = true; d.aviso = null;
+    return d;
+  };
+  var podeLocal = function () { return !!(Local.pkg && window.EstoqueBusca); };
+
+  var mostrar = function (d, pagina, extra) {
         aviso.style.display = d.aviso ? "block" : "none"; aviso.className = "aviso"; aviso.textContent = d.aviso || "";
         termos = String(qEl.value || "").replace(/"/g, " ").split(/\s+/).filter(function (t) { return t && t[0] !== "-"; }).map(function (t) { return semAc(t).toUpperCase(); });
         estado.pagina = d.pagina; estado.paginas = d.paginas; estado.total = d.total;
@@ -314,7 +418,12 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
         if (d.somaQtd != null) partes.push("estoque somado: <b>" + qtdF(d.somaQtd) + "</b>");
         if (d.somaValorVenda != null) partes.push("valor de venda em estoque: <b>" + reais(d.somaValorVenda) + "</b>");
         res.innerHTML = partes.map(function (x) { return "<span class=\"p\">" + x + "</span>"; }).join("");
-        origem(d);
+        if (d.local) $("origem").textContent = "cópia salva neste aparelho · " + metaTxt(metaDe(Local.pkg)) + " · tabela " + d.tabela;
+        else {
+          origem(d);
+          // Cópia do aparelho: guarda/atualiza quando o estoque do servidor for outro.
+          localPronto.then(function () { if (!Local.pkg || Local.pkg.carregadoEm !== d.carregadoEm || Local.pkg.dadosDe === undefined) sincronizar(); });
+        }
         // Leitor de código de barras (digita + Enter): um único resultado → abre o item.
         // Código lido que bate EXATAMENTE com um só item (barras, código ou referência) também abre.
         if (extra && extra.__enter && estado.itens.length) {
@@ -324,8 +433,34 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
           if (estado.total === 1) abrir(estado.itens[0].id);
           else if (exatos.length === 1) abrir(exatos[0].id);
         }
+  };
+  var buscar = function (pagina, extra) {
+    var meu = ++estado.seq;
+    // Servidor fora do ar: direto na cópia do aparelho (sem esperar a rede a cada tecla).
+    if (Local.semServidor && podeLocal()) { estado.carregando = false; bMais.disabled = false; mostrar(buscarLocal(pagina), pagina, extra); return; }
+    estado.carregando = true; bMais.disabled = true;
+    if (pagina === 1) res.textContent = "Pesquisando...";
+    var ctrl = window.AbortController ? new AbortController() : null;
+    var prazo = setTimeout(function () { try { if (ctrl) ctrl.abort(); } catch (e) {} }, 10000);
+    fetch("/api/estoque?" + params(pagina, extra), { cache: "no-store", signal: ctrl ? ctrl.signal : undefined })
+      .then(function (r) { return r.json().catch(function () { return { ok: false, erro: "Resposta inválida do servidor (" + r.status + ")." }; }); })
+      .then(function (d) {
+        clearTimeout(prazo);
+        if (meu !== estado.seq) return;
+        estado.carregando = false; bMais.disabled = false;
+        if (!d || !d.ok) { mostrarErro(d && d.erro || "Não foi possível ler o estoque."); return; }
+        mostrar(d, pagina, extra);
       })
-      .catch(function () { if (meu !== estado.seq) return; estado.carregando = false; bMais.disabled = false; mostrarErro("Sem conexão com o servidor de relatórios."); });
+      .catch(function () {
+        clearTimeout(prazo);
+        localPronto.then(function () {
+          if (meu !== estado.seq) return;
+          estado.carregando = false; bMais.disabled = false;
+          entrarSemServidor();
+          if (podeLocal()) mostrar(buscarLocal(pagina), pagina, extra);
+          else mostrarErro("Sem conexão com o servidor de relatórios.");
+        });
+      });
   };
   var mostrarErro = function (m) { aviso.style.display = "block"; aviso.className = "aviso erro"; aviso.textContent = m; res.textContent = ""; };
   var origem = function (d) {
@@ -333,8 +468,8 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
       var txt = "lido " + hm(d.carregadoEm);
       if (s && s.lendo === "copia" && s.copia) txt = "cópia offline · dados de " + hm(s.copia.dadosDe) + (s.fonteOk === false ? " · banco principal indisponível" : "");
       else if (s && s.modo !== "desligado") txt = "banco principal · " + txt;
-      $("origem").textContent = txt + " · tabela " + d.tabela;
-    }).catch(function () { $("origem").textContent = "lido " + hm(d.carregadoEm); });
+      origemBase = txt + " · tabela " + d.tabela; $("origem").textContent = origemBase + copiaTxt();
+    }).catch(function () { origemBase = "lido " + hm(d.carregadoEm); $("origem").textContent = origemBase + copiaTxt(); });
   };
 
   var tmr = null;
@@ -358,8 +493,28 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
   document.querySelectorAll("th[data-o]").forEach(function (th) { th.addEventListener("click", function () { $("fOrd").value = th.getAttribute("data-o"); gravar("ord", $("fOrd").value); buscar(1); }); });
   bMais.addEventListener("click", function () { if (!estado.carregando) buscar(estado.pagina + 1); });
   if ("IntersectionObserver" in window) new IntersectionObserver(function (en) { if (en[0].isIntersecting && !bMais.hidden && !estado.carregando) buscar(estado.pagina + 1); }, { rootMargin: "400px" }).observe(bMais);
-  $("bRec").addEventListener("click", function () { toast("Lendo o estoque de novo..."); buscar(1, { recarregar: "1" }); });
-  $("bCsv").addEventListener("click", function () { location.href = "/api/estoque/csv?" + params(1); });
+  $("bRec").addEventListener("click", function () {
+    if (Local.semServidor) { toast("Servidor fora do ar: usando a cópia salva neste aparelho."); buscar(1); return; }
+    toast("Lendo o estoque de novo..."); buscar(1, { recarregar: "1" });
+  });
+  $("bCsv").addEventListener("click", function () {
+    if (!(Local.semServidor && podeLocal())) { location.href = "/api/estoque/csv?" + params(1); return; }
+    // Sem servidor: exporta da cópia do aparelho (campos principais de todos os resultados).
+    var p = { q: qEl.value, estoque: $("fEst").value, ordem: $("fOrd").value, ativos: $("fAtv").checked, contem: $("fCon").checked, pagina: 1, limite: 1 };
+    var r = window.EstoqueBusca.pesquisar(Local.pkg._fonte, p, Local.pkg._resumo);
+    var rot = { codigo: "CODIGO", descricao: "DESCRICAO", barras: "COD_BARRAS", referencia: "REFERENCIA", unidade: "UNIDADE", grupo: "GRUPO", fornecedor: "FORNECEDOR", ncm: "NCM", local: "LOCAL", qtd: "ESTOQUE", qtdMin: "MINIMO", preco: "PRECO", custo: "CUSTO", ativo: "ATIVO" };
+    var cel = function (v) {
+      if (v == null) return "";
+      var t = typeof v === "number" ? String(v).replace(".", ",") : typeof v === "boolean" ? (v ? "S" : "N") : String(v);
+      if (/^[=+\-@\t\r]/.test(t) && typeof v !== "number") t = "'" + t;
+      return /[";\n\r]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+    };
+    var linhas = [Local.pkg.campos.map(function (c) { return rot[c] || c; }).join(";")];
+    r._res.forEach(function (x) { linhas.push(Local.pkg.linhas[x.i].map(cel).join(";")); });
+    var blob = new Blob(["\ufeff" + linhas.join("\r\n") + "\r\n"], { type: "text/csv;charset=utf-8" });
+    var a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "estoque-copia-aparelho.csv";
+    document.body.appendChild(a); a.click(); setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+  });
   tb.addEventListener("click", function (e) { var tr = e.target.closest("tr[data-id]"); if (tr) abrir(tr.getAttribute("data-id")); });
 
   // Detalhe: TODAS as colunas do item.
@@ -375,6 +530,7 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
   };
   var abrir = function (id) {
     $("mdT").textContent = "Carregando..."; $("mdC").innerHTML = ""; ov.classList.add("on");
+    if (Local.semServidor && podeLocal()) { abrirLocal(id); return; }
     fetch("/api/estoque/item?id=" + encodeURIComponent(id), { cache: "no-store" }).then(function (r) { return r.json(); }).then(function (d) {
       if (!d || !d.ok) { $("mdT").textContent = "Item"; $("mdC").textContent = d && d.erro || "Item não encontrado."; return; }
       var r = d.resumo;
@@ -384,7 +540,22 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
         .map(function (x) { return "<div><small>" + esc(x[0]) + (x[2] ? "<button class=\"bt copiar\" data-c=\"" + esc(x[1]) + "\">copiar</button>" : "") + "</small><b>" + esc(x[1]) + "</b></div>"; }).join("");
       var kv = d.campos.map(function (c) { return "<div class=\"kv\"><div class=\"k\">" + esc(c.nome) + "</div><div class=\"v\">" + esc(fmtValor(c)) + "</div></div>"; }).join("");
       $("mdC").innerHTML = "<div class=\"dest\">" + dest + "</div>" + kv;
-    }).catch(function () { $("mdC").textContent = "Sem conexão com o servidor."; });
+    }).catch(function () { if (podeLocal()) { entrarSemServidor(); abrirLocal(id); } else $("mdC").textContent = "Sem conexão com o servidor."; });
+  };
+  // Detalhe pela cópia do aparelho: os campos principais (todas as colunas voltam com o servidor).
+  var abrirLocal = function (id) {
+    var i = parseInt(id, 10);
+    if (!(i >= 0 && i < Local.pkg.linhas.length)) { $("mdT").textContent = "Item"; $("mdC").textContent = "Item não encontrado na cópia deste aparelho — pesquise de novo."; return; }
+    var r = Local.pkg._resumo(i);
+    $("mdT").textContent = r.descricao || ("Item " + (r.codigo || ""));
+    var dest = [["Código", r.codigo, 1], ["Cód. barras", r.barras, 1], ["Referência", r.referencia, 1], ["Estoque", r.qtd != null ? qtdF(r.qtd) + (r.unidade ? " " + r.unidade : "") : null], ["Preço", r.preco != null ? reais(r.preco) : null], ["Custo", r.custo != null && $("fCus").checked ? reais(r.custo) : null], ["Mínimo", r.qtdMin != null ? qtdF(r.qtdMin) : null]]
+      .filter(function (x) { return x[1] != null && x[1] !== ""; })
+      .map(function (x) { return "<div><small>" + esc(x[0]) + (x[2] ? "<button class=\"bt copiar\" data-c=\"" + esc(x[1]) + "\">copiar</button>" : "") + "</small><b>" + esc(x[1]) + "</b></div>"; }).join("");
+    var kv = [["Grupo", r.grupo], ["Fornecedor", r.fornecedor], ["NCM", r.ncm], ["Localização", r.local], ["Situação", r.ativo === false ? "inativo" : r.ativo === true ? "ativo" : null]]
+      .filter(function (x) { return x[1] != null && x[1] !== ""; })
+      .map(function (x) { return "<div class=\"kv\"><div class=\"k\">" + esc(x[0]) + "</div><div class=\"v\">" + esc(x[1]) + "</div></div>"; }).join("");
+    $("mdC").innerHTML = "<div class=\"dest\">" + dest + "</div>" + kv +
+      "<p class=\"sub\" style=\"margin-top:10px\">Cópia salva neste aparelho (" + esc(metaTxt(metaDe(Local.pkg))) + "). Todas as colunas do cadastro aparecem quando o servidor voltar.</p>";
   };
   $("mdC").addEventListener("click", function (e) {
     var b = e.target.closest("[data-c]"); if (!b) return;
@@ -448,6 +619,8 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
     es.onerror = function () { try { es.close(); } catch (e) {} es = null; esTent++; setTimeout(conectar, Math.min(2000 * esTent, 30000)); };
   };
   conectar();
+  // Guarda a página e o leitor no aparelho para abrir sem o servidor (só em página segura).
+  try { if ("serviceWorker" in navigator && window.isSecureContext) navigator.serviceWorker.register("/estoque-sw.js", { scope: "/" }).catch(function () {}); } catch (e) {}
   olharLimpar();
   qEl.focus();
   buscar(1);

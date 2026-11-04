@@ -1,5 +1,22 @@
 # Changelog
 
+## Relatórios SmallSoft Offline 1.8.0 — 2026-11-04
+
+- **Estoque sem o servidor.** Cada aparelho que abre o estoque guarda uma cópia dele (IndexedDB), atualizada sozinha
+  quando o estoque muda (só baixa de novo se mudou; compactada). Com o servidor de relatórios fora do ar:
+  - faixa **"Servidor de relatórios fora do ar — somente o estoque está disponível"**, com a data e hora dos dados,
+    quantidade de itens e tamanho da cópia (KB/MB/GB);
+  - busca, filtros, ordem e leitor de código de barras continuam, com **as mesmas regras do servidor** (novo
+    `estoque-busca.js`, usado pelos dois lados — testado: mesmos resultados para 19 buscas diferentes);
+  - detalhe do item com os campos principais e exportação CSV da cópia;
+  - volta sozinha a usar o servidor quando ele responde de novo (verifica a cada 15 s);
+  - `estoque-sw.js`: em página segura (HTTPS 7736 ou localhost) a página do estoque e o leitor ficam guardados no
+    aparelho e abrem mesmo com o servidor desligado; abrir o relatório sem servidor mostra uma página de reserva
+    com o aviso e o botão **Abrir o estoque**.
+  - No relatório aberto, a faixa de servidor encerrado/sem conexão também diz que só o estoque está disponível, com
+    a data e o link para ele.
+- `estoque-offline.js` 1.2.0 (busca em `estoque-busca.js` 1.0.0, rota `/api/estoque/pacote`), `servidor-relatorio.js` 3.7.0.
+
 ## Relatórios SmallSoft Offline 1.7.0 — 2026-11-04
 
 Melhorias recentes do *Relatórios FDB* (os dois projetos são praticamente iguais; só muda a forma de ler o banco):

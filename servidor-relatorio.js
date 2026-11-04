@@ -5,7 +5,7 @@ if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
 
 /**
  * servidor-relatorio.js — Relatórios SmallSoft Offline
- * @version 3.6.4
+ * @version 3.7.0
  * @author Ruda Gabriel
  * @description Servidor HTTP + Firebird de relatórios com SSE, fast-poll e
  *              geração em subprocesso. SOMENTE LEITURA no banco.
@@ -14,9 +14,9 @@ if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
  *              principal em atualização, manutenção ou fora do ar.
  * @changelog
  *   (Histórico completo das versões: CHANGELOG.md no repositório.)
- *   3.6.4 - 2026-11-04 - Trazido do Relatórios FDB 2.23.0/2.23.1: fora da loja pelo NOME fixo do
- *     Tailscale (MagicDNS), preferências mantidas ao trocar de endereço; recarga automática
- *     ligada volta limpa, como F5.
+ *   3.7.0 - 2026-11-04 - Estoque sem o servidor: /api/estoque/pacote (cópia do estoque para o
+ *     aparelho guardar, gzip), /estoque-busca.js e /estoque-sw.js; o aviso de servidor fora do ar
+ *     diz que só o estoque está disponível, com data/hora, itens e tamanho da cópia.
  */
 
 
@@ -24,7 +24,7 @@ if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
 // Registrada na linha de início do log para que se saiba, ao investigar
 // qualquer ocorrência, qual versão do servidor estava no ar naquele momento
 // (o gerar-relatorio-html.js já faz o mesmo via SCRIPT_VERSION).
-const SERVER_VERSION = "3.6.4";
+const SERVER_VERSION = "3.7.0";
 
 // ===== Logger Global seguro — flush debounced 300ms =====
 const _fs = require('fs');
@@ -2422,7 +2422,20 @@ var gerarEmBackground=function(inicio,fim,chave,_pollTriggered){
             "var t=document.createElement('div');t.textContent=titulo;b.appendChild(t);" +
             "var d=document.createElement('div');d.textContent=detalhe;" +
             "d.style.cssText='font-weight:400;font-size:12px;opacity:.9;margin-top:3px';b.appendChild(d);" +
+            "_srvEstoque(b);" +
             "_srvFora=true;}catch(_){}};" +
+            // v3.7.0: com o servidor fora do ar, só o ESTOQUE salvo neste aparelho continua
+            // disponível (estoque.html guarda a cópia e os dados dela em estoqueOffline.meta).
+            "var _srvEstoque=function(b){try{" +
+            "var m=JSON.parse(localStorage.getItem('estoqueOffline.meta')||'null');if(!m||!m.carregadoEm)return;" +
+            "var p2=function(n){return(n<10?'0':'')+n;},dt=new Date(m.dadosDe||m.carregadoEm);" +
+            "var quando=p2(dt.getDate())+'/'+p2(dt.getMonth()+1)+'/'+dt.getFullYear()+' '+p2(dt.getHours())+':'+p2(dt.getMinutes());" +
+            "var by=Number(m.bytes)||0,tam=by>=1073741824?(by/1073741824).toFixed(2).replace('.',',')+' GB':by>=1048576?(by/1048576).toFixed(1).replace('.',',')+' MB':Math.max(1,Math.round(by/1024))+' KB';" +
+            "var e=document.createElement('div');e.style.cssText='font-weight:600;font-size:13px;margin-top:8px';" +
+            "e.textContent='Somente o estoque está disponível — estoque atualizado em '+quando+' · '+Number(m.itens||0).toLocaleString('pt-BR')+' itens · '+tam+' (cópia neste aparelho). ';" +
+            "if(navigator.serviceWorker&&navigator.serviceWorker.controller){var a=document.createElement('a');a.href='/estoque';a.textContent='Abrir o estoque';" +
+            "a.style.cssText='color:#fff;text-decoration:underline;font-weight:800';e.appendChild(a);}" +
+            "b.appendChild(e);}catch(_){}};" +
             "var _srvAvisoEncerrado=function(reiniciando){_srvAviso(" +
             "reiniciando?'Servidor reiniciando...':'Servidor de relatórios encerrado'," +
             "reiniciando?'O relatório volta sozinho em alguns segundos.':" +
@@ -5768,6 +5781,40 @@ var server=http.createServer(function(req,res){
             // Bibliotecas não mudam (versão fixa); o leitor em si pode mudar com atualizações do sistema.
             res.writeHead(200, { "Content-Type": _TIPOS_LEITOR[_extL], "Cache-Control": _relL.indexOf("vendor/") === 0 ? "public, max-age=604800" : "no-cache", "X-Content-Type-Options": "nosniff" });
             res.end(req.method === "HEAD" ? undefined : dadosL);
+        });
+        return;
+    }
+
+    // ── Estoque sem o servidor (v3.7.0) ─────────────────────────────────────
+    // /estoque-busca.js: as regras da busca (as mesmas do servidor) para o navegador.
+    // /estoque-sw.js: service worker que guarda a página do estoque e o leitor no
+    // aparelho (abre mesmo com o servidor fora do ar; só em página segura).
+    if((rota==="/estoque-busca.js" || rota==="/estoque-sw.js") && (req.method==="GET" || req.method==="HEAD")){
+        fs.readFile(path.join(__dirname, rota.slice(1)), function(eB, dB) {
+            if (eB) { res.writeHead(404,{"Content-Type":"text/plain; charset=utf-8"}); res.end("Não encontrado."); return; }
+            var hB = {"Content-Type":"text/javascript; charset=utf-8","Cache-Control":"no-cache","X-Content-Type-Options":"nosniff"};
+            if (rota === "/estoque-sw.js") hB["Service-Worker-Allowed"] = "/";
+            res.writeHead(200, hB); res.end(req.method === "HEAD" ? undefined : dB);
+        });
+        return;
+    }
+    // /api/estoque/pacote?versao=X — o estoque inteiro (campos da lista + texto de busca)
+    // para o aparelho guardar. Compactado (gzip) quando o navegador aceita.
+    if(rota==="/api/estoque/pacote" && req.method==="GET"){
+        if (!_estoque || typeof _estoque.pacote !== "function") { sendJson({ok:false, erro:"Consulta de estoque indisponível nesta instalação."}, 503); return; }
+        _estoque.pacote(String(parsed.searchParams.get("versao") || "").slice(0, 400), function(eP, rP) {
+            if (eP) { sendJson({ok:false, erro:"Não foi possível ler o estoque: " + String(eP.message || eP)}, 503); return; }
+            // Data dos DADOS (a da cópia offline em uso), para o aparelho mostrar "estoque de...".
+            try { var _stP = _offline ? _offline.status() : null; if (!rP.igual && _stP && _stP.lendo === "copia" && _stP.copia && _stP.copia.dadosDe) rP.dadosDe = _stP.copia.dadosDe; } catch (_) {}
+            var corpoP = JSON.stringify(rP);
+            var gz = /\bgzip\b/.test(String(req.headers["accept-encoding"] || ""));
+            var enviar = function(buf, comGzip) {
+                var hP = {"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store","X-Content-Type-Options":"nosniff"};
+                if (comGzip) { hP["Content-Encoding"] = "gzip"; hP["Vary"] = "Accept-Encoding"; }
+                res.writeHead(200, hP); res.end(buf);
+            };
+            if (!gz || rP.igual) { enviar(corpoP, false); return; }
+            require("zlib").gzip(corpoP, function(eZ, zb) { if (eZ) enviar(corpoP, false); else enviar(zb, true); });
         });
         return;
     }

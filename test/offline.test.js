@@ -449,7 +449,7 @@ const abrir3050 = () => new Promise(resolve => {
 test("servidor: espera a cópia sem tocar no banco principal, depois lê só a cópia", async () => {
     const p3050 = await abrir3050();
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "srv-copia-"));
-    for (const f of ["servidor-relatorio.js", "gerar-relatorio-html.js", "offline-copia.js", "estoque-offline.js", "estoque.html"]) fs.copyFileSync(path.join(RAIZ, f), path.join(dir, f));
+    for (const f of ["servidor-relatorio.js", "gerar-relatorio-html.js", "offline-copia.js", "estoque-offline.js", "estoque-busca.js", "estoque.html"]) fs.copyFileSync(path.join(RAIZ, f), path.join(dir, f));
     const mock = path.join(dir, "node_modules", "node-firebird");
     fs.mkdirSync(mock, { recursive: true });
     fs.copyFileSync(path.join(__dirname, "mock-firebird", "index.js"), path.join(mock, "index.js"));

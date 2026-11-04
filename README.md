@@ -4,13 +4,13 @@
 
 ### Vendas do dia e consulta de estoque do Small Commerce, lendo uma **cópia offline** do banco Firebird
 
-<img alt="versão: 1.7.0" src="https://img.shields.io/badge/vers%C3%A3o-1.7.0-2563EB?style=flat">
-<img alt="servidor: v3.6.4" src="https://img.shields.io/badge/servidor-v3.6.4-2563EB?style=flat">
+<img alt="versão: 1.8.0" src="https://img.shields.io/badge/vers%C3%A3o-1.8.0-2563EB?style=flat">
+<img alt="servidor: v3.7.0" src="https://img.shields.io/badge/servidor-v3.7.0-2563EB?style=flat">
 <img alt="cópia offline: v1.5.0" src="https://img.shields.io/badge/c%C3%B3pia%20offline-v1.5.0-0D9488?style=flat">
-<img alt="estoque: v1.1.0" src="https://img.shields.io/badge/estoque-v1.1.0-0D9488?style=flat">
+<img alt="estoque: v1.2.0" src="https://img.shields.io/badge/estoque-v1.2.0-0D9488?style=flat">
 <img alt="gerador: v3.26.3" src="https://img.shields.io/badge/gerador-v3.26.3-2563EB?style=flat">
 <img alt="bandeja: v1.7.1" src="https://img.shields.io/badge/bandeja-v1.7.1-2563EB?style=flat">
-<img alt="testes: 47 passando" src="https://img.shields.io/badge/testes-47%20passando-22C55E?style=flat">
+<img alt="testes: 48 passando" src="https://img.shields.io/badge/testes-48%20passando-22C55E?style=flat">
 
 <img alt="plataforma: Windows 10 | 11" src="https://img.shields.io/badge/plataforma-Windows%2010%20%7C%2011-0078D4?style=flat&logo=windows&logoColor=white">
 <img alt="banco: somente leitura" src="https://img.shields.io/badge/banco-somente%20leitura-DC2626?style=flat">
@@ -174,6 +174,18 @@ Todos os itens da tabela `ESTOQUE`, lidos da cópia offline (não pesa no caixa)
 - **Limpar a busca:** botão **X** dentro do campo (computador e celular).
 - **Atalhos:** `/`, `F3` ou `Ctrl+F` vão para a busca; `Esc` limpa ou fecha.
 
+### 📴 Estoque sem o servidor
+
+Cada aparelho que abre o estoque **guarda uma cópia dele** (todos os itens, com os campos da lista), atualizada sozinha quando o estoque muda. Se o servidor de relatórios cair, desligar ou ficar fora de alcance:
+
+- uma faixa avisa: **"Servidor de relatórios fora do ar — somente o estoque está disponível"**, com a **data e a hora** dos dados, a **quantidade de itens** e o **tamanho** da cópia (ex.: *estoque atualizado em 29/10/2026 16:26 · 9.102 itens · 3,2 MB*);
+- a busca continua funcionando **com as mesmas regras** (nome, código, código de barras, "Contém", filtros, ordem), inclusive pelo leitor de código de barras;
+- o detalhe do item mostra os campos principais (todas as colunas voltam com o servidor) e **Exportar** gera o CSV da cópia;
+- quando o servidor volta, a página percebe sozinha (a cada 15 s) e volta a usar o servidor;
+- no relatório, a faixa "servidor encerrado / sem conexão" também avisa que só o estoque está disponível, com a data e o link **Abrir o estoque**.
+
+**Abrir o estoque com o servidor já desligado** (fechou a página ou reiniciou o aparelho): funciona pelo endereço seguro `https://IP:7736/estoque` ou no próprio computador (`localhost`), onde o navegador guarda a página no aparelho. Por `http://IP:7735`, a cópia funciona enquanto a página estiver aberta.
+
 ---
 
 <a id="bandeja"></a>
@@ -245,6 +257,7 @@ Todas as rotas do *Relatórios FDB* continuam disponíveis (veja o `api.ps1`, co
 | `/api/estoque?q=&estoque=&ordem=&ativos=1&contem=1&pagina=&limite=` | GET | Busca (até 1000 por página; `estoque`: todos/com/sem/negativo/abaixo; `contem=0`: só itens que começam com o texto) |
 | `/api/estoque/item?id=N` | GET | Todas as colunas de um item |
 | `/api/estoque/csv?q=...` | GET | CSV com todos os resultados |
+| `/api/estoque/pacote?versao=` | GET | Estoque inteiro (campos da lista + texto de busca) para o aparelho guardar; compactado (gzip); versão igual → `{ igual: true }` |
 | `/api/https` | GET | Endereço HTTPS para quem pediu (`url`, `confiavel` = certificado do Tailscale) |
 | `/api/navigate/config` · `/hash/periodo` · `/hoje` · `/foco` · `/recarregar` · `/aviso` | GET/POST | Comandam as telas abertas via SSE (inclusive o estoque) |
 
@@ -277,12 +290,12 @@ Todas as rotas do *Relatórios FDB* continuam disponíveis (veja o `api.ps1`, co
 npm test
 ```
 
-**47 testes**, sem Firebird real (Firebird, `gbak` e `gfix` simulados em `test/`):
+**48 testes**, sem Firebird real (Firebird, `gbak` e `gfix` simulados em `test/`):
 
 | Arquivo | Cobre |
 |---|---|
 | `test/offline.test.js` (15) | Primeira cópia, falhas, troca atômica, limpeza, progresso, terminal com banco em rede, rede que não responde (servidor não trava), métodos `auto`/`arquivo`, `.fbk` |
-| `test/estoque.test.js` (4) | Busca, "Contém", filtros, ordem, situação ativo/inativo, detalhe, CSV, leitor, comandos da bandeja |
+| `test/estoque.test.js` (5) | Busca, "Contém", filtros, ordem, situação ativo/inativo, detalhe, CSV, leitor, comandos da bandeja, cópia no aparelho (mesmas respostas do servidor) |
 | `test/relatorio.test.js` (28) | Somente leitura, XSS, rotas, tempo real e demais testes herdados do *Relatórios FDB* |
 
 ---
@@ -313,6 +326,8 @@ npm test
 | `localizar-banco.js` | Localiza o `SMALL.FDB` (local, rede, terminais) sem conectar no banco |
 | `https-local.js` | Endereço HTTPS (porta 7736) com certificado gerado aqui, para a câmera ao vivo no celular |
 | `estoque-offline.js` · `estoque.html` | Consulta de estoque (dados e tela) |
+| `estoque-busca.js` | Regras da busca do estoque, as mesmas no servidor e no aparelho (servidor fora do ar) |
+| `estoque-sw.js` | Guarda a página do estoque e o leitor no aparelho, para abrir sem o servidor |
 | `leitor/` | Leitor de código de barras e bibliotecas locais |
 | `iniciar-tray.ps1` · `api.ps1` | Bandeja do Windows e cliente da API |
 | `*.bat` · `*.vbs` | Instalação, inicialização automática e atalhos |
