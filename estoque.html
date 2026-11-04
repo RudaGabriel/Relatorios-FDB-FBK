@@ -46,6 +46,11 @@ h1{margin:0;font-size:18px;font-weight:700}
 .semsrv{margin:10px 0 0;padding:12px 14px;border-radius:12px;background:rgba(239,68,68,.14);border:1px solid rgba(239,68,68,.45);color:var(--er);font-weight:600;line-height:1.4}
 .semsrv small{display:block;font-weight:400;color:var(--tx);opacity:.9;margin-top:4px}
 .semsrv[hidden]{display:none}
+/* Dica (página http): o estoque sem o servidor fica guardado só no endereço seguro. */
+.dica{margin:10px 0 0;padding:10px 12px;border-radius:12px;background:var(--hl);border:1px solid var(--bd);display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:13px;line-height:1.35}
+.dica[hidden]{display:none}
+.dica span{flex:1 1 220px}
+.dica .bt{white-space:nowrap}
 .erro{background:rgba(239,68,68,.14);color:var(--er)}
 .wrap{padding:0 16px 90px}
 table{width:100%;border-collapse:separate;border-spacing:0;background:var(--pn);border:1px solid var(--bd);border-radius:12px;overflow:hidden}
@@ -151,6 +156,7 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
     <a class="bt" href="/" id="bVolta">Relatório</a>
   </div>
   <div class="semsrv" id="semSrv" role="alert" hidden></div>
+  <div class="dica" id="dicaSeg" hidden><span>Use o estoque <b>mesmo com o servidor desligado</b>: abra pelo endereço seguro uma vez e ele fica guardado neste aparelho.</span><button type="button" class="bt pri" id="bSeg">Usar sem o servidor</button><button type="button" class="bt" id="bSegX" aria-label="Fechar a dica">&times;</button></div>
   <div class="busca">
     <div class="campo">
       <input id="q" type="search" inputmode="search" autocomplete="off" autocapitalize="off" spellcheck="false"
@@ -338,8 +344,41 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
   var localPronto = idb("readonly", function (st) { return st.get("atual"); })
     .then(function (pkg) { if (pkg && pkg.linhas && pkg.campos && pkg.busca) { Local.pkg = prepararFonte(pkg); gravarMeta(metaDe(pkg)); mostrarCopia(); } })
     .catch(function () {});
+  // Página http (celular pela rede): o navegador só guarda a página para abrir sem o
+  // servidor no endereço seguro (https, porta 7736). Guarda esse endereço (o aviso do
+  // relatório usa) e oferece a troca uma vez por aparelho.
+  if (!window.isSecureContext) {
+    fetch("/api/https", { cache: "no-store" }).then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
+      if (!d || !d.ok || !d.url || String(d.url).indexOf("https://") !== 0 || String(d.url).length > 200) return;
+      try { localStorage.setItem(LS + "https", String(d.url)); localStorage.setItem(LS + "httpsConfiavel", d.confiavel ? "1" : "0"); } catch (e) {}
+      // Com o certificado próprio (aviso no navegador) o celular não guarda a página: a
+      // dica só ajuda com o certificado confiável (Tailscale com HTTPS ligado).
+      if (!d.confiavel || ler("dicaSegFechada", "") === "1") return;
+      $("dicaSeg").hidden = false;
+      $("bSeg").onclick = function () {
+        if (false && !confirm("Abrir o estoque pelo endereço seguro do sistema.\n\nNa primeira vez o navegador mostra um aviso de certificado: toque em \"Avançado\" / \"Mostrar detalhes\" e depois em \"Continuar\" / \"Visitar site\". É o certificado do próprio sistema, da sua rede.\n\nDepois disso o estoque abre neste aparelho mesmo com o servidor desligado (guarde esse endereço nos favoritos ou na tela de início).")) return;
+        location.href = String(d.url) + "/estoque" + location.search;
+      };
+      $("bSegX").onclick = function () { gravar("dicaSegFechada", "1"); $("dicaSeg").hidden = true; };
+    }).catch(function () {});
+  }
   // Pede ao navegador para não apagar a cópia sozinho quando faltar espaço.
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(function () {}); } catch (e) {}
+  // Cópia DESTA página (com as regras da busca embutidas) para o relatório abrir o estoque
+  // sem o servidor, em qualquer aparelho (o service worker só existe em página segura).
+  var kitGuardado = false;
+  var guardarKit = function () {
+    if (kitGuardado) return; kitGuardado = true;
+    Promise.all([
+      fetch("/estoque", { cache: "no-store" }).then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.text(); }),
+      fetch("/estoque-busca.js", { cache: "no-store" }).then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.text(); })
+    ]).then(function (t) {
+      var tag = '<script src="/estoque-busca.js"><\/script>';
+      if (t[0].indexOf(tag) < 0 || /<\/script/i.test(t[1])) return;
+      var kit = t[0].replace(tag, "<script>" + t[1] + "<\/script>");
+      try { localStorage.setItem(LS + "kit", kit); } catch (e) { try { console.warn("[estoque] sem espaço para guardar a página:", e); } catch (_) {} }
+    }).catch(function () { kitGuardado = false; });
+  };
   var sincronizando = false;
   var sincronizar = function () {
     if (sincronizando || Local.semServidor) return;
@@ -351,12 +390,12 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
       .then(function (txt) {
         var d = JSON.parse(txt);
         if (!d || !d.ok) throw new Error((d && d.erro) || "pacote inválido");
-        if (d.igual) return;
+        if (d.igual) { guardarKit(); return; }
         if (!Array.isArray(d.linhas) || !Array.isArray(d.campos) || !Array.isArray(d.busca)) throw new Error("pacote incompleto");
         d.salvoEm = Date.now(); if (d.dadosDe === undefined) d.dadosDe = null;
         d.bytes = window.Blob ? new Blob([txt]).size : txt.length;
         return idb("readwrite", function (st) { return st.put(d, "atual"); }).then(function () {
-          Local.pkg = prepararFonte(d); gravarMeta(metaDe(d)); mostrarCopia();
+          Local.pkg = prepararFonte(d); gravarMeta(metaDe(d)); mostrarCopia(); guardarKit();
         });
       })
       .catch(function (e) { try { console.warn("[estoque] cópia no aparelho não atualizada:", e); } catch (_) {} })
@@ -421,6 +460,7 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
         if (d.local) $("origem").textContent = "cópia salva neste aparelho · " + metaTxt(metaDe(Local.pkg)) + " · tabela " + d.tabela;
         else {
           origem(d);
+          guardarKit(); // página atual guardada (uma vez por abertura)
           // Cópia do aparelho: guarda/atualiza quando o estoque do servidor for outro.
           localPronto.then(function () { if (!Local.pkg || Local.pkg.carregadoEm !== d.carregadoEm || Local.pkg.dadosDe === undefined) sincronizar(); });
         }
