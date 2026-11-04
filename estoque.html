@@ -46,6 +46,24 @@ h1{margin:0;font-size:18px;font-weight:700}
 .semsrv{margin:10px 0 0;padding:12px 14px;border-radius:12px;background:rgba(239,68,68,.14);border:1px solid rgba(239,68,68,.45);color:var(--er);font-weight:600;line-height:1.4}
 .semsrv small{display:block;font-weight:400;color:var(--tx);opacity:.9;margin-top:4px}
 .semsrv[hidden]{display:none}
+/* Servidor de volta: o estoque ainda mostra a cópia do aparelho até a pessoa escolher voltar ao vivo. */
+.volta{margin:10px 0 0;padding:12px 14px;border-radius:12px;background:rgba(34,197,94,.14);border:1px solid rgba(34,197,94,.5);color:var(--ok);font-weight:700;line-height:1.4}
+.volta small{display:block;font-weight:400;color:var(--tx);opacity:.9;margin-top:4px}
+.volta .acoes{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.volta .bt.ok{background:var(--ok);border-color:var(--ok);color:#fff;font-weight:700}
+.volta[hidden]{display:none}
+/* Faixas minimizáveis (botão "−" ou sozinhas depois de 8 s): viram uma linha; tocar abre de novo. */
+.semsrv,.volta{position:relative}
+.fx-min{position:absolute;top:6px;right:6px;width:30px;height:30px;border:0;border-radius:8px;background:transparent;color:inherit;font:700 20px/1 inherit;cursor:pointer;opacity:.75}
+.fx-min:hover{opacity:1;background:rgba(127,127,127,.15)}
+.fx-cheio{padding-right:30px}
+.fx-comp{display:none;align-items:center;gap:8px;cursor:pointer;font-size:13px}
+.fx-comp span{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fx-rest{flex:0 0 auto;width:28px;height:28px;border:1px solid currentColor;border-radius:8px;background:transparent;color:inherit;font:700 15px/1 inherit;cursor:pointer;opacity:.85;display:flex;align-items:center;justify-content:center;padding:0}
+.fx-rest:hover{opacity:1}
+.mini{padding:6px 10px}
+.mini .fx-cheio,.mini .fx-min{display:none}
+.mini .fx-comp{display:flex}
 /* Dica (página http): o estoque sem o servidor fica guardado só no endereço seguro. */
 .dica{margin:10px 0 0;padding:10px 12px;border-radius:12px;background:var(--hl);border:1px solid var(--bd);display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:13px;line-height:1.35}
 .dica[hidden]{display:none}
@@ -156,6 +174,7 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
     <a class="bt" href="/" id="bVolta">Relatório</a>
   </div>
   <div class="semsrv" id="semSrv" role="alert" hidden></div>
+  <div class="volta" id="srvVolta" role="status" hidden></div>
   <div class="dica" id="dicaSeg" hidden><span>Use o estoque <b>mesmo com o servidor desligado</b>: abra pelo endereço seguro uma vez e ele fica guardado neste aparelho.</span><button type="button" class="bt pri" id="bSeg">Usar sem o servidor</button><button type="button" class="bt" id="bSegX" aria-label="Fechar a dica">&times;</button></div>
   <div class="busca">
     <div class="campo">
@@ -402,13 +421,59 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
       .then(function () { sincronizando = false; });
   };
   var semSrvEl = $("semSrv"), vigiaTmr = null;
+  // Minimizar faixa: botão "−" ou sozinha depois de 8 s; tocar na linha abre de novo
+  // (o botão de ação da linha continua funcionando sem abrir).
+  var ligarMinimizar = function (el) {
+    el.classList.remove("mini");
+    clearTimeout(el._tMini);
+    el._tMini = setTimeout(function () { el.classList.add("mini"); }, 8000);
+    var bMin = el.querySelector(".fx-min"), comp = el.querySelector(".fx-comp");
+    if (bMin) bMin.onclick = function (e) { e.stopPropagation(); clearTimeout(el._tMini); el.classList.add("mini"); };
+    if (comp) comp.onclick = function () { clearTimeout(el._tMini); el.classList.remove("mini"); el._tMini = setTimeout(function () { el.classList.add("mini"); }, 8000); };
+  };
   var entrarSemServidor = function () {
     var primeira = !Local.semServidor;
     Local.semServidor = true;
     semSrvEl.hidden = false;
-    semSrvEl.innerHTML = "Servidor de relatórios fora do ar — <b>somente o estoque está disponível</b>." +
-      "<small>" + (Local.pkg ? "Usando a cópia salva neste aparelho: " + esc(metaTxt(metaDe(Local.pkg))) + "." : "Este aparelho ainda não tem uma cópia do estoque salva — ela é guardada sozinha na próxima vez que o estoque abrir com o servidor ligado.") + "</small>";
+    if (primeira || !semSrvEl.innerHTML) {
+      semSrvEl.innerHTML = "<button type=\"button\" class=\"fx-min\" title=\"Minimizar\" aria-label=\"Minimizar o aviso\">−</button>" +
+        "<div class=\"fx-cheio\">Servidor de relatórios fora do ar — <b>somente o estoque está disponível</b>." +
+        "<small>" + (Local.pkg ? "Usando a cópia salva neste aparelho: " + esc(metaTxt(metaDe(Local.pkg))) + "." : "Este aparelho ainda não tem uma cópia do estoque salva — ela é guardada sozinha na próxima vez que o estoque abrir com o servidor ligado.") + "</small></div>" +
+        "<div class=\"fx-comp\" title=\"Toque para ver os detalhes\"><span>⚠ Sem servidor · só o estoque" + (Local.pkg ? " · dados de " + esc(hm(metaDe(Local.pkg).dadosDe || Local.pkg.carregadoEm)) : "") + "</span>" +
+        "<button type=\"button\" class=\"fx-rest\" title=\"Restaurar o aviso\" aria-label=\"Restaurar o aviso\">⤢</button></div>";
+      ligarMinimizar(semSrvEl);
+    }
     if (primeira) { toast("Servidor fora do ar: somente o estoque está disponível."); vigiarVolta(); }
+  };
+  // Servidor de volta: NÃO troca sozinho (a pessoa pode estar no meio de uma consulta).
+  // Mostra a faixa verde com o botão para voltar aos dados ao vivo; segue conferindo a
+  // cada 15 s (se o servidor cair de novo antes do toque, a faixa vermelha volta).
+  var voltaEl = $("srvVolta");
+  var dentroDoRelatorio = (function () { try { return window.top !== window.self; } catch (e) { return true; } })();
+  var retomarAoVivo = function () {
+    clearTimeout(vigiaTmr);
+    Local.semServidor = false; semSrvEl.hidden = true; voltaEl.hidden = true;
+    toast("Dados ao vivo de novo.");
+    buscar(1); localPronto.then(sincronizar);
+  };
+  var mostrarVolta = function () {
+    semSrvEl.hidden = true;
+    if (!voltaEl.hidden) return;
+    voltaEl.hidden = false;
+    voltaEl.innerHTML = "<button type=\"button\" class=\"fx-min\" title=\"Minimizar\" aria-label=\"Minimizar o aviso\">−</button>" +
+      "<div class=\"fx-cheio\">✓ Servidor de relatórios no ar de novo." +
+      "<small>Você está vendo a cópia salva neste aparelho" + (Local.pkg ? " (" + esc(metaTxt(metaDe(Local.pkg))) + ")" : "") + ". Toque para voltar aos dados ao vivo.</small>" +
+      "<div class=\"acoes\">" + (dentroDoRelatorio
+        ? "<button type=\"button\" class=\"bt ok\" id=\"bVoltaRel\">Voltar ao relatório ao vivo</button><button type=\"button\" class=\"bt\" id=\"bVoltaEst\">Continuar no estoque, ao vivo</button>"
+        : "<button type=\"button\" class=\"bt ok\" id=\"bVoltaEst\">Voltar ao ao vivo</button>") + "</div></div>" +
+      "<div class=\"fx-comp\" title=\"Toque para ver os detalhes\"><span>✓ Servidor no ar de novo</span>" +
+      "<button type=\"button\" class=\"fx-rest\" title=\"Restaurar o aviso\" aria-label=\"Restaurar o aviso\">⤢</button></div>";
+    var bRel = $("bVoltaRel"), bEst = $("bVoltaEst");
+    var irRelatorio = function () { try { window.top.location.reload(); } catch (e) { location.href = "/"; } };
+    if (bRel) bRel.onclick = irRelatorio;
+    if (bEst) bEst.onclick = retomarAoVivo;
+    ligarMinimizar(voltaEl);
+    toast("Servidor de relatórios no ar de novo.");
   };
   var vigiarVolta = function () {
     clearTimeout(vigiaTmr);
@@ -419,11 +484,14 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
         .then(function (r) {
           clearTimeout(t);
           if (!r.ok) throw new Error("HTTP " + r.status);
-          Local.semServidor = false; semSrvEl.hidden = true;
-          toast("Servidor de relatórios de volta.");
-          buscar(1); localPronto.then(sincronizar);
+          if (Local.semServidor) mostrarVolta();
         })
-        .catch(function () { clearTimeout(t); vigiarVolta(); });
+        .catch(function () {
+          clearTimeout(t);
+          // Caiu de novo antes do toque: volta a faixa vermelha.
+          if (Local.semServidor && !voltaEl.hidden) { voltaEl.hidden = true; semSrvEl.hidden = false; }
+        })
+        .then(function () { if (Local.semServidor) vigiarVolta(); });
     }, 15000);
   };
   var buscarLocal = function (pagina) {
