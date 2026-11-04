@@ -9,6 +9,9 @@
   meio de uma consulta; se o servidor cair de novo antes do toque, a faixa vermelha volta.
   - O relatório não recarrega sozinho enquanto o estoque guardado está aberto por cima dele.
   - A página de reserva (servidor fora do ar) também mostra "Servidor no ar de novo · Voltar ao relatório ao vivo".
+- **Faixas minimizáveis** (vermelha "sem servidor" e verde "no ar de novo"): botão **−** ou sozinhas depois de 8 s,
+  viram uma linha fina ("⚠ Sem servidor · só o estoque · dados de …" / "✓ Servidor no ar de novo") com um botão
+  pequeno de **restaurar** (⤢); tocar na linha também abre de novo.
 - `servidor-relatorio.js` 3.7.2, `estoque-sw.js` 1.0.1.
 
 ## Relatórios SmallSoft Offline 1.8.1 — 2026-11-04
