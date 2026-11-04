@@ -2,7 +2,7 @@
 
 /**
  * estoque-offline.js
- * @version 1.1.0
+ * @version 1.2.0
  * @author Ruda Gabriel
  * @description Consulta de estoque completa (Relatórios SmallSoft Offline).
  *
@@ -19,12 +19,13 @@
  *
  * SOMENTE LEITURA: só SELECT, sempre pelo Firebird blindado do servidor.
  *
- * 1.1.0 — "Contém" desmarcado = itens que COMEÇAM com o texto (em algum campo);
- *         sentido da coluna de situação (ativo/inativo) decidido pelos dados.
+ * 1.2.0 — Regras da busca em estoque-busca.js (as mesmas no navegador) e pacote do
+ *         estoque para o aparelho guardar e usar com o servidor fora do ar.
  * Histórico completo das versões: CHANGELOG.md no repositório.
  */
 
-const VERSAO = "1.1.0";
+const VERSAO = "1.2.0";
+const Busca = require("./estoque-busca.js");
 const TABELAS = ["ESTOQUE", "PRODUTOS", "PRODUTO", "CADPRO", "MERCADORIAS"];
 
 // Papéis das colunas, em ordem de preferência (o 1º nome que existir vence).
@@ -50,10 +51,6 @@ const PAPEIS = {
 const _semAcento = s => String(s == null ? "" : s).normalize("NFD").replace(/[̀-ͯ]/g, "");
 const normalizar = s => _semAcento(s).toUpperCase().replace(/\s+/g, " ").trim();
 const _soDigitos = s => String(s || "").replace(/\D+/g, "");
-// "Contém" desmarcado: o texto digitado (inteiro) precisa estar no COMEÇO de
-// algum campo (descrição, código, barras, referência...). "hs" tem os campos
-// separados por \u0001, então basta procurar "\u0001" + texto.
-const _noInicioDoCampo = (hs, t) => hs.indexOf("\u0001" + t) >= 0;
 // Tipos do Firebird (RDB$FIELD_TYPE).
 const T_TEXTO = { 14: "CHAR", 37: "VARCHAR", 40: "CSTRING" };
 const T_BLOB = 261;
@@ -256,93 +253,20 @@ function criarEstoque(opcoes) {
         return it;
     };
 
-    /**
-     * Busca. Termos separados por espaço = todos precisam aparecer (em qualquer
-     * coluna). Só números: também compara com os dígitos de cada campo (código
-     * de barras com ou sem pontuação). Aspas: frase exata. "-termo" exclui.
-     */
-    const filtrar = (c, consulta, filtros) => {
-        const f = filtros || {};
-        const bruto = String(consulta || "").slice(0, 300);
-        const frases = [], excl = [];
-        let resto = bruto.replace(/"([^"]+)"/g, (_, x) => { const n = normalizar(x); if (n) frases.push(n); return " "; });
-        const termos = [];
-        resto.split(/\s+/).forEach(t => {
-            if (!t) return;
-            if (t[0] === "-" && t.length > 1) { const n = normalizar(t.slice(1)); if (n) excl.push(n); return; }
-            const n = normalizar(t); if (n) termos.push(n);
-        });
-        const qNum = /^\d{3,}$/.test(bruto.trim()) ? bruto.trim() : "";
-        // "Contém" (padrão): cada termo pode estar em qualquer parte do texto.
-        // Desmarcado: o texto digitado inteiro precisa estar no começo de algum campo
-        // ("RACAO" acha "RACAO GATO 1KG", mas "GATO" não). "-termo" continua excluindo.
-        const soInicio = f.contem === false;
-        const prefixo = soInicio ? normalizar(bruto.replace(/"/g, " ").split(/\s+/).filter(t => t && !(t[0] === "-" && t.length > 1)).join(" ")) : "";
-        // Código numérico com zeros à esquerda: "4203" também acha "04203".
-        const prefNum = soInicio && /^\d+$/.test(prefixo) ? prefixo.replace(/^0+(?=\d)/, "") : "";
-        const contem = (hs, t) => hs.indexOf(t) >= 0;
-        const res = [];
-        const N = c.linhas.length;
-        for (let i = 0; i < N; i++) {
-            const hs = c.busca[i];
-            let ok = true;
-            if (soInicio) {
-                if (prefixo && !_noInicioDoCampo(hs, prefixo) && !_noInicioDoCampo(c.digitos[i], prefixo)) {
-                    const cod = prefNum ? String(valor(c, i, "codigo") == null ? "" : valor(c, i, "codigo")).trim().replace(/^0+(?=\d)/, "") : "";
-                    if (!(prefNum && /^\d+$/.test(cod) && cod.indexOf(prefNum) === 0)) ok = false;
-                }
-            } else {
-                for (let k = 0; k < termos.length && ok; k++) if (!contem(hs, termos[k]) && !(qNum && contem(c.digitos[i], termos[k]))) ok = false;
-                for (let k = 0; k < frases.length && ok; k++) if (!contem(hs, frases[k])) ok = false;
-            }
-            for (let k = 0; k < excl.length && ok; k++) if (contem(hs, excl[k])) ok = false;
-            if (!ok) continue;
-            if (f.estoque && f.estoque !== "todos" && c.idxPapel.qtd >= 0) {
-                const q = _num(valor(c, i, "qtd"));
-                if (f.estoque === "com" && !(q > 0)) continue;
-                if (f.estoque === "sem" && !(q === 0 || q == null)) continue;
-                if (f.estoque === "negativo" && !(q < 0)) continue;
-                if (f.estoque === "abaixo" && !(q != null && _num(valor(c, i, "qtdMin")) != null && q < _num(valor(c, i, "qtdMin")))) continue;
-            }
-            if (f.ativos && c.papeis.ativo && ativoDe(c, i) === false) continue;
-            // Relevância: código/barras exatos primeiro, depois começo da descrição.
-            let pts = 0;
-            if (qNum || termos.length === 1) {
-                const alvo = qNum || termos[0];
-                const cod = normalizar(valor(c, i, "codigo")), bar = normalizar(valor(c, i, "barras")), ref = normalizar(valor(c, i, "referencia"));
-                // "123" também acha o código "00123" (zeros à esquerda).
-                if (cod === alvo || (/^\d+$/.test(alvo) && /^\d+$/.test(cod) && Number(cod) === Number(alvo))) pts += 1000;
-                if (bar === alvo || (qNum && _soDigitos(bar) === qNum)) pts += 900;
-                if (ref === alvo) pts += 800;
-            }
-            if (termos.length) {
-                const desc = normalizar(valor(c, i, "descricao"));
-                if (desc.indexOf(termos[0]) === 0) pts += 100;
-                else if (desc.indexOf(" " + termos[0]) >= 0) pts += 50;
-                if (termos.every(t => desc.indexOf(t) >= 0)) pts += 30;
-            }
-            res.push({ i, pts });
-        }
-        return res;
-    };
-
-    const ordenar = (c, res, ordem) => {
-        const desc = i => normalizar(valor(c, i, "descricao"));
-        const cmpTxt = (a, b) => a < b ? -1 : a > b ? 1 : 0;
-        const num = (i, p) => { const n = _num(valor(c, i, p)); return n == null ? -Infinity : n; };
-        const cod = i => { const v = valor(c, i, "codigo"); const n = _num(v); return n != null && /^\s*\d+\s*$/.test(String(v)) ? n : Infinity; };
-        const ord = {
-            descricao: (a, b) => cmpTxt(desc(a.i), desc(b.i)),
-            codigo: (a, b) => (cod(a.i) - cod(b.i)) || cmpTxt(normalizar(valor(c, a.i, "codigo")), normalizar(valor(c, b.i, "codigo"))),
-            qtd: (a, b) => num(b.i, "qtd") - num(a.i, "qtd"),
-            qtdAsc: (a, b) => num(a.i, "qtd") - num(b.i, "qtd"),
-            preco: (a, b) => num(b.i, "preco") - num(a.i, "preco"),
-            precoAsc: (a, b) => num(a.i, "preco") - num(b.i, "preco")
-        }[ordem];
-        if (ord) res.sort((a, b) => ord(a, b) || cmpTxt(desc(a.i), desc(b.i)));
-        else res.sort((a, b) => (b.pts - a.pts) || cmpTxt(desc(a.i), desc(b.i)));
-        return res;
-    };
+    // Regras da busca: estoque-busca.js (as mesmas usadas pelo navegador quando o
+    // servidor está fora do ar e a página usa a cópia salva no aparelho).
+    const fonteDe = c => ({
+        n: c.linhas.length,
+        busca: i => c.busca[i],
+        digitos: i => c.digitos[i],
+        val: (i, papel) => valor(c, i, papel),
+        ativo: i => ativoDe(c, i),
+        temQtd: c.idxPapel.qtd >= 0,
+        temPreco: c.idxPapel.preco >= 0,
+        temAtivo: !!c.papeis.ativo
+    });
+    const filtrar = (c, consulta, filtros) => Busca.filtrar(fonteDe(c), consulta, filtros);
+    const ordenar = (c, res, ordem) => Busca.ordenar(fonteDe(c), res, ordem);
 
     const api = {
         VERSAO,
@@ -351,21 +275,33 @@ function criarEstoque(opcoes) {
             const p = params || {};
             garantir(!!p.recarregar, (err, c, avisoErr) => {
                 if (err || !c) { cb(err || new Error("Estoque indisponível.")); return; }
-                const res = ordenar(c, filtrar(c, p.q, p), String(p.ordem || ""));
-                const limite = Math.min(Math.max(parseInt(p.limite, 10) || 100, 1), 1000);
-                const pagina = Math.max(parseInt(p.pagina, 10) || 1, 1);
-                const ini = (pagina - 1) * limite;
-                const qtdCol = c.idxPapel.qtd >= 0;
-                let somaQtd = 0, somaValor = 0;
-                if (qtdCol) res.forEach(r => { const q = _num(valor(c, r.i, "qtd")) || 0; somaQtd += q; const pr = _num(valor(c, r.i, "preco")); if (pr != null && q > 0) somaValor += q * pr; });
+                const r = Busca.pesquisar(fonteDe(c), p, i => resumo(c, i));
+                delete r._res;
+                r.papeis = c.papeis; r.tabela = c.tabela; r.carregadoEm = c.carregadoEm;
+                r.aviso = avisoErr ? "Mostrando dados carregados antes: " + String(avisoErr.message || avisoErr).slice(0, 200) : null;
+                cb(null, r);
+            });
+        },
+        /**
+         * Pacote para o navegador guardar (cópia do estoque no aparelho, usada quando o
+         * servidor está fora do ar): os campos da lista + o texto de busca de cada item.
+         * Versão igual à do aparelho → { igual: true } (nada a baixar).
+         */
+        pacote(versaoAparelho, cb) {
+            garantir(false, (err, c) => {
+                if (err || !c) { cb(err || new Error("Estoque indisponível.")); return; }
+                const versao = String(c.chave || "") + "|" + c.carregadoEm;
+                if (versaoAparelho && versaoAparelho === versao) { cb(null, { ok: true, igual: true, versao }); return; }
+                const campos = ["codigo", "descricao", "barras", "referencia", "unidade", "grupo", "fornecedor", "ncm", "local", "qtd", "qtdMin", "preco", "custo", "ativo"];
+                const linhas = new Array(c.linhas.length);
+                for (let i = 0; i < c.linhas.length; i++) {
+                    const it = resumo(c, i);
+                    linhas[i] = campos.map(k => it[k] === undefined ? null : it[k]);
+                }
                 cb(null, {
-                    ok: true, total: res.length, totalItens: c.linhas.length, pagina, limite,
-                    paginas: Math.max(1, Math.ceil(res.length / limite)),
-                    itens: res.slice(ini, ini + limite).map(r => resumo(c, r.i)),
-                    somaQtd: qtdCol ? Math.round(somaQtd * 1000) / 1000 : null,
-                    somaValorVenda: qtdCol && c.idxPapel.preco >= 0 ? Math.round(somaValor * 100) / 100 : null,
-                    papeis: c.papeis, tabela: c.tabela, carregadoEm: c.carregadoEm,
-                    aviso: avisoErr ? "Mostrando dados carregados antes: " + String(avisoErr.message || avisoErr).slice(0, 200) : null
+                    ok: true, versao, carregadoEm: c.carregadoEm, tabela: c.tabela, papeis: c.papeis,
+                    temQtd: c.idxPapel.qtd >= 0, temPreco: c.idxPapel.preco >= 0, temAtivo: !!c.papeis.ativo,
+                    campos, linhas, busca: c.busca, digitos: c.digitos
                 });
             });
         },

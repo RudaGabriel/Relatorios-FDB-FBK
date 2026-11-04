@@ -41,7 +41,7 @@ function semearCopia(dir, fonte) {
 
 function montarPasta(config, estado) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "relatorio-teste-"));
-    for (const f of ["servidor-relatorio.js", "gerar-relatorio-html.js", "offline-copia.js", "estoque-offline.js", "estoque.html"]) fs.copyFileSync(path.join(RAIZ_PROJETO, f), path.join(dir, f));
+    for (const f of ["servidor-relatorio.js", "gerar-relatorio-html.js", "offline-copia.js", "estoque-offline.js", "estoque-busca.js", "estoque.html"]) fs.copyFileSync(path.join(RAIZ_PROJETO, f), path.join(dir, f));
     const mock = path.join(dir, "node_modules", "node-firebird");
     fs.mkdirSync(mock, { recursive: true });
     fs.copyFileSync(path.join(__dirname, "mock-firebird", "index.js"), path.join(mock, "index.js"));
