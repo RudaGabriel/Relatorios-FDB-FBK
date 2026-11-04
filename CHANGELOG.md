@@ -1,5 +1,16 @@
 # Changelog
 
+## Relatórios SmallSoft Offline 1.8.2 — 2026-11-04
+
+- **Servidor de volta: botão para voltar ao ao vivo.** Com o estoque usando a cópia do aparelho, quando o servidor
+  responde de novo aparece a faixa verde **"✓ Servidor de relatórios no ar de novo"** ("Você está vendo a cópia salva
+  neste aparelho (estoque atualizado em …). Toque para voltar aos dados ao vivo.") com o botão **Voltar ao ao vivo**.
+  Dentro do relatório: **Voltar ao relatório ao vivo** ou **Continuar no estoque, ao vivo**. Nada troca sozinho no
+  meio de uma consulta; se o servidor cair de novo antes do toque, a faixa vermelha volta.
+  - O relatório não recarrega sozinho enquanto o estoque guardado está aberto por cima dele.
+  - A página de reserva (servidor fora do ar) também mostra "Servidor no ar de novo · Voltar ao relatório ao vivo".
+- `servidor-relatorio.js` 3.7.2, `estoque-sw.js` 1.0.1.
+
 ## Relatórios SmallSoft Offline 1.8.1 — 2026-11-04
 
 - **Não abria mais depois de "Sair" ("Iniciando servidor de relatórios..." e "Outra instância já está rodando" no

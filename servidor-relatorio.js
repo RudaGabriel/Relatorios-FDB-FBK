@@ -5,7 +5,7 @@ if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
 
 /**
  * servidor-relatorio.js — Relatórios SmallSoft Offline
- * @version 3.7.1
+ * @version 3.7.2
  * @author Ruda Gabriel
  * @description Servidor HTTP + Firebird de relatórios com SSE, fast-poll e
  *              geração em subprocesso. SOMENTE LEITURA no banco.
@@ -14,8 +14,8 @@ if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
  *              principal em atualização, manutenção ou fora do ar.
  * @changelog
  *   (Histórico completo das versões: CHANGELOG.md no repositório.)
- *   3.7.1 - 2026-11-04 - Servidor fora do ar no celular: o aviso do relatório leva ao estoque
- *     guardado no endereço seguro (https), com botão "Abrir o estoque".
+ *   3.7.2 - 2026-11-04 - Servidor de volta com o estoque guardado aberto: não recarrega sozinho;
+ *     o estoque mostra "Servidor no ar de novo" com o botão para voltar ao ao vivo.
  */
 
 
@@ -23,7 +23,7 @@ if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
 // Registrada na linha de início do log para que se saiba, ao investigar
 // qualquer ocorrência, qual versão do servidor estava no ar naquele momento
 // (o gerar-relatorio-html.js já faz o mesmo via SCRIPT_VERSION).
-const SERVER_VERSION = "3.7.1";
+const SERVER_VERSION = "3.7.2";
 
 // ===== Logger Global seguro — flush debounced 300ms =====
 const _fs = require('fs');
@@ -2488,6 +2488,9 @@ var gerarEmBackground=function(inicio,fim,chave,_pollTriggered){
             "x.onclick=function(){a.style.display='none';};a.appendChild(x);" +
             "document.body.appendChild(a);}catch(_){}};" +
             "var _recarregar=function(forcar){" +
+            // v3.7.2: estoque guardado aberto por cima (servidor estava fora): nenhuma recarga
+            // automática — a pessoa volta ao ao vivo pelo botão "Voltar ao relatório ao vivo".
+            "try{var _feR=document.getElementById('__srv_estoque');if(_feR&&_feR.style.display!=='none')return;}catch(_){}" +
             // v2.22.0: desligada, a venda nova ENTRA do mesmo jeito — a página troca só os
             // dados no lugar (window.__atualizarSemRecarregar, gerador 3.26.0+). O aviso
             // "Há vendas novas" fica só para quando isso falhar (ou gerador antigo).
@@ -2581,7 +2584,9 @@ var gerarEmBackground=function(inicio,fim,chave,_pollTriggered){
             "_pollErros=0;_srvErroDesde=0;" +
             // Servidor voltou depois de ter caído/encerrado: recarrega para
             // mostrar os dados atuais (e tirar o aviso).
-            "if(_srvFora){_recarregar(true);return;}" +
+            // v3.7.2: com o estoque guardado aberto por cima (servidor estava fora), não recarrega
+            // sozinho — o próprio estoque mostra "Servidor no ar de novo · Voltar ao relatório ao vivo".
+            "if(_srvFora){var _fe=document.getElementById('__srv_estoque');if(_fe&&_fe.style.display!=='none')return;_recarregar(true);return;}" +
             "if(d.correcoes&&d.correcoes.length){" +
             "var _deveReload=false;" +
             "d.correcoes.forEach(function(c){" +

@@ -1,6 +1,6 @@
 /**
  * estoque-sw.js
- * @version 1.0.0
+ * @version 1.0.1
  * @author Ruda Gabriel
  * @description Service worker do estoque (Relatórios SmallSoft Offline).
  *
@@ -17,11 +17,11 @@
  * localhost) — por http://IP:7735 o estoque continua funcionando enquanto a página
  * estiver aberta, mas não abre de novo sem o servidor.
  *
- * 1.0.0 — primeira versão.
+ * 1.0.1 — página de reserva mostra "Servidor no ar de novo · Voltar ao relatório ao vivo" quando ele volta.
  * Histórico completo das versões: CHANGELOG.md no repositório.
  */
 "use strict";
-var CACHE = "estoque-offline-v1";
+var CACHE = "estoque-offline-v2";
 var PAGINA = "/estoque";
 var ARQUIVOS = [
     "/estoque-busca.js",
@@ -59,12 +59,17 @@ var paginaSemServidor = function () {
         'a{display:inline-block;margin-top:14px;padding:11px 18px;border-radius:12px;background:#2563eb;color:#fff;text-decoration:none;font-weight:700}' +
         '</style></head><body><div class="c"><h1>Servidor de relatórios fora do ar</h1>' +
         '<p><b>Somente o estoque está disponível</b>, pela cópia salva neste aparelho.</p><p id="info"></p>' +
-        '<a href="/estoque">Abrir o estoque</a><p style="font-size:12px;margin-top:16px">O relatório volta quando o servidor for ligado de novo.</p></div>' +
+        '<a href="/estoque">Abrir o estoque</a><p style="font-size:12px;margin-top:16px" id="volta">O relatório volta quando o servidor for ligado de novo.</p></div>' +
         '<script>try{var m=JSON.parse(localStorage.getItem("estoqueOffline.meta")||"null");if(m&&m.carregadoEm){' +
         'var p=function(n){return(n<10?"0":"")+n},d=new Date(m.dadosDe||m.carregadoEm),b=Number(m.bytes)||0;' +
         'document.getElementById("info").textContent="Estoque atualizado em "+p(d.getDate())+"/"+p(d.getMonth()+1)+"/"+d.getFullYear()+" "+p(d.getHours())+":"+p(d.getMinutes())+' +
         '" · "+Number(m.itens||0).toLocaleString("pt-BR")+" itens · "+(b>=1073741824?(b/1073741824).toFixed(2).replace(".",",")+" GB":b>=1048576?(b/1048576).toFixed(1).replace(".",",")+" MB":Math.max(1,Math.round(b/1024))+" KB");' +
-        '}else document.getElementById("info").textContent="Este aparelho ainda não tem uma cópia do estoque.";}catch(e){}<\/script></body></html>';
+        '}else document.getElementById("info").textContent="Este aparelho ainda não tem uma cópia do estoque.";}catch(e){}' +
+        // Servidor de volta: botão para voltar ao ao vivo (confere a cada 10 s).
+        'var conf=function(){fetch("/api/db-status",{cache:"no-store"}).then(function(r){if(!r.ok)throw 0;var v=document.getElementById("volta");' +
+        'v.innerHTML="<b style=\\"color:#86efac\\">✓ Servidor de relatórios no ar de novo.</b><br><a href=\\"\\" id=\\"aoVivo\\" style=\\"background:#16a34a\\">Voltar ao relatório ao vivo</a>";' +
+        'document.getElementById("aoVivo").onclick=function(e){e.preventDefault();location.reload();};}).catch(function(){setTimeout(conf,10000);});};setTimeout(conf,10000);' +
+        '<\/script></body></html>';
     return new Response(html, { status: 503, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
 };
 
