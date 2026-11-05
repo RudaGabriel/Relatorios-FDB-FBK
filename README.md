@@ -4,8 +4,8 @@
 
 ### Vendas do dia e consulta de estoque do Small Commerce, lendo uma **cópia offline** do banco Firebird
 
-<img alt="versão: 1.8.2" src="https://img.shields.io/badge/vers%C3%A3o-1.8.2-2563EB?style=flat">
-<img alt="servidor: v3.7.2" src="https://img.shields.io/badge/servidor-v3.7.2-2563EB?style=flat">
+<img alt="versão: 1.8.3" src="https://img.shields.io/badge/vers%C3%A3o-1.8.3-2563EB?style=flat">
+<img alt="servidor: v3.7.3" src="https://img.shields.io/badge/servidor-v3.7.3-2563EB?style=flat">
 <img alt="cópia offline: v1.5.0" src="https://img.shields.io/badge/c%C3%B3pia%20offline-v1.5.0-0D9488?style=flat">
 <img alt="estoque: v1.2.0" src="https://img.shields.io/badge/estoque-v1.2.0-0D9488?style=flat">
 <img alt="gerador: v3.26.3" src="https://img.shields.io/badge/gerador-v3.26.3-2563EB?style=flat">
@@ -184,7 +184,7 @@ Cada aparelho que abre o estoque **guarda uma cópia dele** (todos os itens, com
 - quando o servidor volta (a página confere a cada 15 s), aparece a faixa verde **"✓ Servidor de relatórios no ar de novo"** com o botão **Voltar ao ao vivo** (dentro do relatório: **Voltar ao relatório ao vivo** ou **Continuar no estoque, ao vivo**) — nada troca sozinho no meio de uma consulta. As duas faixas minimizam (botão **−** ou sozinhas em 8 s) e voltam pelo botão ⤢;
 - no relatório (computador e celular), a faixa "servidor encerrado / sem conexão" avisa **"Somente o estoque está disponível"**, com a data, os itens e o tamanho, e o botão **Abrir o estoque**: ele abre em tela cheia a cópia da página do estoque guardada no aparelho — funciona em qualquer celular, sem o servidor.
 
-**Abrir o estoque com o servidor já desligado** (fechou a página ou reiniciou o aparelho): no próprio computador (`localhost`) ou pelo endereço seguro com o **certificado do Tailscale** (HTTPS ligado no painel do Tailscale), o navegador guarda a página e ela abre direto. Com o certificado próprio do sistema (o que mostra aviso), o navegador não deixa guardar a página: use o botão **Abrir o estoque** do relatório.
+**Abrir o estoque com o servidor já desligado** (fechou a página ou reiniciou o aparelho): no próprio computador (`localhost`) ou pelo endereço seguro com o **certificado do Tailscale** (HTTPS ligado no painel do Tailscale), o navegador guarda a página e ela abre direto. Com o certificado próprio do sistema (o que mostra aviso), o navegador não deixa guardar a página: use o botão **Abrir o estoque** do relatório. Se o botão disser que o aparelho ainda não tem a cópia, abra o estoque uma vez com o servidor ligado (ela é guardada sozinha).
 
 ---
 

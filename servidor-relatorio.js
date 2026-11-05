@@ -5,7 +5,7 @@ if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
 
 /**
  * servidor-relatorio.js — Relatórios SmallSoft Offline
- * @version 3.7.2
+ * @version 3.7.3
  * @author Ruda Gabriel
  * @description Servidor HTTP + Firebird de relatórios com SSE, fast-poll e
  *              geração em subprocesso. SOMENTE LEITURA no banco.
@@ -14,8 +14,8 @@ if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
  *              principal em atualização, manutenção ou fora do ar.
  * @changelog
  *   (Histórico completo das versões: CHANGELOG.md no repositório.)
- *   3.7.2 - 2026-11-04 - Servidor de volta com o estoque guardado aberto: não recarrega sozinho;
- *     o estoque mostra "Servidor no ar de novo" com o botão para voltar ao ao vivo.
+ *   3.7.3 - 2026-11-05 - "Abrir o estoque" (servidor fora do ar) abre sempre a cópia da página
+ *     guardada no aparelho — antes, no celular, podia apontar para uma página que não abria.
  */
 
 
@@ -23,7 +23,7 @@ if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
 // Registrada na linha de início do log para que se saiba, ao investigar
 // qualquer ocorrência, qual versão do servidor estava no ar naquele momento
 // (o gerar-relatorio-html.js já faz o mesmo via SCRIPT_VERSION).
-const SERVER_VERSION = "3.7.2";
+const SERVER_VERSION = "3.7.3";
 
 // ===== Logger Global seguro — flush debounced 300ms =====
 const _fs = require('fs');
@@ -2435,7 +2435,9 @@ var gerarEmBackground=function(inicio,fim,chave,_pollTriggered){
             // (estoqueOffline.kit), em tela cheia, sem precisar do servidor.
             "var kit=localStorage.getItem('estoqueOffline.kit')||'';" +
             "var hsOk=localStorage.getItem('estoqueOffline.httpsConfiavel')==='1';" +
-            "var href=sw?'/estoque':(kit&&m&&m.carregadoEm?'#estoque':(hs&&hsOk?hs+'/estoque':''));" +
+            // v3.7.3: a cópia da página guardada no aparelho vem primeiro (abre sempre, sem
+            // depender de service worker nem de certificado); depois o service worker.
+            "var href=kit&&m&&m.carregadoEm?'#estoque':(sw?'/estoque':(hs&&hsOk?hs+'/estoque':''));" +
             "if(!(m&&m.carregadoEm)&&!href)return;" +
             "var p2=function(n){return(n<10?'0':'')+n;};" +
             "var info='';if(m&&m.carregadoEm){var dt=new Date(m.dadosDe||m.carregadoEm);" +
@@ -2455,7 +2457,9 @@ var gerarEmBackground=function(inicio,fim,chave,_pollTriggered){
             "var f=document.getElementById('__srv_estoque');if(f){f.style.display='block';return;}" +
             "f=document.createElement('iframe');f.id='__srv_estoque';f.title='Estoque';" +
             "f.style.cssText='position:fixed;inset:0;width:100%;height:100%;border:0;z-index:2147483647;background:#0b1120';" +
-            "f.srcdoc=kit;document.body.appendChild(f);}catch(_){}};" +
+            "f.srcdoc=kit;document.body.appendChild(f);}catch(_){" +
+            // Sem iframe (navegador antigo/bloqueado): troca a página inteira pela cópia.
+            "try{document.open();document.write(kit);document.close();}catch(__){}}};" +
             // Guarda o endereço seguro (https) enquanto o servidor está no ar, para o link acima.
             "try{if(!window.isSecureContext)fetch('/api/https',{cache:'no-store'}).then(function(r){return r.ok?r.json():null;})" +
             ".then(function(d){if(d&&d.ok&&d.url&&String(d.url).indexOf('https://')===0&&String(d.url).length<200)localStorage.setItem('estoqueOffline.https',String(d.url));}).catch(function(){});}catch(_){}" +
