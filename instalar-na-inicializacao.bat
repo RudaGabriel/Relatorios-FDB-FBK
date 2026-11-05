@@ -1,29 +1,4 @@
 @echo off
-:: ---------------------------------------------------------------------------
-:: INSTALACAO SILENCIOSA (v1.15.0): nenhuma janela fica aberta. Ao abrir o
-:: arquivo, esta instancia (visivel) apenas se relanca OCULTA e termina na
-:: hora; a oculta pede o UAC (unica tela, do proprio Windows), instala tudo
-:: e inicia o icone da bandeja. Erros aparecem numa janela de aviso com o
-:: motivo. A saida completa fica em %TEMP%\relatorios-instalacao*.txt.
-::   /oculto   -> uso interno (instancia ja oculta; 2o argumento = arquivo
-::                de saida, para o aviso de erro mostrar as ultimas linhas)
-::   /visivel  -> modo antigo, com janela e pausas (diagnostico)
-:: Variaveis por ambiente e aspas por [char]34: caminho com espaco ou
-:: apostrofo nao quebra o comando do PowerShell.
-:: ---------------------------------------------------------------------------
-set "SILENCIOSO="
-set "SAIDA="
-if /i "%~1"=="/visivel" goto :modo_definido
-if /i "%~1"=="/oculto" goto :modo_oculto
-set "_REL_SELF=%~f0"
-set "_REL_SAIDA=%TEMP%\relatorios-instalacao.txt"
-powershell -NoProfile -WindowStyle Hidden -Command "Start-Process -FilePath $env:ComSpec -ArgumentList ('/d /c ' + [char]34 + [char]34 + $env:_REL_SELF + [char]34 + ' /oculto ' + [char]34 + $env:_REL_SAIDA + [char]34 + ' >' + [char]34 + $env:_REL_SAIDA + [char]34 + ' 2>&1' + [char]34) -WindowStyle Hidden -ErrorAction Stop" >nul 2>&1
-if errorlevel 1 goto :modo_definido
-exit /b 0
-:modo_oculto
-set "SILENCIOSO=1"
-set "SAIDA=%~2"
-:modo_definido
 setlocal enabledelayedexpansion
 chcp 65001 >nul 2>&1
 
@@ -38,7 +13,7 @@ if errorlevel 1 (
     echo.
     echo ERRO: nao foi possivel acessar a pasta do script: %~dp0
     echo.
-    call :pausar_erro
+    pause
     exit /b 1
 )
 
@@ -144,19 +119,8 @@ echo   Pasta em unidade de rede - elevando via UNC: !UNCBASE!
 
 set "SELF_PATH_PS=!SELF_PATH:'=''!"
 set "SELF_DIR_PS=!SELF_DIR:'=''!"
-if defined SILENCIOSO goto :elevar_oculto
-powershell -NoProfile -Command "Start-Process -FilePath '!SELF_PATH_PS!' -ArgumentList '/visivel' -WorkingDirectory '!SELF_DIR_PS!' -Verb RunAs" 2>nul
+powershell -NoProfile -Command "Start-Process -FilePath '!SELF_PATH_PS!' -WorkingDirectory '!SELF_DIR_PS!' -Verb RunAs" 2>nul
 if errorlevel 1 goto :sem_elevacao
-goto :elevado_aberto
-:elevar_oculto
-:: Instancia elevada tambem OCULTA, com outro arquivo de saida (o atual ainda
-:: esta aberto por esta instancia ate ela terminar).
-set "_REL_SELF=!SELF_PATH!"
-set "_REL_DIR=!SELF_DIR!"
-set "_REL_SAIDA=%TEMP%\relatorios-instalacao-admin.txt"
-powershell -NoProfile -WindowStyle Hidden -Command "Start-Process -FilePath $env:ComSpec -ArgumentList ('/d /c ' + [char]34 + [char]34 + $env:_REL_SELF + [char]34 + ' /oculto ' + [char]34 + $env:_REL_SAIDA + [char]34 + ' >' + [char]34 + $env:_REL_SAIDA + [char]34 + ' 2>&1' + [char]34) -WorkingDirectory $env:_REL_DIR -Verb RunAs -WindowStyle Hidden -ErrorAction Stop" >nul 2>&1
-if errorlevel 1 goto :sem_elevacao
-:elevado_aberto
 echo Uma nova janela elevada foi aberta - pode fechar esta.
 set "_LT=%TIME: =0%"
 set "_LT=!_LT:~0,8!"
@@ -173,22 +137,20 @@ echo.
 set "_LT=%TIME: =0%"
 set "_LT=!_LT:~0,8!"
 >>"%LOGF%" echo [!_LD!] [!_LT!] [INSTALL] AVISO: elevacao recusada/bloqueada - seguindo sem Administrador.
-if not defined SILENCIOSO timeout /t 5 >nul
+timeout /t 5 >nul
 
 :ja_elevado
 
 :: =========================================================
-:: instalar-na-inicializacao.bat                       v1.15.0
+:: instalar-na-inicializacao.bat                       v1.15.1
 ::  Autor: Ruda Gabriel
 :: Configura o servidor para iniciar automaticamente no logon.
 ::
 :: (Historico completo das versoes: CHANGELOG.md no repositorio.)
-:: CHANGELOG 1.15.0 - 2026-11-05 - Instalacao silenciosa.
-::   - Nenhuma janela fica aberta: o arquivo se relanca oculto na hora, a
-::     instancia elevada (UAC) tambem e' oculta, nao pergunta o nome (usa o
-::     do config.json ou o padrao) e nao pausa. Erro: janela de aviso com o
-::     motivo e o caminho do log. "/visivel" mantem o modo com janela.
-::   - Esperas com ping (funcionam em qualquer console, inclusive oculto).
+:: CHANGELOG 1.15.1 - 2026-11-05 - A instalacao volta a mostrar a janela
+::   (com as etapas e as pausas), como antes da 1.15.0. O silencio ficou onde
+::   deve: na partida automatica (logon / ligar o computador), que o
+::   bootstrap.vbs 1.3.0 abre com "/inicializacao" - nenhuma janela.
 ::
 :: =========================================================
 
@@ -238,7 +200,7 @@ if %errorlevel% equ 0 goto :node_ok
 set /a _NODE_TENT+=1
 if !_NODE_TENT! geq 6 goto :node_falhou
 echo Aguardando o Node.js terminar de instalar... ^(!_NODE_TENT!/5^)
-ping -n 6 127.0.0.1 >nul 2>&1
+timeout /t 5 /nobreak >nul
 goto :node_path
 
 :node_falhou
@@ -248,7 +210,7 @@ echo ERRO: Node.js nao foi instalado corretamente.
 echo Verifique: %TEMP%\relatorio_node_install.log
 echo Ou instale em: https://nodejs.org
 echo.
-call :pausar_erro
+pause
 exit /b 1
 
 :node_ok
@@ -276,7 +238,7 @@ if %errorlevel% neq 0 (
         echo Execute node-firebird.bat como Administrador e tente novamente.
         echo.
         popd
-        call :pausar_erro
+        pause
         exit /b 1
     )
 )
@@ -288,7 +250,7 @@ if %errorlevel% neq 0 (
     echo ERRO: node-firebird instalado mas nao reconhecido nesta sessao.
     echo Feche e reabra o terminal e tente novamente.
     echo.
-    call :pausar_erro
+    pause
     exit /b 1
 )
 echo [OK] node-firebird pronto.
@@ -322,7 +284,7 @@ echo Voce ainda nao configurou o nome do sistema.
 echo Exemplos: Farmacia Central, Loja Silva, Mercado XYZ
 echo.
 set "NOVO_NOME="
-if not defined SILENCIOSO set /p NOVO_NOME=Nome do sistema: 
+set /p NOVO_NOME=Nome do sistema: 
 if "!NOVO_NOME!"=="" set "NOVO_NOME=Relatorios SmallSoft Offline"
 
 :: NOVO_NOME e CFG vao ao PowerShell por VARIAVEL DE AMBIENTE (v1.13.1), e nao
@@ -389,7 +351,7 @@ if not exist "!LAUNCHER_PATH!" (
     echo Caso contrario, a instalacao esta incompleta e o servidor NAO ira
     echo iniciar automaticamente: copie o launcher.vbs para essa pasta.
     echo.
-    if not defined SILENCIOSO timeout /t 8 >nul
+    timeout /t 8 >nul
 )
 set "TASK_NAME=!APP_NAME! - Relatorios"
 set "BOOTSTRAP_DIR=%LOCALAPPDATA%\RelatoriosOfflineBootstrap"
@@ -422,7 +384,7 @@ if exist "!BOOTSTRAP_FILE!" (
     echo ^(wscript.exe^) pelo Gerenciador de Tarefas e tente novamente.
     echo.
     >>"%LOGF%" echo [!_LD!] [!_LT!] [INSTALL] ERRO: bootstrap anterior nao pode ser apagado - arquivo em uso.
-    call :pausar_erro
+    pause
     exit /b 1
 )
 if exist "!BOOTSTRAP_DIR!\launcher.path" del /f /q "!BOOTSTRAP_DIR!\launcher.path" >nul 2>&1
@@ -455,13 +417,13 @@ if not exist "%~dp0bootstrap.vbs" (
     echo   %~dp0
     echo Verifique se a pasta do sistema esta completa.
     echo.
-    call :pausar_erro
+    pause
     exit /b 1
 )
 
 copy /y "%~dp0bootstrap.vbs" "!BOOTSTRAP_FILE!" >nul 2>&1
 :: v1.14.0: o antivirus pode apagar a copia alguns instantes depois - confere de novo.
-ping -n 3 127.0.0.1 >nul 2>&1
+timeout /t 2 /nobreak >nul
 if not exist "!BOOTSTRAP_FILE!" goto :bootstrap_falhou
 
 :: Grava o caminho do launcher (unica informacao dinamica do bootstrap) em
@@ -493,7 +455,7 @@ echo.
 set "_LT=%TIME: =0%"
 set "_LT=!_LT:~0,8!"
 >>"%LOGF%" echo [!_LD!] [!_LT!] [INSTALL] ERRO: falha ao criar bootstrap/launcher.path.
-call :pausar_erro
+pause
 exit /b 1
 
 :bootstrap_ok
@@ -548,7 +510,7 @@ if "!TAREFA_OK!"=="completa" (
     echo     1. Tarefa agendada no logon ^(imediata, sem atraso^)
 )
 echo     2. bootstrap.vbs LOCAL aguarda ate 30 min pelo launcher.vbs na rede
-echo     3. launcher.vbs lanca iniciar-tray.ps1 ^(oculto^)
+echo     3. launcher.vbs lanca iniciar-tray.ps1 ^(oculto, sem nenhuma janela^)
 echo     4. iniciar-tray.ps1 aguarda ate 30 min pelo servidor-relatorio.js
 echo     5. servidor-relatorio.js aguarda ate 30 min pelo banco Firebird
 echo.
@@ -586,7 +548,7 @@ if exist "!SHORTCUT!" (
 ) else (
     echo ERRO: Nao foi possivel configurar a inicializacao automatica.
     echo Tente executar como Administrador.
-    call :pausar_erro
+    pause
     exit /b 1
 )
 
@@ -642,21 +604,7 @@ wscript.exe "!LAUNCHER_PATH!"
 echo.
 echo Pronto^^! O icone aparecera na bandeja em instantes.
 echo.
->>"%LOGF%" echo [!_LD!] [!_LT!] [INSTALL] Fim da instalacao.
-if not defined SILENCIOSO pause
-exit /b 0
-
-:: ---------------------------------------------------------------------------
-:: ERRO (v1.15.0): com janela, pausa como antes. Oculto, mostra uma janela de
-:: aviso (sempre na frente) com as ultimas linhas da saida - o motivo do erro
-:: - e onde fica o log. Texto com acentos via \uXXXX (arquivo 100% ASCII).
-:: ---------------------------------------------------------------------------
-:pausar_erro
-if not defined SILENCIOSO (
-    pause
-    exit /b 0
-)
-powershell -NoProfile -WindowStyle Hidden -Command "try{Add-Type -AssemblyName System.Windows.Forms; $t=''; if($env:SAIDA -and (Test-Path -LiteralPath $env:SAIDA)){$t=((Get-Content -LiteralPath $env:SAIDA -Encoding UTF8 | Where-Object {$_.Trim()} | Select-Object -Last 8) -join [char]10)}; $m=[regex]::Unescape('N\u00e3o foi poss\u00edvel concluir a instala\u00e7\u00e3o.')+[char]10+[char]10+$t+[char]10+[char]10+[regex]::Unescape('Registro completo: ')+$env:LOGF; $d=New-Object System.Windows.Forms.Form; $d.TopMost=$true; [void][System.Windows.Forms.MessageBox]::Show($d,$m,[regex]::Unescape('Relat\u00f3rios - Instala\u00e7\u00e3o'),'OK','Error')}catch{}" >nul 2>&1
+pause
 exit /b 0
 
 :: ---------------------------------------------------------------------------

@@ -1,5 +1,18 @@
 # Changelog
 
+## Relatórios SmallSoft Offline 1.8.6 — 2026-11-05
+
+- **A instalação volta a mostrar a janela** (etapas, pausas e o nome do sistema), como antes da 1.8.5.
+- **Partida automática totalmente silenciosa.** Ao ligar o computador ou entrar no Windows, o sistema inicia sem
+  nenhuma janela e sem o balão "Servidor iniciado" — apenas o ícone aparece na bandeja. O `bootstrap.vbs` (usado só
+  na partida automática) abre o `launcher.vbs` com `/inicializacao`, que repassa `-Inicializacao` à bandeja.
+  - Nesse modo, avisos de erro da partida não abrem janela: ficam no `relatorio.log` ("Partida automatica") e, com o
+    ícone já na bandeja, viram um balão de aviso. O que o usuário pede pelo menu (Sair, Status, Informações...)
+    continua abrindo janela normalmente.
+  - Aberto pelo usuário (`gerar_relatorio_do_dia.bat` etc.), tudo continua como antes.
+  - **Para valer:** execute o `instalar-na-inicializacao.bat` uma vez (ele copia o `bootstrap.vbs` novo).
+- `instalar-na-inicializacao.bat` 1.15.1, `bootstrap.vbs` 1.3.0, `launcher.vbs` 1.1.0, `iniciar-tray.ps1` 1.7.4.
+
 ## Relatórios SmallSoft Offline 1.8.5 — 2026-11-05
 
 - **Instalação na inicialização totalmente silenciosa.** Ao abrir o `instalar-na-inicializacao.bat`, nenhuma janela do

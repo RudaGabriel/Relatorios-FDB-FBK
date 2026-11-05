@@ -1,5 +1,5 @@
 ' =============================================================================
-' launcher.vbs                                                       v1.0.1
+' launcher.vbs                                                       v1.1.0
 ' Autor: Ruda Gabriel
 ' -----------------------------------------------------------------------------
 ' ARQUIVO RECONSTRUIDO NA AUDITORIA - nao existia em nenhum lugar do projeto
@@ -22,13 +22,9 @@
 ' exatamente esse mesmo truque para se auto-invocar.
 '
 ' (Historico completo das versoes: CHANGELOG.md no repositorio.)
-' CHANGELOG 1.0.1 - 2026-08-07 20:35 - Etapa 4/6 (eixo precisao):
-'   Removidos todos os caracteres nao-ASCII (travessao e seta, que estavam
-'   apenas em comentarios). Mesma classe de risco ja corrigida nos .ps1 e
-'   .bat do projeto: wscript.exe le arquivos .vbs sem BOM usando a code page
-'   do sistema, e bytes multi-byte de UTF-8 podem ser reinterpretados de
-'   forma incorreta, corrompendo o parsing do script a partir dali. Arquivo
-'   agora 100% ASCII, como todo o resto do projeto.
+' CHANGELOG 1.1.0 - 2026-11-05 - Partida automatica silenciosa: com o argumento
+'   "/inicializacao" (passado pelo bootstrap.vbs), a bandeja recebe
+'   -Inicializacao e inicia sem nenhuma janela.
 '
 
 Option Explicit
@@ -65,6 +61,13 @@ End If
 '   no caminho (ex: "C:\Program Files\...", ou pasta com nome da loja).
 cmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File " & _
       Chr(34) & psPath & Chr(34)
+
+' v1.1.0: aberto pelo bootstrap.vbs (logon / ligar o computador) com
+' "/inicializacao" -> a bandeja inicia em silencio, sem nenhuma janela.
+' Aberto pelos .bat (pelo usuario) -> comportamento normal, com avisos.
+If WScript.Arguments.Count > 0 Then
+    If LCase(WScript.Arguments(0)) = "/inicializacao" Then cmd = cmd & " -Inicializacao"
+End If
 
 ' Run(comando, janela, aguardarTermino):
 '   janela=0        -> totalmente oculto
