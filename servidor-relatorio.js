@@ -5,7 +5,7 @@ if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
 
 /**
  * servidor-relatorio.js — Relatórios SmallSoft Offline
- * @version 3.7.5
+ * @version 3.7.6
  * @author Ruda Gabriel
  * @description Servidor HTTP + Firebird de relatórios com SSE, fast-poll e
  *              geração em subprocesso. SOMENTE LEITURA no banco.
@@ -14,8 +14,9 @@ if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
  *              principal em atualização, manutenção ou fora do ar.
  * @changelog
  *   (Histórico completo das versões: CHANGELOG.md no repositório.)
- *   3.7.5 - 2026-11-05 - Cancelar a cópia offline em andamento: POST /api/offline/cancelar
- *     (rede local), botão "Cancelar a cópia" no selo e na tela "Preparando a cópia".
+ *   3.7.6 - 2026-11-05 - "Abrir o estoque" (servidor fora do ar) no iPhone: botao de verdade
+ *     (toque garantido), nunca aponta para um endereco que nao abre, e o proprio relatorio
+ *     guarda a copia da pagina do estoque neste endereco enquanto o servidor esta no ar.
  */
 
 
@@ -23,7 +24,7 @@ if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
 // Registrada na linha de início do log para que se saiba, ao investigar
 // qualquer ocorrência, qual versão do servidor estava no ar naquele momento
 // (o gerar-relatorio-html.js já faz o mesmo via SCRIPT_VERSION).
-const SERVER_VERSION = "3.7.5";
+const SERVER_VERSION = "3.7.6";
 
 // ===== Logger Global seguro — flush debounced 300ms =====
 const _fs = require('fs');
@@ -2431,26 +2432,31 @@ var gerarEmBackground=function(inicio,fim,chave,_pollTriggered){
             "var m=JSON.parse(localStorage.getItem('estoqueOffline.meta')||'null');" +
             // v3.7.1: no celular (http) o estoque sem servidor abre pelo endereço seguro (https,
             // porta 7736), onde o navegador guarda a página — o link vai para lá.
-            "var hs=localStorage.getItem('estoqueOffline.https')||'';" +
+            // v3.7.6: só abre o que funciona SEM o servidor: a cópia da página guardada neste
+            // endereço (kit) ou, onde o navegador a guardou, o service worker. O link para o
+            // endereço seguro foi retirado: com a máquina fora do ar ele ficava carregando.
             "var sw=!!(navigator.serviceWorker&&navigator.serviceWorker.controller);" +
-            // Sem página segura: abre a cópia da página do estoque guardada neste endereço
-            // (estoqueOffline.kit), em tela cheia, sem precisar do servidor.
             "var kit=localStorage.getItem('estoqueOffline.kit')||'';" +
-            "var hsOk=localStorage.getItem('estoqueOffline.httpsConfiavel')==='1';" +
-            // v3.7.3: a cópia da página guardada no aparelho vem primeiro (abre sempre, sem
-            // depender de service worker nem de certificado); depois o service worker.
-            "var href=kit&&m&&m.carregadoEm?'#estoque':(sw?'/estoque':(hs&&hsOk?hs+'/estoque':''));" +
-            "if(!(m&&m.carregadoEm)&&!href)return;" +
+            "if(!(m&&m.carregadoEm))return;" +
+            "var modo=kit?'kit':(sw?'sw':'');" +
             "var p2=function(n){return(n<10?'0':'')+n;};" +
-            "var info='';if(m&&m.carregadoEm){var dt=new Date(m.dadosDe||m.carregadoEm);" +
+            "var dt=new Date(m.dadosDe||m.carregadoEm);" +
             "var by=Number(m.bytes)||0,tam=by>=1073741824?(by/1073741824).toFixed(2).replace('.',',')+' GB':by>=1048576?(by/1048576).toFixed(1).replace('.',',')+' MB':Math.max(1,Math.round(by/1024))+' KB';" +
-            "info=' — estoque atualizado em '+p2(dt.getDate())+'/'+p2(dt.getMonth()+1)+'/'+dt.getFullYear()+' '+p2(dt.getHours())+':'+p2(dt.getMinutes())+' · '+Number(m.itens||0).toLocaleString('pt-BR')+' itens · '+tam+' (cópia neste aparelho)';}" +
+            "var info=' — estoque atualizado em '+p2(dt.getDate())+'/'+p2(dt.getMonth()+1)+'/'+dt.getFullYear()+' '+p2(dt.getHours())+':'+p2(dt.getMinutes())+' · '+Number(m.itens||0).toLocaleString('pt-BR')+' itens · '+tam+' (cópia neste aparelho)';" +
             "var e=document.createElement('div');e.style.cssText='font-weight:600;font-size:13px;margin-top:8px';" +
             "e.textContent='Somente o estoque está disponível'+info+'. ';" +
-            "if(href){var a=document.createElement('a');a.href=href;a.textContent='Abrir o estoque';" +
-            "a.style.cssText='display:inline-block;margin-top:6px;padding:8px 14px;border-radius:10px;background:#fff;color:#b91c1c;text-decoration:none;font-weight:800';" +
-            "if(href==='#estoque')a.onclick=function(ev){ev.preventDefault();_srvAbrirEstoque(kit);};" +
+            "if(modo){var a=document.createElement('button');a.type='button';a.id='__srv_abrir_est';a.textContent='Abrir o estoque';" +
+            "a.style.cssText='display:inline-block;margin-top:8px;padding:10px 18px;min-height:44px;border:0;border-radius:10px;background:#fff;color:#b91c1c;font:800 15px Inter,Arial,sans-serif;cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:rgba(0,0,0,.15);position:relative;z-index:1';" +
+            // Toque no iPhone: abre já no "touchend" (sem depender do clique sintetizado, que
+            // outro gesto da página pode cancelar); o clique serve para mouse/teclado.
+            "var ir=function(ev){if(ev){try{ev.preventDefault();ev.stopPropagation();}catch(_){}}" +
+            "if(a._t&&Date.now()-a._t<900)return;a._t=Date.now();" +
+            "if(modo==='kit')_srvAbrirEstoque(localStorage.getItem('estoqueOffline.kit')||kit);else location.href='/estoque';};" +
+            "a.addEventListener('click',ir);" +
+            "try{a.addEventListener('touchend',ir,{passive:false});a.addEventListener('touchstart',function(ev){ev.stopPropagation();},{passive:true});}catch(_){a.ontouchend=ir;}" +
             "e.appendChild(a);}" +
+            "else{var sm=document.createElement('div');sm.style.cssText='font-weight:400;font-size:12px;opacity:.9;margin-top:4px';" +
+            "sm.textContent='Para abrir o estoque sem o servidor, abra o estoque uma vez neste aparelho com o servidor ligado.';e.appendChild(sm);}" +
             "b.appendChild(e);}catch(_){}};" +
             // Estoque em tela cheia por cima do relatório (iframe com a página guardada: mesmo
             // endereço, então lê a cópia do estoque deste aparelho). Quando o servidor volta, o
@@ -2458,10 +2464,30 @@ var gerarEmBackground=function(inicio,fim,chave,_pollTriggered){
             "var _srvAbrirEstoque=function(kit){try{" +
             "var f=document.getElementById('__srv_estoque');if(f){f.style.display='block';return;}" +
             "f=document.createElement('iframe');f.id='__srv_estoque';f.title='Estoque';" +
-            "f.style.cssText='position:fixed;inset:0;width:100%;height:100%;border:0;z-index:2147483647;background:#0b1120';" +
-            "f.srcdoc=kit;document.body.appendChild(f);}catch(_){" +
+            // top/left/right/bottom explícitos (iPhones antigos não conhecem "inset").
+            "f.style.cssText='position:fixed;top:0;left:0;right:0;bottom:0;width:100%;height:100%;border:0;margin:0;z-index:2147483647;background:#0b1120';" +
+            "f.srcdoc=kit;document.body.appendChild(f);" +
+            // Conferência: se a tela por cima não carregou a página, troca a página inteira pela cópia.
+            "setTimeout(function(){try{var d=f.contentDocument;if(d&&d.body&&d.body.childElementCount)return;}catch(_){return;}" +
+            "try{f.parentNode.removeChild(f);document.open();document.write(kit);document.close();}catch(__){}},2500);" +
+            "}catch(_){" +
             // Sem iframe (navegador antigo/bloqueado): troca a página inteira pela cópia.
             "try{document.open();document.write(kit);document.close();}catch(__){}}};" +
+            // v3.7.6: com o servidor no ar, o RELATÓRIO também guarda a cópia da página do estoque
+            // neste endereço (antes só a página do estoque guardava — quem tinha os dados de uma
+            // versão antiga ficava sem a página e o botão não abria nada). Só em aparelho que já
+            // usa o estoque (tem os dados); uma vez por versão do servidor; ~75 KB.
+            "setTimeout(function(){try{" +
+            "if(!localStorage.getItem('estoqueOffline.meta'))return;" +
+            "var kv=" + JSON.stringify(SERVER_VERSION) + ";" +
+            "if(localStorage.getItem('estoqueOffline.kit')&&localStorage.getItem('estoqueOffline.kitVer')===kv)return;" +
+            "var tx=function(u){return fetch(u,{cache:'no-store'}).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.text();});};" +
+            "Promise.all([tx('/estoque'),tx('/estoque-busca.js')]).then(function(t){" +
+            "var tag='<script src=\"/estoque-busca.js\"><\\/script>';" +
+            "if(t[0].indexOf(tag)<0||/<\\/script/i.test(t[1]))return;" +
+            "localStorage.setItem('estoqueOffline.kit',t[0].replace(tag,function(){return '<script>'+t[1]+'<\\/script>';}));" +
+            "localStorage.setItem('estoqueOffline.kitVer',kv);}).catch(function(){});" +
+            "}catch(_){}},2500);" +
             // Guarda o endereço seguro (https) enquanto o servidor está no ar, para o link acima.
             "try{if(!window.isSecureContext)fetch('/api/https',{cache:'no-store'}).then(function(r){return r.ok?r.json():null;})" +
             ".then(function(d){if(d&&d.ok&&d.url&&String(d.url).indexOf('https://')===0&&String(d.url).length<200)localStorage.setItem('estoqueOffline.https',String(d.url));}).catch(function(){});}catch(_){}" +
