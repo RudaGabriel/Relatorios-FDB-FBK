@@ -370,15 +370,15 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
     fetch("/api/https", { cache: "no-store" }).then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
       if (!d || !d.ok || !d.url || String(d.url).indexOf("https://") !== 0 || String(d.url).length > 200) return;
       try { localStorage.setItem(LS + "https", String(d.url)); localStorage.setItem(LS + "httpsConfiavel", d.confiavel ? "1" : "0"); } catch (e) {}
-      // Com o certificado próprio (aviso no navegador) o celular não guarda a página: a
-      // dica só ajuda com o certificado confiável (Tailscale com HTTPS ligado).
-      if (!d.confiavel || ler("dicaSegFechada", "") === "1") return;
-      $("dicaSeg").hidden = false;
-      $("bSeg").onclick = function () {
-        if (false && !confirm("Abrir o estoque pelo endereço seguro do sistema.\n\nNa primeira vez o navegador mostra um aviso de certificado: toque em \"Avançado\" / \"Mostrar detalhes\" e depois em \"Continuar\" / \"Visitar site\". É o certificado do próprio sistema, da sua rede.\n\nDepois disso o estoque poderá ser aberto neste aparelho mesmo com o servidor desligado (guarde esse endereço nos favoritos ou na tela de início).")) return;
-        location.href = String(d.url) + "/estoque" + location.search;
-      };
-      $("bSegX").onclick = function () { gravar("dicaSegFechada", "1"); $("dicaSeg").hidden = true; };
+      // Certificado confiável (HTTPS do Tailscale) respondendo deste aparelho: passa para o
+      // endereço seguro sozinho — lá o navegador guarda o estoque e ele abre mesmo com o
+      // servidor desligado, digitando o endereço. Sem resposta: fica aqui, sem dica.
+      if (!d.confiavel || !("serviceWorker" in navigator)) return;
+      var ac = window.AbortController ? new AbortController() : null;
+      var tm = setTimeout(function () { try { if (ac) ac.abort(); } catch (e) {} }, 4000);
+      fetch(String(d.url) + "/api/db-status", { mode: "no-cors", cache: "no-store", signal: ac ? ac.signal : undefined })
+        .then(function () { clearTimeout(tm); location.replace(String(d.url) + "/estoque" + location.search + location.hash); })
+        .catch(function () { clearTimeout(tm); });
     }).catch(function () {});
   }
   // Pede ao navegador para não apagar a cópia sozinho quando faltar espaço.
@@ -730,8 +730,12 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
   // Guarda a página e o leitor no aparelho para abrir sem o servidor (só em página segura).
   try { if ("serviceWorker" in navigator && window.isSecureContext) navigator.serviceWorker.register("/estoque-sw.js", { scope: "/" }).catch(function () {}); } catch (e) {}
   olharLimpar();
-  qEl.focus();
-  buscar(1);
+  // Dentro de outra tela (sincronização escondida do relatório ou estoque por cima dele):
+  // sem foco automático — no celular, o foco abriria o teclado por cima do relatório.
+  if (window.top === window.self) qEl.focus();
+  // Aberta pelo service worker porque o servidor não respondeu: começa na cópia do aparelho.
+  if (window.__estoqueSemServidor) localPronto.then(function () { if (podeLocal()) entrarSemServidor(); buscar(1); });
+  else buscar(1);
 })();
 </script>
 <script type="module">

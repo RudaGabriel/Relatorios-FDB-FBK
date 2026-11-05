@@ -1,6 +1,6 @@
 /**
  * estoque-sw.js
- * @version 1.0.3
+ * @version 1.1.0
  * @author Ruda Gabriel
  * @description Service worker do estoque (Relatórios SmallSoft Offline).
  *
@@ -10,19 +10,21 @@
  *
  * Só intercepta: a página /estoque (rede primeiro; sem rede, a cópia guardada),
  * os arquivos do estoque e do leitor (cópia guardada, atualizada em segundo plano)
- * e, sem rede, qualquer outra página (aviso "somente o estoque está disponível").
+ * e, sem rede, qualquer outra página (abre direto o estoque guardado no aparelho).
  * Todo o resto (API, SSE, relatório com o servidor no ar) passa direto.
  *
  * O navegador só aceita service worker em página segura (HTTPS, porta 7736, ou
  * localhost) — por http://IP:7735 o estoque continua funcionando enquanto a página
  * estiver aberta, mas não abre de novo sem o servidor.
  *
- * 1.0.3 — Textos da página de reserva em linguagem formal ("Servidor de relatórios indisponível",
- *         "Retornar ao relatório em tempo real").
+ * 1.1.0 — Servidor fora do ar (ou computador fora da rede): QUALQUER página do sistema abre
+ *         direto o ESTOQUE guardado no aparelho (antes: página de aviso). Prazo inteligente:
+ *         sem resposta em 8 s, confere /api/db-status (2 s); se também não responder, abre o
+ *         estoque — não espera o "tempo esgotado" do navegador (1 min ou mais).
  * Histórico completo das versões: CHANGELOG.md no repositório.
  */
 "use strict";
-var CACHE = "estoque-offline-v3";
+var CACHE = "estoque-offline-v4";
 var PAGINA = "/estoque";
 var ARQUIVOS = [
     "/estoque-busca.js",
@@ -42,6 +44,38 @@ self.addEventListener("activate", function (ev) {
         return Promise.all(ks.filter(function (k) { return k.indexOf("estoque-offline-") === 0 && k !== CACHE; }).map(function (k) { return caches.delete(k); }));
     }).then(function () { return self.clients.claim(); }));
 });
+
+// Navegação com prazo inteligente (1.1.0): o servidor pode estar só demorando (relatório
+// sendo gerado) — então, passado o prazo, confere se ele responde a algo simples; se sim,
+// espera a página; se não (servidor fora do ar / computador fora da rede), desiste.
+var navegarComPrazo = function (req) {
+    return new Promise(function (ok, falha) {
+        var acabou = false;
+        var fim = function (fn, v) { if (acabou) return; acabou = true; fn(v); };
+        var rede = fetch(req);
+        rede.then(function (r) { fim(ok, r); }, function (e) { fim(falha, e); });
+        setTimeout(function () {
+            if (acabou) return;
+            comPrazo(new Request("/api/db-status", { cache: "no-store" }), 2500).then(function (r) {
+                if (!r || !r.ok) fim(falha, new Error("servidor sem resposta"));
+                // Servidor no ar: espera a página normalmente.
+            }, function () { fim(falha, new Error("servidor sem resposta")); });
+        }, 8000);
+    });
+};
+// Estoque guardado neste aparelho (a página; os dados ficam no IndexedDB). Servido no
+// endereço pedido — a página do estoque usa só caminhos absolutos ("/api/...").
+var estoqueGuardado = function () {
+    return caches.match(PAGINA, { ignoreSearch: true }).then(function (r) {
+        if (!r) return paginaSemServidor();
+        // Marca a página: o servidor já não respondeu — ela começa direto na cópia do
+        // aparelho (sem esperar mais 10 s pela primeira consulta).
+        return r.text().then(function (t) {
+            t = t.replace(/<head>/i, function (h) { return h + "<script>window.__estoqueSemServidor=true;<\/script>"; });
+            return new Response(t, { status: 200, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+        });
+    }).catch(function () { return paginaSemServidor(); });
+};
 
 // Rede com prazo: servidor travado não segura a tela (cai para a cópia guardada).
 var comPrazo = function (req, ms) {
@@ -92,12 +126,10 @@ self.addEventListener("fetch", function (ev) {
 
     // Página do estoque: rede primeiro (dados e versão sempre atuais); sem rede, a guardada.
     if (url.pathname === PAGINA) {
-        ev.respondWith(comPrazo(req, 6000).then(function (r) {
+        ev.respondWith(navegarComPrazo(req).then(function (r) {
             if (r && r.ok) { var cp = r.clone(); caches.open(CACHE).then(function (c) { return c.put(PAGINA, cp); }).catch(function () {}); }
             return r;
-        }).catch(function () {
-            return caches.match(PAGINA, { ignoreSearch: true }).then(function (r) { return r || paginaSemServidor(); });
-        }));
+        }).catch(function () { return estoqueGuardado(); }));
         return;
     }
     // Arquivos do estoque/leitor: a cópia guardada na hora; atualiza em segundo plano.
@@ -111,8 +143,9 @@ self.addEventListener("fetch", function (ev) {
         }));
         return;
     }
-    // Outras páginas (relatório...): direto do servidor; se ele não responder, o aviso.
+    // Outras páginas (relatório, configurações...): do servidor; se ele não responder,
+    // abre direto o estoque guardado neste aparelho (1.1.0).
     if (req.mode === "navigate") {
-        ev.respondWith(fetch(req).catch(function () { return paginaSemServidor(); }));
+        ev.respondWith(navegarComPrazo(req).catch(function () { return estoqueGuardado(); }));
     }
 });

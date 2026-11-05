@@ -5,7 +5,7 @@ if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
 
 /**
  * servidor-relatorio.js — Relatórios SmallSoft Offline
- * @version 3.7.6
+ * @version 3.7.7
  * @author Ruda Gabriel
  * @description Servidor HTTP + Firebird de relatórios com SSE, fast-poll e
  *              geração em subprocesso. SOMENTE LEITURA no banco.
@@ -14,9 +14,9 @@ if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
  *              principal em atualização, manutenção ou fora do ar.
  * @changelog
  *   (Histórico completo das versões: CHANGELOG.md no repositório.)
- *   3.7.6 - 2026-11-05 - "Abrir o estoque" (servidor fora do ar) no iPhone: botao de verdade
- *     (toque garantido), nunca aponta para um endereco que nao abre, e o proprio relatorio
- *     guarda a copia da pagina do estoque neste endereco enquanto o servidor esta no ar.
+ *   3.7.7 - 2026-11-05 - Estoque sem o servidor mesmo sem a pagina aberta: com o HTTPS do
+ *     Tailscale, o celular passa sozinho do http para o endereco seguro e o relatorio registra o
+ *     service worker, que abre o estoque guardado quando o servidor nao responde.
  */
 
 
@@ -24,7 +24,7 @@ if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
 // Registrada na linha de início do log para que se saiba, ao investigar
 // qualquer ocorrência, qual versão do servidor estava no ar naquele momento
 // (o gerar-relatorio-html.js já faz o mesmo via SCRIPT_VERSION).
-const SERVER_VERSION = "3.7.6";
+const SERVER_VERSION = "3.7.7";
 
 // ===== Logger Global seguro — flush debounced 300ms =====
 const _fs = require('fs');
@@ -2488,9 +2488,33 @@ var gerarEmBackground=function(inicio,fim,chave,_pollTriggered){
             "localStorage.setItem('estoqueOffline.kit',t[0].replace(tag,function(){return '<script>'+t[1]+'<\\/script>';}));" +
             "localStorage.setItem('estoqueOffline.kitVer',kv);}).catch(function(){});" +
             "}catch(_){}},2500);" +
-            // Guarda o endereço seguro (https) enquanto o servidor está no ar, para o link acima.
-            "try{if(!window.isSecureContext)fetch('/api/https',{cache:'no-store'}).then(function(r){return r.ok?r.json():null;})" +
-            ".then(function(d){if(d&&d.ok&&d.url&&String(d.url).indexOf('https://')===0&&String(d.url).length<200)localStorage.setItem('estoqueOffline.https',String(d.url));}).catch(function(){});}catch(_){}" +
+            // v3.7.7: abrir o estoque digitando o endereço com o servidor desligado só é possível
+            // com o service worker — que o navegador só aceita em página segura com certificado
+            // confiável (HTTPS do Tailscale). (1) Na página segura: registra o service worker
+            // (ele guarda o estoque e o abre quando o servidor não responde). (2) Pelo http: se o
+            // endereço seguro confiável responde DESTE aparelho, passa para ele (uma vez; depois o
+            // celular já abre por lá). Quem usa o estoque leva junto o pedido de sincronizar.
+            "try{var _temSW=('serviceWorker' in navigator);" +
+            "if(window.isSecureContext&&_temSW&&location.protocol==='https:'){" +
+            "navigator.serviceWorker.register('/estoque-sw.js',{scope:'/'}).catch(function(){});" +
+            "var _qs=new URLSearchParams(location.search);" +
+            "if(_qs.get('estoqueAparelho')==='1'){_qs.delete('estoqueAparelho');" +
+            "try{var _qt=_qs.toString();history.replaceState(null,'',location.pathname+(_qt?'?'+_qt:'')+location.hash);}catch(_){}" +
+            // Os dados do estoque ficam por endereço: sincroniza aqui em segundo plano (página do
+            // estoque escondida, que grava os dados e a cópia da página) e some depois de 3 min.
+            "if(!localStorage.getItem('estoqueOffline.meta')){var _fr=document.createElement('iframe');_fr.src='/estoque';_fr.title='';" +
+            "_fr.setAttribute('aria-hidden','true');_fr.tabIndex=-1;_fr.style.cssText='position:absolute;width:1px;height:1px;left:-9999px;top:0;border:0;opacity:0';" +
+            "document.body.appendChild(_fr);setTimeout(function(){try{_fr.parentNode.removeChild(_fr);}catch(_){}},180000);}}}" +
+            "if(!window.isSecureContext)fetch('/api/https',{cache:'no-store'}).then(function(r){return r.ok?r.json():null;})" +
+            ".then(function(d){if(!(d&&d.ok&&d.url&&String(d.url).indexOf('https://')===0&&String(d.url).length<200))return;" +
+            "localStorage.setItem('estoqueOffline.https',String(d.url));" +
+            "if(!d.confiavel||!_temSW)return;" +
+            "var _ac=window.AbortController?new AbortController():null;var _tm=setTimeout(function(){try{if(_ac)_ac.abort();}catch(_){}},4000);" +
+            "fetch(String(d.url)+'/api/db-status',{mode:'no-cors',cache:'no-store',signal:_ac?_ac.signal:undefined}).then(function(){clearTimeout(_tm);" +
+            "var u=String(d.url)+location.pathname+location.search;" +
+            "if(localStorage.getItem('estoqueOffline.meta'))u+=(location.search?'&':'?')+'estoqueAparelho=1';" +
+            "location.replace(u+location.hash);}).catch(function(){clearTimeout(_tm);});" +
+            "}).catch(function(){});}catch(_){}" +
             "var _srvAvisoEncerrado=function(reiniciando){_srvAviso(" +
             "reiniciando?'Servidor reiniciando...':'Servidor de relatórios encerrado'," +
             "reiniciando?'O relatório será restabelecido automaticamente em alguns segundos.':" +
