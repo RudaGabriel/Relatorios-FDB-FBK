@@ -1,5 +1,17 @@
 # Changelog
 
+## Relatórios SmallSoft Offline 1.8.5 — 2026-11-05
+
+- **Instalação na inicialização totalmente silenciosa.** Ao abrir o `instalar-na-inicializacao.bat`, nenhuma janela do
+  Prompt de Comando ou do PowerShell permanece aberta: o instalador se relança oculto na hora, a parte que exige
+  administrador também roda oculta (a única tela é a confirmação do Windows — UAC), o nome do sistema vem do
+  `config.json` (ou o padrão) sem perguntar, e não há pausas. Ao final, o ícone surge na bandeja.
+  - Em caso de erro, uma janela de aviso (sempre na frente) mostra o motivo e o caminho do registro; a saída completa
+    fica em `%TEMP%\relatorios-instalacao.txt` e `%TEMP%\relatorios-instalacao-admin.txt`.
+  - `instalar-na-inicializacao.bat /visivel` mantém o modo antigo, com janela e pausas (diagnóstico).
+  - Instalação do Node.js sem janelas: instância elevada oculta e MSI de reserva sem interface.
+- `instalar-na-inicializacao.bat` 1.15.0, `_instalar-node.ps1` 1.3.1.
+
 ## Relatórios SmallSoft Offline 1.8.4 — 2026-11-05
 
 - **Textos em linguagem formal, em todo o sistema** (estoque, relatório, configurações, bandeja, cópia offline,
