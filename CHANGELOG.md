@@ -1,5 +1,13 @@
 # Changelog
 
+## Relatórios SmallSoft Offline 1.9.1 — 2026-11-05
+
+- **Remoção da inicialização com mensagens claras.** Sem administrador, a tarefa agendada (criada com permissão de
+  administrador) aparecia como `[FALHA] ... Acesso negado` — duas vezes — embora fosse removida logo em seguida pelo
+  UAC. Agora aparece `[ADMIN] tarefa agendada '...' — será removido com permissão de Administrador (a seguir)`, uma
+  vez só; `[FALHA]` fica para o que realmente não pôde ser removido.
+- `_remover-inicializacao.ps1` 1.1.0.
+
 ## Relatórios SmallSoft Offline 1.9.0 — 2026-11-05
 
 - **Estoque sem o servidor mesmo sem a página aberta.** Abrindo o endereço do sistema com o servidor desligado (ou o

@@ -1,5 +1,5 @@
 # =============================================================================
-# _remover-inicializacao.ps1                                          v1.0.2
+# _remover-inicializacao.ps1                                          v1.1.0
 # Autor: Ruda Gabriel
 # -----------------------------------------------------------------------------
 # Auxiliar do remover-inicializacao.bat (nao precisa ser executado direto).
@@ -34,7 +34,10 @@
 # Codigo de saida: 0 = tudo removido/encerrado, 1 = sobrou algo (listado).
 #
 # (Historico completo das versoes: CHANGELOG.md no repositorio.)
-# CHANGELOG 1.0.2 - 2026-11-05 - Mensagem em linguagem formal ("Execute novamente").
+# CHANGELOG 1.1.0 - 2026-11-05 - Mensagens claras: sem Administrador, o item que
+#   depende dele aparece como "[ADMIN] ... sera removido com permissao de
+#   Administrador" (antes "[FALHA]", mesmo sendo removido logo depois pelo UAC);
+#   a mesma tarefa nao e' mais listada duas vezes (com e sem a barra inicial).
 # =============================================================================
 
 param(
@@ -129,6 +132,14 @@ function Add-Removido([string]$Texto) {
 function Add-Falha([string]$Texto) {
     [void]$script:Falhas.Add($Texto)
     if ($script:EtapaUsuario) { [void]$script:FalhasUsuario.Add($Texto) }
+    # v1.1.0: sem Administrador, item da maquina (tarefa agendada, inicializacao de
+    # todos os usuarios) nao e' falha ainda: a seguir o UAC refaz so' essa parte.
+    if ($Escopo -eq 'Usuario' -and -not $script:EtapaUsuario -and -not $script:ehAdmin) {
+        Write-Host "  [ADMIN] $Texto" -ForegroundColor Cyan
+        Write-Host "          sera removido com permissao de Administrador (a seguir)." -ForegroundColor Cyan
+        Write-RemLog "Precisa de Administrador: $Texto"
+        return
+    }
     Write-Host "  [FALHA] $Texto" -ForegroundColor Yellow
     Write-RemLog "FALHA: $Texto"
 }
@@ -235,6 +246,7 @@ function Remove-TarefasAgendadas {
     Write-Host ''
     Write-Host 'Tarefas agendadas...' -ForegroundColor Cyan
     $achou = $false
+    $vistas = @{}   # nomes ja tratados (sem a barra inicial), para nao repetir
     $tarefas = $null
     try { $tarefas = @(Get-ScheduledTask -ErrorAction Stop) } catch { $tarefas = $null }
 
@@ -244,6 +256,7 @@ function Remove-TarefasAgendadas {
             if ($acoes -notmatch $PADRAO_INICIO) { continue }
             $achou = $true
             $nome = "$($t.TaskPath)$($t.TaskName)"
+            $vistas[$nome.TrimStart('\').ToUpperInvariant()] = $true
             try {
                 Unregister-ScheduledTask -TaskName $t.TaskName -TaskPath $t.TaskPath -Confirm:$false -ErrorAction Stop
                 Add-Removido "tarefa agendada '$nome'"
@@ -258,6 +271,7 @@ function Remove-TarefasAgendadas {
     # que o instalador usa, com e sem espacos (versoes antigas).
     $nomes = @("$APP_NAME - Relatorios", "$($APP_NAME -replace ' ', '') - Relatorios") | Select-Object -Unique
     foreach ($n in $nomes) {
+        if ($vistas.ContainsKey($n.ToUpperInvariant())) { continue }
         & schtasks.exe /query /tn "$n" *> $null
         if ($LASTEXITCODE -ne 0) { continue }
         $achou = $true
@@ -356,6 +370,7 @@ function Remove-PastaBootstrap {
 # EXECUCAO
 # ---------------------------------------------------------------------------
 $ehAdmin = Test-Admin
+$script:ehAdmin = $ehAdmin
 Write-RemLog ("=== iniciado - escopo={0} admin={1} matarProcessos={2} usuario={3} ===" -f $Escopo, $ehAdmin, [bool]$MatarProcessos, $env:USERNAME)
 
 if ($MatarProcessos) { Stop-ProcessosRelatorio } else { Stop-BootstrapAguardando }
@@ -421,6 +436,8 @@ if ($script:Falhas.Count -gt $script:FalhasUsuario.Count -and -not $ehAdmin) {
                   matar = [bool]$MatarProcessos; pastaProjeto = $PASTA_PROJ } | ConvertTo-Json
         [System.IO.File]::WriteAllText($tmpPrm, $prm, (New-Object System.Text.UTF8Encoding($false)))
         $argsElev = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$tmpPs1`" -Escopo Maquina -ParamsFile `"$tmpPrm`""
+        # A partir daqui uma falha e' falha mesmo (a instancia elevada ja tentou).
+        $script:ehAdmin = $true
         $proc = Start-Process -FilePath 'powershell.exe' -ArgumentList $argsElev -Verb RunAs -WindowStyle Hidden -Wait -PassThru -ErrorAction Stop
         $res = $null
         try { $res = [System.IO.File]::ReadAllText($tmpRes, [System.Text.Encoding]::UTF8) | ConvertFrom-Json } catch {}

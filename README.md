@@ -4,7 +4,7 @@
 
 ### Vendas do dia e consulta de estoque do Small Commerce, lendo uma **cópia offline** do banco Firebird
 
-<img alt="versão: 1.9.0" src="https://img.shields.io/badge/vers%C3%A3o-1.9.0-2563EB?style=flat">
+<img alt="versão: 1.9.1" src="https://img.shields.io/badge/vers%C3%A3o-1.9.1-2563EB?style=flat">
 <img alt="servidor: v3.7.7" src="https://img.shields.io/badge/servidor-v3.7.7-2563EB?style=flat">
 <img alt="cópia offline: v1.6.0" src="https://img.shields.io/badge/c%C3%B3pia%20offline-v1.6.0-0D9488?style=flat">
 <img alt="estoque: v1.2.1" src="https://img.shields.io/badge/estoque-v1.2.1-0D9488?style=flat">
@@ -273,6 +273,7 @@ Todas as rotas do *Relatórios FDB* continuam disponíveis (veja o `api.ps1`, co
 | Sintoma | O que fazer |
 |---|---|
 | Celular: com o servidor desligado aparece "Não é possível acessar esse site" | Abra pelo endereço seguro do Tailscale (`https://…ts.net:7736`) no **Safari** (iPhone) ou no Chrome (Android), com o servidor ligado, uma vez — e abra o estoque nele. Depois, sem o servidor, o mesmo endereço abre o estoque guardado. Pelo `http://…:7735` e no Chrome do iPhone o navegador não guarda o site |
+| Remoção mostra `[ADMIN] tarefa agendada ...` | Normal: a tarefa foi criada com permissão de administrador. O removedor pede o UAC logo em seguida e a remove (linha `[OK] [admin] ...`). Só é problema se o resumo final listar pendências |
 | Aparece alguma janela ao ligar o computador / entrar no Windows | A partida automática é silenciosa desde a versão 1.8.6. Execute o `instalar-na-inicializacao.bat` uma vez para atualizar a inicialização automática. Avisos dessa partida ficam no `relatorio.log` (linhas "Partida automatica") |
 | "Preparando a cópia offline" não sai / selo "cópia indisponível" | Clique no selo para ver o motivo. Normalmente: `gbak.exe` não encontrado (informe `gbakPath`) ou Firebird não instalado nesta máquina |
 | Terminal: "Error while trying to open file" | O banco está em outra máquina. Confira no log qual endereço o `gbak` tentou; se preciso, informe `IP:C:\...\SMALL.FDB` em *Selecionar banco* |
