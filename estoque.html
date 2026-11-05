@@ -394,7 +394,7 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
     ]).then(function (t) {
       var tag = '<script src="/estoque-busca.js"><\/script>';
       if (t[0].indexOf(tag) < 0 || /<\/script/i.test(t[1])) return;
-      var kit = t[0].replace(tag, "<script>" + t[1] + "<\/script>");
+      var kit = t[0].replace(tag, function () { return "<script>" + t[1] + "<\/script>"; });
       try { localStorage.setItem(LS + "kit", kit); } catch (e) { try { console.warn("[estoque] sem espaço para guardar a página:", e); } catch (_) {} }
     }).catch(function () { kitGuardado = false; });
   };

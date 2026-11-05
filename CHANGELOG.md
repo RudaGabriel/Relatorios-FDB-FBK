@@ -1,5 +1,19 @@
 # Changelog
 
+## Relatórios SmallSoft Offline 1.8.9 — 2026-11-05
+
+- **iPhone: "Abrir o estoque" (servidor fora do ar) não respondia.** O aparelho tinha os dados do estoque, mas não a
+  cópia da página neste endereço; o botão então apontava para o endereço seguro (porta 7736), que também estava fora
+  do ar, e a tela ficava carregando. Agora:
+  - enquanto o servidor está no ar, o **próprio relatório** guarda a cópia da página do estoque no aparelho que já usa
+    o estoque (uma vez por versão do servidor, ~75 KB);
+  - o botão só abre o que funciona sem o servidor (a cópia guardada ou o service worker); sem cópia, a faixa explica
+    "abra o estoque uma vez neste aparelho com o servidor ligado";
+  - é um botão de verdade (44 px de altura), que responde ao toque no iPhone mesmo quando outro gesto da página
+    cancelaria o clique; a tela por cima usa posições explícitas (iPhones antigos) e, se não carregar, a página
+    inteira vira o estoque.
+- `servidor-relatorio.js` 3.7.6.
+
 ## Relatórios SmallSoft Offline 1.8.8 — 2026-11-05
 
 - **Cancelar a cópia offline em andamento.** No selo (*Cancelar a cópia*), na tela *Preparando a cópia* e na bandeja
