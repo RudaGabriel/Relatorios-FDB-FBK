@@ -4,8 +4,8 @@
 
 ### Vendas do dia e consulta de estoque do Small Commerce, lendo uma **cópia offline** do banco Firebird
 
-<img alt="versão: 1.8.9" src="https://img.shields.io/badge/vers%C3%A3o-1.8.9-2563EB?style=flat">
-<img alt="servidor: v3.7.6" src="https://img.shields.io/badge/servidor-v3.7.6-2563EB?style=flat">
+<img alt="versão: 1.9.0" src="https://img.shields.io/badge/vers%C3%A3o-1.9.0-2563EB?style=flat">
+<img alt="servidor: v3.7.7" src="https://img.shields.io/badge/servidor-v3.7.7-2563EB?style=flat">
 <img alt="cópia offline: v1.6.0" src="https://img.shields.io/badge/c%C3%B3pia%20offline-v1.6.0-0D9488?style=flat">
 <img alt="estoque: v1.2.1" src="https://img.shields.io/badge/estoque-v1.2.1-0D9488?style=flat">
 <img alt="gerador: v3.26.4" src="https://img.shields.io/badge/gerador-v3.26.4-2563EB?style=flat">
@@ -186,7 +186,7 @@ Cada aparelho que abre o estoque **guarda uma cópia dele** (todos os itens, com
 - quando o servidor volta (a página confere a cada 15 s), aparece a faixa verde **"✓ O servidor de relatórios está disponível novamente"** com o botão **Retornar aos dados em tempo real** (dentro do relatório: **Retornar ao relatório em tempo real** ou **Continuar no estoque em tempo real**) — nada é trocado automaticamente no meio de uma consulta. As duas faixas podem ser minimizadas (botão **−** ou automaticamente após 8 s) e restauradas pelo botão ⤢;
 - no relatório (computador e celular), a faixa "servidor encerrado / sem conexão" avisa **"Somente o estoque está disponível"**, com a data, os itens e o tamanho, e o botão **Abrir o estoque**: ele abre em tela cheia a cópia da página do estoque guardada no aparelho — funciona em qualquer celular (inclusive iPhone), sem o servidor. Enquanto o servidor está no ar, o próprio relatório mantém essa cópia da página atualizada no aparelho que já usa o estoque; se ainda não houver cópia, a faixa explica como guardá-la.
 
-**Abrir o estoque com o servidor já desligado** (fechou a página ou reiniciou o aparelho): no próprio computador (`localhost`) ou pelo endereço seguro com o **certificado do Tailscale** (HTTPS ligado no painel do Tailscale), o navegador guarda a página e ela abre direto. Com o certificado próprio do sistema (o que mostra aviso), o navegador não deixa guardar a página: use o botão **Abrir o estoque** do relatório. Se o botão disser que o aparelho ainda não tem a cópia, abra o estoque uma vez com o servidor ligado (ela é guardada sozinha).
+**Abrir o estoque com o servidor já desligado** (a página não estava aberta, fechou o navegador ou reiniciou o aparelho): basta abrir o endereço do sistema normalmente — se o servidor não responder (desligado ou computador fora da rede), em até ~10 s abre **direto o estoque guardado no aparelho**. Isso funciona onde o navegador aceita guardar o site: no próprio computador (`localhost`) e pelo **endereço seguro do Tailscale** (HTTPS ligado no painel do Tailscale). Com o HTTPS do Tailscale ligado, o celular que abre pelo `http://…:7735` passa sozinho para o endereço seguro (`https://…ts.net:7736`) — guarde esse endereço nos favoritos ou na tela de início. No iPhone, use o **Safari** (ou o atalho na tela de início): o Chrome e outros navegadores do iPhone não guardam sites para abrir sem conexão. Pelo `http` ou com o certificado próprio do sistema (o que mostra aviso), o navegador não guarda o site: use o botão **Abrir o estoque** do relatório enquanto a página estiver aberta.
 
 ---
 
@@ -272,6 +272,7 @@ Todas as rotas do *Relatórios FDB* continuam disponíveis (veja o `api.ps1`, co
 
 | Sintoma | O que fazer |
 |---|---|
+| Celular: com o servidor desligado aparece "Não é possível acessar esse site" | Abra pelo endereço seguro do Tailscale (`https://…ts.net:7736`) no **Safari** (iPhone) ou no Chrome (Android), com o servidor ligado, uma vez — e abra o estoque nele. Depois, sem o servidor, o mesmo endereço abre o estoque guardado. Pelo `http://…:7735` e no Chrome do iPhone o navegador não guarda o site |
 | Aparece alguma janela ao ligar o computador / entrar no Windows | A partida automática é silenciosa desde a versão 1.8.6. Execute o `instalar-na-inicializacao.bat` uma vez para atualizar a inicialização automática. Avisos dessa partida ficam no `relatorio.log` (linhas "Partida automatica") |
 | "Preparando a cópia offline" não sai / selo "cópia indisponível" | Clique no selo para ver o motivo. Normalmente: `gbak.exe` não encontrado (informe `gbakPath`) ou Firebird não instalado nesta máquina |
 | Terminal: "Error while trying to open file" | O banco está em outra máquina. Confira no log qual endereço o `gbak` tentou; se preciso, informe `IP:C:\...\SMALL.FDB` em *Selecionar banco* |

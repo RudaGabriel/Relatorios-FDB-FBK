@@ -1,5 +1,21 @@
 # Changelog
 
+## Relatórios SmallSoft Offline 1.9.0 — 2026-11-05
+
+- **Estoque sem o servidor mesmo sem a página aberta.** Abrindo o endereço do sistema com o servidor desligado (ou o
+  computador fora da rede), em até ~10 s abre **direto o estoque guardado no aparelho**, já na cópia local — em vez de
+  "Não é possível acessar esse site".
+  - O service worker (1.1.0) atende qualquer página do sistema: sem resposta em 8 s, confere o servidor (2,5 s); se
+    também não responder, entrega o estoque guardado (não espera o tempo esgotado do navegador).
+  - O relatório registra o service worker no endereço seguro (antes só a página do estoque registrava).
+  - Com o HTTPS do Tailscale ligado (certificado confiável), o celular que abre pelo `http://…:7735` passa sozinho
+    para o endereço seguro quando ele responde deste aparelho; quem já usa o estoque leva junto a sincronização dos
+    dados (feita em segundo plano, uma vez).
+  - Limite dos navegadores: só funciona em endereço seguro com certificado confiável (ou `localhost`); no iPhone,
+    pelo Safari ou atalho na tela de início (o Chrome do iPhone não guarda sites para abrir sem conexão).
+  - A página do estoque não puxa mais o foco (teclado) quando está dentro de outra tela.
+- `servidor-relatorio.js` 3.7.7, `estoque-sw.js` 1.1.0.
+
 ## Relatórios SmallSoft Offline 1.8.9 — 2026-11-05
 
 - **iPhone: "Abrir o estoque" (servidor fora do ar) não respondia.** O aparelho tinha os dados do estoque, mas não a
