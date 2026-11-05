@@ -3,21 +3,12 @@
 # Metodos: winget -> MSI silencioso -> MSI com log detalhado.
 # Auto-eleva para Administrador se necessario.
 #
-# @version 1.3.0
+# @version 1.3.1
 # @author Ruda Gabriel
 # @changelog
 #   (Historico completo das versoes: CHANGELOG.md no repositorio.)
-#   1.3.0 - 2026-10-05 16:24 - Revisao completa.
-#     - Integridade: o MSI baixado era executado como Administrador sem
-#       nenhuma verificacao. Agora o SHA-256 e' conferido contra o
-#       SHASUMS256.txt oficial da mesma versao; sem acesso a ele, exige
-#       assinatura digital (Authenticode) valida do arquivo.
-#     - Auto-elevacao: a instancia nao elevada sempre saia com codigo 0, mesmo
-#       quando a elevada falhava - os .bat seguiam como se o Node estivesse
-#       instalado. Agora o codigo de saida da instancia elevada e' repassado.
-#     - Node.js 20 (fim de suporte em abril/2026) trocado pela LTS 22.22.0.
-#     - Read-Host protegido: os .bat chamam este script com -NonInteractive,
-#       onde Read-Host lanca erro em vez de esperar o ENTER.
+#   1.3.1 - 2026-11-05 - Sem janelas: a instancia elevada (quando necessaria) abre oculta e o
+#     MSI de reserva (com log) tambem roda sem interface (/qn) - instalacao silenciosa.
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -91,7 +82,7 @@ function Ensure-Admin {
         # encerrava com um stack trace .NET cru em vez de uma mensagem clara,
         # inconsistente com o padrao de log amigavel usado no resto do arquivo.
         try {
-            $procElevado = Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$script`"" -Verb RunAs -Wait -PassThru -ErrorAction Stop
+            $procElevado = Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -NonInteractive -File `"$script`"" -Verb RunAs -WindowStyle Hidden -Wait -PassThru -ErrorAction Stop
         } catch {
             Write-Log "Elevacao para Administrador foi cancelada ou falhou: $($_.Exception.Message)" "ERRO"
             Write-Log "A instalacao do Node.js requer privilegios de Administrador. Execute novamente e aceite o prompt do UAC." "ERRO"
@@ -324,7 +315,7 @@ function Install-ViaMsiComLog {
     Write-Log "Log sera salvo em: $LOG_FILE"
 
     $ErrorActionPreference = 'SilentlyContinue'
-    $proc   = Start-Process msiexec -ArgumentList "/i `"$TMP_MSI`" /qb /norestart ALLUSERS=1 ADDLOCAL=ALL /L*V `"$LOG_FILE`"" -Wait -PassThru
+    $proc   = Start-Process msiexec -ArgumentList "/i `"$TMP_MSI`" /qn /norestart ALLUSERS=1 ADDLOCAL=ALL /L*V `"$LOG_FILE`"" -Wait -PassThru
     $codigo = $proc.ExitCode
     $ErrorActionPreference = 'Stop'
 

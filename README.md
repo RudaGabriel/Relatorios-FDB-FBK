@@ -4,7 +4,7 @@
 
 ### Vendas do dia e consulta de estoque do Small Commerce, lendo uma **cópia offline** do banco Firebird
 
-<img alt="versão: 1.8.4" src="https://img.shields.io/badge/vers%C3%A3o-1.8.4-2563EB?style=flat">
+<img alt="versão: 1.8.5" src="https://img.shields.io/badge/vers%C3%A3o-1.8.5-2563EB?style=flat">
 <img alt="servidor: v3.7.4" src="https://img.shields.io/badge/servidor-v3.7.4-2563EB?style=flat">
 <img alt="cópia offline: v1.5.1" src="https://img.shields.io/badge/c%C3%B3pia%20offline-v1.5.1-0D9488?style=flat">
 <img alt="estoque: v1.2.1" src="https://img.shields.io/badge/estoque-v1.2.1-0D9488?style=flat">
@@ -67,7 +67,7 @@ Ele mantém automaticamente uma **cópia offline** do `SMALL.FDB`, feita com as 
 > **Requisitos:** Windows 10 ou 11 · Firebird do Small Commerce instalado **nesta máquina** (é ele que abre a cópia offline). O Node.js 18+ e o módulo `node-firebird` são instalados automaticamente.
 
 1. **Copie a pasta do sistema** para o computador (o do banco ou um terminal da rede).
-2. **Execute `instalar-na-inicializacao.bat`.** Ele pede permissão de administrador, instala o que faltar, libera a porta **7735** no firewall, cria a inicialização automática e já liga o servidor.
+2. **Execute `instalar-na-inicializacao.bat`.** A instalação é **silenciosa**: nenhuma janela permanece aberta — apenas a confirmação de administrador do Windows (UAC). Ela instala o que faltar, libera a porta **7735** no firewall, cria a inicialização automática e já inicia o servidor; o ícone surge na bandeja em instantes. Se algo falhar, uma janela de aviso informa o motivo. Para acompanhar a instalação com janela (diagnóstico), execute `instalar-na-inicializacao.bat /visivel` no Prompt de Comando.
 3. **Abra:** duplo clique no ícone da bandeja ou `http://localhost:7735`.
 
 Na primeira vez aparece **Preparando a cópia offline**, com barra de progresso, até a primeira cópia ficar pronta. Depois disso, o canto da tela mostra sempre de quando são os dados (**Offline · dados de 29/10/2026 14:32**).
@@ -268,6 +268,7 @@ Todas as rotas do *Relatórios FDB* continuam disponíveis (veja o `api.ps1`, co
 
 | Sintoma | O que fazer |
 |---|---|
+| Executei o instalador e nada apareceu | É o esperado: a instalação é silenciosa (apenas o UAC do Windows). Aguarde alguns segundos pelo ícone na bandeja. Para ver o andamento, consulte `%TEMP%\relatorios-instalacao-admin.txt` ou execute `instalar-na-inicializacao.bat /visivel` |
 | "Preparando a cópia offline" não sai / selo "cópia indisponível" | Clique no selo para ver o motivo. Normalmente: `gbak.exe` não encontrado (informe `gbakPath`) ou Firebird não instalado nesta máquina |
 | Terminal: "Error while trying to open file" | O banco está em outra máquina. Confira no log qual endereço o `gbak` tentou; se preciso, informe `IP:C:\...\SMALL.FDB` em *Selecionar banco* |
 | "O Firebird não está rodando nesta máquina" | Instale ou inicie o Firebird (mesma versão do servidor) aqui |
