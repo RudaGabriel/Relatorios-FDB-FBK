@@ -1,5 +1,16 @@
 # Changelog
 
+## Relatórios SmallSoft Offline 1.8.3 — 2026-11-05
+
+- **Celular, servidor encerrado: "Abrir o estoque" não fazia nada.** O botão da faixa vermelha preferia o endereço
+  `/estoque` quando havia service worker; sem a página no cache, o celular caía de novo na tela "Servidor fora do ar",
+  cujo botão levava de volta ao mesmo lugar — parecia que nada acontecia. Agora:
+  - o botão abre **sempre primeiro a cópia da página do estoque guardada no aparelho**, em tela cheia (sem depender de
+    service worker nem de certificado); se o navegador não aceitar a tela por cima, a página inteira vira o estoque;
+  - a tela "Servidor fora do ar" (service worker) também abre essa cópia ao tocar em **Abrir o estoque** — e, em
+    `/estoque`, abre direto; se o aparelho ainda não tiver a cópia, avisa para abrir o estoque uma vez com o servidor ligado.
+- `servidor-relatorio.js` 3.7.3, `estoque-sw.js` 1.0.2.
+
 ## Relatórios SmallSoft Offline 1.8.2 — 2026-11-04
 
 - **Servidor de volta: botão para voltar ao ao vivo.** Com o estoque usando a cópia do aparelho, quando o servidor
