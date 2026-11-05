@@ -1,5 +1,12 @@
 # Changelog
 
+## Relatórios SmallSoft Offline 1.9.2 — 2026-11-05
+
+- **Todos os avisos temporários com barrinha de tempo.** Uma barrinha no rodapé do aviso encolhe até ele sumir: no
+  estoque (ex.: "Copiado: ...", agora 3 s), no **Aviso** enviado pela bandeja para as telas e nos avisos de correção de
+  horário (os avisos do relatório já tinham). A duração segue a mesma de antes (configuração "Duração do toast").
+- `servidor-relatorio.js` 3.7.8.
+
 ## Relatórios SmallSoft Offline 1.9.1 — 2026-11-05
 
 - **Remoção da inicialização com mensagens claras.** Sem administrador, a tarefa agendada (criada com permissão de
