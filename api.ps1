@@ -9,14 +9,11 @@ Interface PowerShell para interacao com API do servidor de relatorios.
 - Contem APENAS endpoints implementados no backend atual
 .REQUIREMENTS
 PowerShell 5.1+ ou 7+ | Salvar como UTF-8 sem BOM
-@version 1.8.0
+@version 1.8.1
 @author Ruda Gabriel
 @changelog
   (Historico completo das versoes: CHANGELOG.md no repositorio.)
-  1.8.0 - 2026-10-23 16:30 - Dispositivos conectados.
-    - Opcao 37 / -Endpoint dispositivos: celulares e computadores da rede com o
-      relatorio aberto agora - tipo, modelo, sistema, navegador, IP, nome do
-      aparelho, telas abertas e rotas acessadas (servidor 2.17.0+).
+  1.8.1 - 2026-11-05 - Mensagens em linguagem formal ("Consulte novamente", "Execute o api.ps1").
 #>
 [CmdletBinding()]
 param(
@@ -275,7 +272,7 @@ function Executar-Endpoint {
                 $pend = @("g","nfc","nf") | Where-Object { $st.$_ -and $st.$_.qt -eq -1 }
                 if ($st.qt -eq -1 -or @($pend).Count -gt 0) {
                     $st | Add-Member -NotePropertyName obs -NotePropertyValue ("-1 = ainda nao lido do banco (servidor recem-ligado " +
-                        "ou banco fora do ar). Consulte de novo em alguns segundos; se continuar, veja a opcao 2 (db-status).") -Force
+                        "ou banco indisponivel). Consulte novamente em alguns segundos; se continuar, veja a opcao 2 (db-status).") -Force
                 }
             } catch {}
             return $st
@@ -393,9 +390,9 @@ function Executar-Endpoint {
                 $_respondeuHttp = ($_msgErro -match "\(\d{3}\)") -or ($_msgErro -match "HTTP \d{3}")
                 if ($_respondeuHttp) {
                     if ($_msgErro -match "403") {
-                        throw ("Restart negado pelo servidor (403). O servidor esta no ar, mas so' aceita " +
+                        throw ("Restart negado pelo servidor (403). O servidor esta em funcionamento, mas so' aceita " +
                                "restart de si mesmo ou da maquina registrada em 'maquinaIP' no config.json. " +
-                               "Rode o api.ps1 na propria maquina do servidor, ou atualize " +
+                               "Execute o api.ps1 na propria maquina do servidor, ou atualize " +
                                "servidor-relatorio.js para v2.7.8+, que passou a aceitar tambem a rede local.")
                     }
                     throw $_msgErro
@@ -501,7 +498,7 @@ function Executar-Endpoint {
             }
             if ($codigo -ne 302 -and ($codigo -lt 200 -or $codigo -ge 300)) { throw "Servidor respondeu HTTP $codigo." }
             try { Invoke-WebRequest -Uri "${BaseUri}/" -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop | Out-Null } catch {}
-            return @{ ok = $true; msg = "Relatorio de hoje sendo gerado de novo; as abas abertas atualizam sozinhas ao terminar." }
+            return @{ ok = $true; msg = "Relatorio de hoje sendo gerado novamente; as abas abertas serao atualizadas automaticamente ao terminar." }
         }
         "itens-venda" {
             if ($Data -isnot [array] -or $Data.Count -ne 2) { throw "Informe @('AAAA-MM-DD','numero da venda')" }
@@ -629,7 +626,7 @@ function Mostrar-Menu {
     Write-Host ""
     Write-Host "=== CONTROLE REMOTO ==="
     Write-Host "29. temas            | Listar os temas disponiveis"
-    Write-Host "30. tema             | Trocar o tema das telas abertas (fica salvo)"
+    Write-Host "30. tema             | Trocar o tema das telas abertas (permanece salvo)"
     Write-Host "31. aviso            | Mostrar uma mensagem em todas as telas"
     Write-Host "32. recarregar-abas  | Recarregar todas as telas abertas"
     Write-Host "33. info             | Versoes, maquina, banco, memoria, tempo ligado"
@@ -721,7 +718,7 @@ if ($Endpoint -eq "menu") {
                 "21" {
                     Write-Host "O servidor sera DESLIGADO de forma ordenada (as telas mostram o aviso)." -ForegroundColor Yellow
                     Write-Host "Se o icone da bandeja estiver ativo, ele religa o servidor em ate ~10 s." -ForegroundColor Yellow
-                    Write-Host "Sem o icone, para ligar de novo: opcao 15 (restart) ou o atalho." -ForegroundColor Yellow
+                    Write-Host "Sem o icone, para iniciar novamente: opcao 15 (restart) ou o atalho." -ForegroundColor Yellow
                     $conf = Read-Host "Digite SIM para confirmar"
                     if ($conf -cne "SIM") { Write-Host "[AVISO] Cancelado." -ForegroundColor Yellow; continue menu }
                     $dados = "SIM"

@@ -170,12 +170,12 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
     <span class="sub" id="origem">carregando...</span>
     <span class="sp"></span>
     <button class="bt" id="bCsv" title="Baixar todos os resultados da busca (Excel/CSV)">Exportar</button>
-    <button class="bt" id="bRec" title="Ler o estoque de novo">Recarregar</button>
+    <button class="bt" id="bRec" title="Carregar o estoque novamente">Recarregar</button>
     <a class="bt" href="/" id="bVolta">Relatório</a>
   </div>
   <div class="semsrv" id="semSrv" role="alert" hidden></div>
   <div class="volta" id="srvVolta" role="status" hidden></div>
-  <div class="dica" id="dicaSeg" hidden><span>Use o estoque <b>mesmo com o servidor desligado</b>: abra pelo endereço seguro uma vez e ele fica guardado neste aparelho.</span><button type="button" class="bt pri" id="bSeg">Usar sem o servidor</button><button type="button" class="bt" id="bSegX" aria-label="Fechar a dica">&times;</button></div>
+  <div class="dica" id="dicaSeg" hidden><span>Use o estoque <b>mesmo com o servidor desligado</b>: acesse uma vez pelo endereço seguro para que ele seja armazenado neste aparelho.</span><button type="button" class="bt pri" id="bSeg">Usar sem o servidor</button><button type="button" class="bt" id="bSegX" aria-label="Fechar a dica">&times;</button></div>
   <div class="busca">
     <div class="campo">
       <input id="q" type="search" inputmode="search" autocomplete="off" autocapitalize="off" spellcheck="false"
@@ -375,7 +375,7 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
       if (!d.confiavel || ler("dicaSegFechada", "") === "1") return;
       $("dicaSeg").hidden = false;
       $("bSeg").onclick = function () {
-        if (false && !confirm("Abrir o estoque pelo endereço seguro do sistema.\n\nNa primeira vez o navegador mostra um aviso de certificado: toque em \"Avançado\" / \"Mostrar detalhes\" e depois em \"Continuar\" / \"Visitar site\". É o certificado do próprio sistema, da sua rede.\n\nDepois disso o estoque abre neste aparelho mesmo com o servidor desligado (guarde esse endereço nos favoritos ou na tela de início).")) return;
+        if (false && !confirm("Abrir o estoque pelo endereço seguro do sistema.\n\nNa primeira vez o navegador mostra um aviso de certificado: toque em \"Avançado\" / \"Mostrar detalhes\" e depois em \"Continuar\" / \"Visitar site\". É o certificado do próprio sistema, da sua rede.\n\nDepois disso o estoque poderá ser aberto neste aparelho mesmo com o servidor desligado (guarde esse endereço nos favoritos ou na tela de início).")) return;
         location.href = String(d.url) + "/estoque" + location.search;
       };
       $("bSegX").onclick = function () { gravar("dicaSegFechada", "1"); $("dicaSeg").hidden = true; };
@@ -437,13 +437,13 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
     semSrvEl.hidden = false;
     if (primeira || !semSrvEl.innerHTML) {
       semSrvEl.innerHTML = "<button type=\"button\" class=\"fx-min\" title=\"Minimizar\" aria-label=\"Minimizar o aviso\">−</button>" +
-        "<div class=\"fx-cheio\">Servidor de relatórios fora do ar — <b>somente o estoque está disponível</b>." +
-        "<small>" + (Local.pkg ? "Usando a cópia salva neste aparelho: " + esc(metaTxt(metaDe(Local.pkg))) + "." : "Este aparelho ainda não tem uma cópia do estoque salva — ela é guardada sozinha na próxima vez que o estoque abrir com o servidor ligado.") + "</small></div>" +
-        "<div class=\"fx-comp\" title=\"Toque para ver os detalhes\"><span>⚠ Sem servidor · só o estoque" + (Local.pkg ? " · dados de " + esc(hm(metaDe(Local.pkg).dadosDe || Local.pkg.carregadoEm)) : "") + "</span>" +
+        "<div class=\"fx-cheio\">Servidor de relatórios indisponível — <b>somente o estoque está disponível</b>." +
+        "<small>" + (Local.pkg ? "Usando a cópia salva neste aparelho: " + esc(metaTxt(metaDe(Local.pkg))) + "." : "Este aparelho ainda não possui uma cópia do estoque — ela será armazenada automaticamente na próxima vez que o estoque for aberto com o servidor ligado.") + "</small></div>" +
+        "<div class=\"fx-comp\" title=\"Toque para ver os detalhes\"><span>⚠ Servidor indisponível · somente o estoque" + (Local.pkg ? " · dados de " + esc(hm(metaDe(Local.pkg).dadosDe || Local.pkg.carregadoEm)) : "") + "</span>" +
         "<button type=\"button\" class=\"fx-rest\" title=\"Restaurar o aviso\" aria-label=\"Restaurar o aviso\">⤢</button></div>";
       ligarMinimizar(semSrvEl);
     }
-    if (primeira) { toast("Servidor fora do ar: somente o estoque está disponível."); vigiarVolta(); }
+    if (primeira) { toast("Servidor indisponível: somente o estoque está disponível."); vigiarVolta(); }
   };
   // Servidor de volta: NÃO troca sozinho (a pessoa pode estar no meio de uma consulta).
   // Mostra a faixa verde com o botão para voltar aos dados ao vivo; segue conferindo a
@@ -453,7 +453,7 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
   var retomarAoVivo = function () {
     clearTimeout(vigiaTmr);
     Local.semServidor = false; semSrvEl.hidden = true; voltaEl.hidden = true;
-    toast("Dados ao vivo de novo.");
+    toast("Dados em tempo real restabelecidos.");
     buscar(1); localPronto.then(sincronizar);
   };
   var mostrarVolta = function () {
@@ -461,19 +461,19 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
     if (!voltaEl.hidden) return;
     voltaEl.hidden = false;
     voltaEl.innerHTML = "<button type=\"button\" class=\"fx-min\" title=\"Minimizar\" aria-label=\"Minimizar o aviso\">−</button>" +
-      "<div class=\"fx-cheio\">✓ Servidor de relatórios no ar de novo." +
-      "<small>Você está vendo a cópia salva neste aparelho" + (Local.pkg ? " (" + esc(metaTxt(metaDe(Local.pkg))) + ")" : "") + ". Toque para voltar aos dados ao vivo.</small>" +
+      "<div class=\"fx-cheio\">✓ O servidor de relatórios está disponível novamente." +
+      "<small>Você está consultando a cópia salva neste aparelho" + (Local.pkg ? " (" + esc(metaTxt(metaDe(Local.pkg))) + ")" : "") + ". Toque abaixo para retornar aos dados em tempo real.</small>" +
       "<div class=\"acoes\">" + (dentroDoRelatorio
-        ? "<button type=\"button\" class=\"bt ok\" id=\"bVoltaRel\">Voltar ao relatório ao vivo</button><button type=\"button\" class=\"bt\" id=\"bVoltaEst\">Continuar no estoque, ao vivo</button>"
-        : "<button type=\"button\" class=\"bt ok\" id=\"bVoltaEst\">Voltar ao ao vivo</button>") + "</div></div>" +
-      "<div class=\"fx-comp\" title=\"Toque para ver os detalhes\"><span>✓ Servidor no ar de novo</span>" +
+        ? "<button type=\"button\" class=\"bt ok\" id=\"bVoltaRel\">Retornar ao relatório em tempo real</button><button type=\"button\" class=\"bt\" id=\"bVoltaEst\">Continuar no estoque em tempo real</button>"
+        : "<button type=\"button\" class=\"bt ok\" id=\"bVoltaEst\">Retornar aos dados em tempo real</button>") + "</div></div>" +
+      "<div class=\"fx-comp\" title=\"Toque para ver os detalhes\"><span>✓ Servidor disponível novamente</span>" +
       "<button type=\"button\" class=\"fx-rest\" title=\"Restaurar o aviso\" aria-label=\"Restaurar o aviso\">⤢</button></div>";
     var bRel = $("bVoltaRel"), bEst = $("bVoltaEst");
     var irRelatorio = function () { try { window.top.location.reload(); } catch (e) { location.href = "/"; } };
     if (bRel) bRel.onclick = irRelatorio;
     if (bEst) bEst.onclick = retomarAoVivo;
     ligarMinimizar(voltaEl);
-    toast("Servidor de relatórios no ar de novo.");
+    toast("O servidor de relatórios está disponível novamente.");
   };
   var vigiarVolta = function () {
     clearTimeout(vigiaTmr);
@@ -603,7 +603,7 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
   if ("IntersectionObserver" in window) new IntersectionObserver(function (en) { if (en[0].isIntersecting && !bMais.hidden && !estado.carregando) buscar(estado.pagina + 1); }, { rootMargin: "400px" }).observe(bMais);
   $("bRec").addEventListener("click", function () {
     if (Local.semServidor) { toast("Servidor fora do ar: usando a cópia salva neste aparelho."); buscar(1); return; }
-    toast("Lendo o estoque de novo..."); buscar(1, { recarregar: "1" });
+    toast("Carregando o estoque novamente..."); buscar(1, { recarregar: "1" });
   });
   $("bCsv").addEventListener("click", function () {
     if (!(Local.semServidor && podeLocal())) { location.href = "/api/estoque/csv?" + params(1); return; }
@@ -653,7 +653,7 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
   // Detalhe pela cópia do aparelho: os campos principais (todas as colunas voltam com o servidor).
   var abrirLocal = function (id) {
     var i = parseInt(id, 10);
-    if (!(i >= 0 && i < Local.pkg.linhas.length)) { $("mdT").textContent = "Item"; $("mdC").textContent = "Item não encontrado na cópia deste aparelho — pesquise de novo."; return; }
+    if (!(i >= 0 && i < Local.pkg.linhas.length)) { $("mdT").textContent = "Item"; $("mdC").textContent = "Item não encontrado na cópia deste aparelho — refaça a pesquisa."; return; }
     var r = Local.pkg._resumo(i);
     $("mdT").textContent = r.descricao || ("Item " + (r.codigo || ""));
     var dest = [["Código", r.codigo, 1], ["Cód. barras", r.barras, 1], ["Referência", r.referencia, 1], ["Estoque", r.qtd != null ? qtdF(r.qtd) + (r.unidade ? " " + r.unidade : "") : null], ["Preço", r.preco != null ? reais(r.preco) : null], ["Custo", r.custo != null && $("fCus").checked ? reais(r.custo) : null], ["Mínimo", r.qtdMin != null ? qtdF(r.qtdMin) : null]]
@@ -761,7 +761,7 @@ if (!cameraAoVivo()) {
 }
 function irParaSeguro() {
   if (!enderecoSeguro) return false;
-  if (!enderecoSeguro.confiavel && !confirm("O leitor ao vivo precisa da conexão segura (HTTPS) do sistema.\n\nNa primeira vez o celular mostra um aviso de certificado: toque em \"Avançado\" / \"Mostrar detalhes\" e depois em \"Continuar\" / \"Visitar site\". É o certificado do próprio sistema, da sua rede.\n\nAbrir o leitor ao vivo agora? (Cancelar = tirar uma foto do código)")) return false;
+  if (!enderecoSeguro.confiavel && !confirm("A leitura em tempo real pela câmera requer a conexão segura (HTTPS) do sistema.\n\nNa primeira vez o celular mostra um aviso de certificado: toque em \"Avançado\" / \"Mostrar detalhes\" e depois em \"Continuar\" / \"Visitar site\". É o certificado do próprio sistema, da sua rede.\n\nDeseja abrir o leitor em tempo real agora? (Cancelar = fotografar o código)")) return false;
   const q = ($("q") && $("q").value) || "";
   location.href = enderecoSeguro.url + "/estoque?ler=1" + (q ? "&q=" + encodeURIComponent(q) : "");
   return true;
@@ -807,7 +807,7 @@ async function abrir() {
   // Sem câmera ao vivo (página http na rede): vai direto para a foto — um clique só.
   if (!cameraAoVivo()) {
     if (irParaSeguro()) return;
-    aviso("Nesta conexão o navegador não libera a câmera ao vivo: tire uma foto do código.");
+    aviso("Nesta conexão o navegador não permite a leitura em tempo real pela câmera: fotografe o código.");
     el.arquivo.click();
     return;
   }

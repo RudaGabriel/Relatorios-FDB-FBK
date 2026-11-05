@@ -3,13 +3,12 @@
 # Instancia unica via mutex global.
 # Abrir Relatorio: se ja tem aba aberta (SSE), foca ela. Se nao, abre browser.
 #
-# @version 1.7.2
+# @version 1.7.3
 # @author Ruda Gabriel
 # @changelog
 #   (Historico completo das versoes: CHANGELOG.md no repositorio.)
-#   1.7.2 - 2026-11-04 - "Sair" nao deixa mais a bandeja presa: o mutex e' liberado antes da
-#     janela de aviso (que agora abre sempre na frente) e o processo termina de verdade. Uma
-#     bandeja antiga presa (sem servidor no ar por ~20 s) e' encerrada sozinha ao abrir de novo.
+#   1.7.3 - 2026-11-05 - Textos do menu, dos baloes e das janelas em linguagem formal
+#     ("Em funcionamento", "Acompanhar o log em tempo real", "encerrou inesperadamente").
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -116,7 +115,7 @@ if (-not $acquired) {
         exit 0
     }
     foreach ($pp in $presas) {
-        Write-TrayLog ("Bandeja anterior presa (PID " + $pp.ProcessId + ", sem servidor no ar) - encerrando para iniciar de novo.") "AVISO"
+        Write-TrayLog ("Bandeja anterior presa (PID " + $pp.ProcessId + ", sem servidor em funcionamento) - encerrando para iniciar novamente.") "AVISO"
         try { Stop-Process -Id $pp.ProcessId -Force -ErrorAction Stop } catch {}
     }
     try { $acquired = $mutex.WaitOne(10000) }
@@ -409,8 +408,8 @@ while ($_espera -lt 30) {
 if ($_portaAbriu) {
     Write-TrayLog "Servidor respondendo na porta $PORT apos $([math]::Round($_espera*0.5,1))s."
 } elseif ($script:nodeProc -and $script:nodeProc.HasExited) {
-    Write-TrayLog "Processo do servidor encerrou sozinho logo apos iniciar (codigo de saida: $($script:nodeProc.ExitCode)). Verifique relatorio.log na pasta do sistema para o motivo (Node.js ausente, modulo faltando, ou erro ao conectar no Firebird sao as causas mais comuns)." "ERRO"
-    Show-AvisoFrente "O servidor iniciou mas fechou sozinho logo em seguida.`nConsulte relatorio.log na pasta do sistema para o motivo.`n`nCausas comuns: Node.js nao instalado corretamente, ou banco de dados Firebird inacessivel." "$APP_NAME - Erro" "Error"
+    Write-TrayLog "Processo do servidor encerrou inesperadamente logo apos iniciar (codigo de saida: $($script:nodeProc.ExitCode)). Verifique relatorio.log na pasta do sistema para o motivo (Node.js ausente, modulo faltando, ou erro ao conectar no Firebird sao as causas mais comuns)." "ERRO"
+    Show-AvisoFrente "O servidor foi iniciado, mas encerrou inesperadamente logo em seguida.`nConsulte relatorio.log na pasta do sistema para o motivo.`n`nCausas comuns: Node.js nao instalado corretamente, ou banco de dados Firebird inacessivel." "$APP_NAME - Erro" "Error"
 } elseif ($script:nodeProc) {
     Write-TrayLog "Servidor ainda nao respondeu na porta $PORT apos 30s, mas o processo continua vivo (PID $($script:nodeProc.Id)) - pode estar demorando para conectar ao Firebird. Continuando." "AVISO"
 }
@@ -1344,7 +1343,7 @@ function Update-Cabecalho {
                 $pctTxt = ""; try { if ($off.progresso) { $pctTxt = " " + [string]$off.progresso.pct + "%" } } catch {}
                 $bancoTxt = $bancoTxt + (L " \u00b7 copiando") + $pctTxt
             }
-            $cabStatus.Text = (L "\u25cf No ar \u00b7 ") + $bancoTxt
+            $cabStatus.Text = (L "\u25cf Em funcionamento \u00b7 ") + $bancoTxt
             $cabStatus.ForeColor = if ($db.ok) { [System.Drawing.Color]::FromArgb(22, 163, 74) } else { [System.Drawing.Color]::FromArgb(217, 119, 6) }
             $cabContagem.Text = [string]$telas + $(if ($telas -eq 1) { L " tela aberta" } else { L " telas abertas" }) + (L " \u00b7 ") + [string]$aparelhos + $(if ($aparelhos -eq 1) { L " aparelho na rede" } else { L " aparelhos na rede" })
             $cabContagem.Visible = $true
@@ -1402,7 +1401,7 @@ $subCopia.DropDownItems.Add((New-ItemMenu "Situa\u00e7\u00e3o da c\u00f3pia..." 
     $quando = { param($ms) if ($ms) { try { return ([DateTimeOffset]::FromUnixTimeMilliseconds([int64]$ms)).LocalDateTime.ToString("dd/MM/yyyy HH:mm") } catch {} } return "-" }
     $t = (L "O relat\u00f3rio l\u00ea s\u00f3 a c\u00f3pia (nunca o banco principal direto).") + "`n" + $(if ($o.lendo -eq "copia") { L "Situa\u00e7\u00e3o: lendo a c\u00f3pia offline." } else { L "Situa\u00e7\u00e3o: aguardando a primeira c\u00f3pia." })
     if ($o.copia) { $t += "`n" + (L "Dados da c\u00f3pia: ") + (& $quando $o.copia.dadosDe) + " (" + [string]$o.copia.tamanhoMB + " MB, " + [string]$o.copia.duracaoS + " s)" } else { $t += "`n" + (L "Ainda n\u00e3o h\u00e1 c\u00f3pia.") }
-    $t += "`n" + (L "Banco principal: ") + $(if ($o.fonteOk -eq $true) { L "no ar" } elseif ($o.fonteOk -eq $false) { (L "indispon\u00edvel - ") + [string]$o.fonteErro } else { L "verificando..." })
+    $t += "`n" + (L "Banco principal: ") + $(if ($o.fonteOk -eq $true) { L "dispon\u00edvel" } elseif ($o.fonteOk -eq $false) { (L "indispon\u00edvel - ") + [string]$o.fonteErro } else { L "verificando..." })
     if ($o.emAndamento) { $t += "`n" + (L "Fazendo a c\u00f3pia agora: ") + [string]$o.etapa }
     if ($o.indisponivel) { $t += "`n`n" + [string]$o.indisponivel } elseif ($o.ultimoErro) { $t += "`n`n" + (L "\u00daltima falha: ") + [string]$o.ultimoErro }
     if ($o.pasta) { $t += "`n`n" + (L "Pasta: ") + [string]$o.pasta }
@@ -1430,7 +1429,7 @@ $subTelas.DropDownItems.Add((New-ItemMenu "Recarregar todas as telas" "atualizar
 })) | Out-Null
 $subTelas.DropDownItems.Add((New-ItemMenu "Enviar aviso para as telas..." "aviso" "#0891B2" {
     $txt = ""
-    try { $txt = [Microsoft.VisualBasic.Interaction]::InputBox((L "Mensagem que vai aparecer em destaque em todas as telas abertas (at\u00e9 300 caracteres):"), "$APP_NAME - " + (L "Enviar aviso"), "") } catch {}
+    try { $txt = [Microsoft.VisualBasic.Interaction]::InputBox((L "Mensagem a ser exibida em destaque em todas as telas abertas (at\u00e9 300 caracteres):"), "$APP_NAME - " + (L "Enviar aviso"), "") } catch {}
     if ([string]::IsNullOrWhiteSpace($txt)) { return }
     if ($txt.Length -gt 300) { $txt = $txt.Substring(0, 300) }
     $r = Invoke-Api "/api/navigate/aviso" -Metodo POST -Corpo @{ msg = $txt; segundos = 15 } -Timeout 3
@@ -1576,8 +1575,8 @@ $subFer.DropDownItems.Add((New-ItemMenu "Abrir o log (relatorio.log)" "log" "#EA
     if (-not (Test-Path $LOG_PATH)) { Show-Mensagem (L "O relatorio.log ainda n\u00e3o existe.") "$APP_NAME"; return }
     try { Start-Process notepad.exe -ArgumentList "`"$LOG_PATH`"" } catch {}
 })) | Out-Null
-$subFer.DropDownItems.Add((New-ItemMenu "Acompanhar o log ao vivo" "aovivo" "#EA580C" {
-    $cmd = '$host.UI.RawUI.WindowTitle = ''{1} - log ao vivo''; Get-Content -LiteralPath ''{0}'' -Wait -Tail 80 -Encoding UTF8' -f ($LOG_PATH -replace "'", "''"), ($APP_NAME -replace "'", "''")
+$subFer.DropDownItems.Add((New-ItemMenu "Acompanhar o log em tempo real" "aovivo" "#EA580C" {
+    $cmd = '$host.UI.RawUI.WindowTitle = ''{1} - log em tempo real''; Get-Content -LiteralPath ''{0}'' -Wait -Tail 80 -Encoding UTF8' -f ($LOG_PATH -replace "'", "''"), ($APP_NAME -replace "'", "''")
     try { Start-Process powershell.exe -ArgumentList @("-NoProfile", "-NoExit", "-Command", $cmd) } catch {}
 })) | Out-Null
 $subFer.DropDownItems.Add((New-ItemMenu "Cliente da API (api.ps1)" "terminal" "#EA580C" {
@@ -1602,7 +1601,7 @@ $subProg.Add_DropDownOpening({
         $it.Add_Click({
             param($s, $e)
             $r = Invoke-Api "/api/programas/abrir" -Metodo POST -Corpo @{ nome = [string]$s.Tag } -Timeout 5
-            if ($null -eq $r) { Show-Balao $APP_NAME ((L "N\u00e3o abriu: ") + $script:ultimoErroApi) "Warning" }
+            if ($null -eq $r) { Show-Balao $APP_NAME ((L "N\u00e3o foi poss\u00edvel abrir: ") + $script:ultimoErroApi) "Warning" }
         })
         $alvo.DropDownItems.Add($it) | Out-Null
     }
@@ -1677,7 +1676,7 @@ $menu.Items.Add((New-ItemMenu "Sair" "sair" "#DC2626" {
     try { $mutex.ReleaseMutex() } catch {}
     try { $dbTimer.Stop() } catch {}
     try { $tray.Dispose() } catch {}
-    Show-AvisoFrente "O servidor de relatorios foi encerrado.`n`nOs relatorios abertos no navegador mostram o aviso 'Servidor encerrado' e voltam sozinhos quando o servidor for iniciado de novo. No celular, o estoque continua disponivel pela copia salva no aparelho.`n`nPara iniciar novamente: abra gerar_relatorio_do_dia.bat ou reinicie o computador." "$APP_NAME - Servidor encerrado" "Information"
+    Show-AvisoFrente "O servidor de relatorios foi encerrado.`n`nOs relatorios abertos no navegador mostram o aviso 'Servidor encerrado' e sao restabelecidos automaticamente quando o servidor for iniciado novamente. No celular, o estoque continua disponivel pela copia salva no aparelho.`n`nPara iniciar novamente: abra gerar_relatorio_do_dia.bat ou reinicie o computador." "$APP_NAME - Servidor encerrado" "Information"
     [System.Windows.Forms.Application]::Exit()
 })) | Out-Null
 
@@ -1720,11 +1719,11 @@ $watchTimer.Add_Tick({
                 if ($script:quedasRapidas -ge 3) {
                     $script:esperarAte = [DateTime]::Now.AddSeconds(60)
                     $script:quedasRapidas = 0
-                    Write-TrayLog "O servidor caiu 3 vezes logo depois de iniciar - aguardando 1 min antes de tentar de novo (evita reinicios em sequencia)." "ERRO"
+                    Write-TrayLog "O servidor foi encerrado 3 vezes logo depois de iniciar - aguardando 1 min antes de uma nova tentativa (evita reinicios em sequencia)." "ERRO"
                     if (-not $script:avisouQuedas) {
                         $script:avisouQuedas = $true
                         $tray.BalloonTipTitle = "$APP_NAME - Atencao"
-                        $tray.BalloonTipText  = "O servidor esta caindo logo apos iniciar. Nova tentativa em 1 minuto. Detalhes em Ferramentas > Abrir o log."
+                        $tray.BalloonTipText  = "O servidor esta sendo encerrado logo apos iniciar. Nova tentativa em 1 minuto. Detalhes em Ferramentas > Abrir o log."
                         $tray.BalloonTipIcon  = [System.Windows.Forms.ToolTipIcon]::Warning
                         $tray.ShowBalloonTip(6000)
                     }
@@ -1742,7 +1741,7 @@ $watchTimer.Add_Tick({
                 $estado = "livre"
             }
             if ($estado -eq "livre") {
-                Write-TrayLog "Servidor fora do ar e porta $PORT livre - iniciando de novo." "AVISO"
+                Write-TrayLog "Servidor indisponivel e porta $PORT livre - iniciando novamente." "AVISO"
                 $script:nodeProc = [System.Diagnostics.Process]::Start($psi)
                 $tray.BalloonTipTitle = $APP_NAME
                 $tray.BalloonTipText  = "Servidor reiniciado automaticamente."
@@ -1769,7 +1768,7 @@ $watchTimer.Add_Tick({
                 $script:nodeProc = $null
                 $script:falhasConsecutivas = 0
                 $tray.BalloonTipTitle = "$APP_NAME - Atencao"
-                $tray.BalloonTipText  = "Servidor parou de responder e foi reiniciado automaticamente."
+                $tray.BalloonTipText  = "O servidor parou de responder e foi reiniciado automaticamente."
                 $tray.BalloonTipIcon  = [System.Windows.Forms.ToolTipIcon]::Warning
                 $tray.ShowBalloonTip(4000)
             }
@@ -1810,7 +1809,7 @@ $dbTimer.Add_Tick({
             $pct = ""
             if ($o.progresso -and $null -ne $o.progresso.pct) { $pct = " (" + [int]$o.progresso.pct + "%)" }
             $titulo = $APP_NAME
-            $texto  = (L "Preparando a c\u00f3pia offline do banco") + $pct + ".`n" + (L "O relat\u00f3rio abre sozinho quando ela ficar pronta. O banco principal s\u00f3 \u00e9 lido pelo gbak, em modo leitura.")
+            $texto  = (L "Preparando a c\u00f3pia offline do banco") + $pct + ".`n" + (L "O relat\u00f3rio ser\u00e1 aberto automaticamente quando ela estiver pronta. O banco principal s\u00f3 \u00e9 lido pelo gbak, em modo leitura.")
         } elseif (-not $o.disponivel) {
             $titulo = "$APP_NAME - " + (L "Aten\u00e7\u00e3o")
             $texto  = (L "C\u00f3pia offline indispon\u00edvel: ") + [string]$o.indisponivel + "`n" + (L "Veja em C\u00f3pia offline do banco > Situa\u00e7\u00e3o da c\u00f3pia.")
@@ -1818,7 +1817,7 @@ $dbTimer.Add_Tick({
         } elseif (-not $o.copia) {
             $titulo = "$APP_NAME - " + (L "Aten\u00e7\u00e3o")
             $motivo = if ($o.ultimoErro) { [string]$o.ultimoErro } else { L "aguardando a primeira c\u00f3pia" }
-            $texto  = (L "Ainda n\u00e3o h\u00e1 c\u00f3pia offline: ") + $motivo + "`n" + (L "O sistema tenta de novo sozinho.")
+            $texto  = (L "Ainda n\u00e3o h\u00e1 c\u00f3pia offline: ") + $motivo + "`n" + (L "O sistema far\u00e1 uma nova tentativa automaticamente.")
             $icone  = "Warning"
         }
         if ($texto) {

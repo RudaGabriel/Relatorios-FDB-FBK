@@ -2,7 +2,7 @@
 
 /**
  * offline-copia.js
- * @version 1.5.0
+ * @version 1.5.1
  * @author Ruda Gabriel
  * @description Cópia offline do banco do Small Commerce (Relatórios SmallSoft Offline).
  * @changelog
@@ -70,12 +70,8 @@
  * Este arquivo não depende de nada do servidor: tudo chega por `opcoes`
  * (o que também permite testá-lo isolado, com gbak e Firebird simulados).
  *
- * 1.5.0 — Atributos do arquivo do banco principal lidos SEM travar o servidor:
- *         antes era fs.statSync, e com o banco numa unidade de rede lenta ou
- *         fora do ar (H:\, \\servidor) o servidor inteiro congelava até o
- *         Windows desistir (20 a 60 s) — a bandeja achava que tinha travado e
- *         reiniciava em ciclo. Agora é assíncrono, com tempo limite e uma
- *         leitura por vez.
+ * 1.5.1 — Mensagens do log e da tela em linguagem formal ("nova tentativa em andamento",
+ *         "a cópia do arquivo falhou").
  * Histórico completo das versões: CHANGELOG.md no repositório.
  */
 
@@ -86,7 +82,7 @@ const cp = require("child_process");
 const { pipeline } = require("stream");
 const net = require("net");
 
-const VERSAO = "1.5.0";
+const VERSAO = "1.5.1";
 const MANIFESTO = "copia-offline.json";
 const PREFIXO = "SMALL_OFFLINE_";
 // Únicos nomes que este módulo cria — e os ÚNICOS que ele apaga.
@@ -487,7 +483,7 @@ function criarCopiaOffline(opcoes) {
     const executarCopia = (origem, motivo, cb) => {
         cb = typeof cb === "function" ? cb : () => {};
         if (st.emAndamento) { cb({ ok: false, erro: "Já existe uma cópia em andamento." }); return; }
-        if (st.limpando) { cb({ ok: false, erro: "Encerrando uma cópia interrompida antes desta — tente de novo em alguns segundos." }); return; }
+        if (st.limpando) { cb({ ok: false, erro: "Encerrando uma cópia interrompida antes desta — tente novamente em alguns segundos." }); return; }
         if (!gbak) { cb({ ok: false, erro: st.indisponivel || "gbak não encontrado." }); return; }
         const erroPasta = garantirPasta();
         if (erroPasta) { st.ultimoErro = erroPasta; log(erroPasta); cb({ ok: false, erro: erroPasta }); return; }
@@ -506,7 +502,7 @@ function criarCopiaOffline(opcoes) {
         firebirdLocalNoAr((noAr) => {
         if (!noAr) {
             st.emAndamento = false; st.etapa = "";
-            st.indisponivel = "O Firebird não está rodando nesta máquina (porta " + porta + " em 127.0.0.1): é ele que abre a cópia offline. Instale/inicie o Firebird aqui ou rode o sistema no computador do banco.";
+            st.indisponivel = "O Firebird não está rodando nesta máquina (porta " + porta + " em 127.0.0.1): é ele que abre a cópia offline. Instale/inicie o Firebird nesta máquina ou execute o sistema no computador do banco.";
             st.ultimoErro = st.indisponivel;
             st.proximaPermitida = Date.now() + intervaloMinMs;
             log("Cópia offline adiada: " + st.indisponivel);
@@ -642,8 +638,8 @@ function criarCopiaOffline(opcoes) {
         // gbak direto pelo servidor Firebird: LEITURA (foto da transação, -g sem coleta de lixo).
         const viaGbakDireto = (motivoReserva) => {
             jaTentouGbak = true;
-            if (!podeGbakDireto) return falhar(new Error("o banco principal só está acessível como arquivo (" + (origem.arquivo || "?") + ") e a cópia do arquivo não deu certo" + (motivoReserva ? ": " + motivoReserva : "")), "cópia do arquivo");
-            if (motivoReserva) log("Cópia offline: a cópia do arquivo não deu certo (" + motivoReserva + ") — usando o gbak direto (somente leitura) desta vez.");
+            if (!podeGbakDireto) return falhar(new Error("o banco principal só está acessível como arquivo (" + (origem.arquivo || "?") + ") e a cópia do arquivo falhou" + (motivoReserva ? ": " + motivoReserva : "")), "cópia do arquivo");
+            if (motivoReserva) log("Cópia offline: a cópia do arquivo falhou (" + motivoReserva + ") — usando o gbak direto (somente leitura) desta vez.");
             const erros = [];
             const tentar = (k) => {
                 if (cancelado()) return falhar(new Error("cancelada"), "backup");
@@ -658,7 +654,7 @@ function criarCopiaOffline(opcoes) {
                     if (!e1) {
                         metodoUsadoAlvo = alvo;
                         if (k > 0 || alvo.host !== origem.host || alvo.path !== origem.path) {
-                            log("Cópia offline: o banco principal respondeu em " + alvo.host + ":" + alvo.path + " — este endereço fica salvo para as próximas cópias.");
+                            log("Cópia offline: o banco principal respondeu em " + alvo.host + ":" + alvo.path + " — este endereço será salvo para as próximas cópias.");
                             try { if (typeof o.aoServidorEncontrado === "function") o.aoServidorEncontrado({ host: alvo.host, path: alvo.path }); } catch (_) {}
                         }
                         return depoisDoBackup(dadosDe, "gbak");
@@ -754,7 +750,7 @@ function criarCopiaOffline(opcoes) {
                 const mudou = s1.size !== s0.size || Math.round(s1.mtimeMs) !== Math.round(s0.mtimeMs) || d.size !== s0.size;
                 if (!mudou) { cb(null, inicio); return; }
                 if (tentativa < tentativasArquivo) {
-                    log("Cópia offline: o banco foi gravado durante a cópia do arquivo — descartada, tentando de novo.");
+                    log("Cópia offline: o banco foi gravado durante a cópia do arquivo — descartada, nova tentativa em andamento.");
                     const t = setTimeout(tentar, 2000);
                     if (t.unref) t.unref();
                     return;
@@ -819,7 +815,7 @@ function criarCopiaOffline(opcoes) {
     const verificar = () => {
         try { verificarSeguro(); }
         catch (e) {
-            log("Cópia offline: erro inesperado na verificação (" + _txt(e && (e.stack || e.message || e), 300) + ") — tentando de novo.");
+            log("Cópia offline: erro inesperado na verificação (" + _txt(e && (e.stack || e.message || e), 300) + ") — nova tentativa em andamento.");
             agendarVerificacao(verificarMs);
         }
     };
@@ -828,7 +824,7 @@ function criarCopiaOffline(opcoes) {
         if (st.limpando) { agendarVerificacao(1000); return; } // encerrando gbak de uma execução anterior
         // Cópia "em andamento" além de todo prazo possível (algo travou): libera.
         if (st.emAndamento && st.ultimaTentativa && Date.now() - st.ultimaTentativa > timeoutMs * 2 + 120000) {
-            log("Cópia offline: a cópia iniciada às " + new Date(st.ultimaTentativa).toLocaleTimeString("pt-BR") + " não terminou — liberando para tentar de novo.");
+            log("Cópia offline: a cópia iniciada às " + new Date(st.ultimaTentativa).toLocaleTimeString("pt-BR") + " não foi concluída — liberada para nova tentativa.");
             st.emAndamento = false; st.etapa = ""; geracao++;
             if (filhoAtual) { matarFilho(filhoAtual); filhoAtual = null; }
         }
@@ -838,7 +834,7 @@ function criarCopiaOffline(opcoes) {
         assinaturaArquivo(f, a => {
             try { continuarVerificacao(f, a); }
             catch (e) {
-                log("Cópia offline: erro inesperado na verificação (" + _txt(e && (e.stack || e.message || e), 300) + ") — tentando de novo.");
+                log("Cópia offline: erro inesperado na verificação (" + _txt(e && (e.stack || e.message || e), 300) + ") — nova tentativa em andamento.");
                 agendarVerificacao(verificarMs);
             }
         });
@@ -854,7 +850,7 @@ function criarCopiaOffline(opcoes) {
             agendarVerificacao(verificarMs);
             return;
         }
-        if (st.fonteErroDe === "arquivo") { st.fonteOk = null; st.fonteErro = ""; st.fonteErroDe = ""; log("Arquivo do banco principal encontrado de novo."); }
+        if (st.fonteErroDe === "arquivo") { st.fonteOk = null; st.fonteErro = ""; st.fonteErroDe = ""; log("Arquivo do banco principal localizado novamente."); }
         const agora = Date.now();
         const mesmaFonte = !!(st.ativa && st.ativa.origem === "fdb" && st.ativa.fonte && chaveFonte(st.ativa.fonte) === chaveFonte(f));
         const mudou = !mesmaFonte || (a.remoto ? agora - (st.ativa.dadosDe || 0) >= intervaloMinMs * 3 : st.ativa.sig !== a.sig);
@@ -946,7 +942,7 @@ function criarCopiaOffline(opcoes) {
             if (st.emAndamento) { cb({ ok: true, jaEmAndamento: true, msg: "A cópia já está sendo feita (" + st.etapa + ")." }); return; }
             st.pedidoManual = true;
             agendarVerificacao(0);
-            cb({ ok: true, msg: "Cópia offline solicitada. O relatório troca sozinho para a cópia nova quando ela ficar pronta." });
+            cb({ ok: true, msg: "Cópia offline solicitada. O relatório passará a utilizar a cópia nova automaticamente quando ela estiver pronta." });
         },
         /** Restaura um .fbk escolhido pelo usuário e passa a ler dele. */
         importarFbk(arquivo, cb) {

@@ -182,12 +182,12 @@ export function traduzirErroCamera(erro) {
 	const texto = `${nome} ${erro?.message || erro || ""}`;
 	const detalhe = `${nome || "Erro"}: ${erro?.message || String(erro || "")}`.slice(0, 160);
 	let mensagem = "Não foi possível iniciar a câmera.";
-	if (/sem-camera-api/.test(texto)) mensagem = "Este navegador não libera a câmera ao vivo (comum em navegadores dentro de apps). Use “Tirar foto do código” ou abra o site no Safari/Chrome.";
+	if (/sem-camera-api/.test(texto)) mensagem = "Este navegador não permite a leitura em tempo real pela câmera (comum em navegadores dentro de apps). Use “Tirar foto do código” ou abra o site no Safari/Chrome.";
 	else if (/NotAllowed|Permission|denied/i.test(texto)) mensagem = ehIOS()
 		? "Permissão da câmera negada. No iPhone: Ajustes → Safari → Câmera → Permitir (ou toque em “aA” na barra de endereço → Ajustes do Site → Câmera)."
-		: "Permissão da câmera negada. Libere o acesso à câmera nas configurações do navegador e tente de novo.";
+		: "Permissão da câmera negada. Libere o acesso à câmera nas configurações do navegador e tente novamente.";
 	else if (/NotFound|DevicesNotFound|Requested device not found/i.test(texto)) mensagem = "Nenhuma câmera foi encontrada neste aparelho.";
-	else if (/NotReadable|TrackStart|in use|Could not start|AbortError|I\/O/i.test(texto)) mensagem = "A câmera está ocupada por outro app ou não respondeu. Feche outros apps que usam a câmera e tente de novo.";
+	else if (/NotReadable|TrackStart|in use|Could not start|AbortError|I\/O/i.test(texto)) mensagem = "A câmera está ocupada por outro app ou não respondeu. Feche os outros aplicativos que utilizam a câmera e tente novamente.";
 	else if (/Overconstrained/i.test(texto)) mensagem = "A câmera não aceitou as configurações. Tente trocar de câmera.";
 	else if (/secure|https/i.test(texto)) mensagem = "A câmera só funciona em páginas seguras (https).";
 	return { mensagem, detalhe };

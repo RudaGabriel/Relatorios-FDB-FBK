@@ -4,12 +4,12 @@
 
 ### Vendas do dia e consulta de estoque do Small Commerce, lendo uma **cópia offline** do banco Firebird
 
-<img alt="versão: 1.8.3" src="https://img.shields.io/badge/vers%C3%A3o-1.8.3-2563EB?style=flat">
-<img alt="servidor: v3.7.3" src="https://img.shields.io/badge/servidor-v3.7.3-2563EB?style=flat">
-<img alt="cópia offline: v1.5.0" src="https://img.shields.io/badge/c%C3%B3pia%20offline-v1.5.0-0D9488?style=flat">
-<img alt="estoque: v1.2.0" src="https://img.shields.io/badge/estoque-v1.2.0-0D9488?style=flat">
-<img alt="gerador: v3.26.3" src="https://img.shields.io/badge/gerador-v3.26.3-2563EB?style=flat">
-<img alt="bandeja: v1.7.2" src="https://img.shields.io/badge/bandeja-v1.7.2-2563EB?style=flat">
+<img alt="versão: 1.8.4" src="https://img.shields.io/badge/vers%C3%A3o-1.8.4-2563EB?style=flat">
+<img alt="servidor: v3.7.4" src="https://img.shields.io/badge/servidor-v3.7.4-2563EB?style=flat">
+<img alt="cópia offline: v1.5.1" src="https://img.shields.io/badge/c%C3%B3pia%20offline-v1.5.1-0D9488?style=flat">
+<img alt="estoque: v1.2.1" src="https://img.shields.io/badge/estoque-v1.2.1-0D9488?style=flat">
+<img alt="gerador: v3.26.4" src="https://img.shields.io/badge/gerador-v3.26.4-2563EB?style=flat">
+<img alt="bandeja: v1.7.3" src="https://img.shields.io/badge/bandeja-v1.7.3-2563EB?style=flat">
 <img alt="testes: 48 passando" src="https://img.shields.io/badge/testes-48%20passando-22C55E?style=flat">
 
 <img alt="plataforma: Windows 10 | 11" src="https://img.shields.io/badge/plataforma-Windows%2010%20%7C%2011-0078D4?style=flat&logo=windows&logoColor=white">
@@ -46,15 +46,15 @@
 
 O **Relatórios SmallSoft Offline** é um servidor local para Windows que mostra as **vendas do dia** e a **consulta completa de estoque** do Small Commerce no navegador do computador ou do celular, **sem consultar o banco principal**.
 
-Ele mantém sozinho uma **cópia offline** do `SMALL.FDB`, feita com as ferramentas oficiais do Firebird, e todas as telas leem **só essa cópia**. Com isso, o relatório continua abrindo quando o banco principal está em atualização, em manutenção, travado ou desligado, e o caixa nunca é atrapalhado.
+Ele mantém automaticamente uma **cópia offline** do `SMALL.FDB`, feita com as ferramentas oficiais do Firebird, e todas as telas leem **só essa cópia**. Com isso, o relatório continua abrindo quando o banco principal está em atualização, em manutenção, travado ou desligado, e o caixa nunca é atrapalhado.
 
 | | |
 |---|---|
-| 🗄️ **Cópia offline automática** | Atualizada sozinha a cada poucos minutos, com **barra de progresso** e troca para a cópia nova sem recarregar a tela. |
+| 🗄️ **Cópia offline automática** | Atualizada automaticamente a cada poucos minutos, com **barra de progresso** e troca para a cópia nova sem recarregar a tela. |
 | 🔒 **Zero risco para os dados** | Leitura pelo próprio Firebird (`gbak` em modo leitura, sem coleta de lixo). A cópia é restaurada como banco **somente leitura**. O banco principal nunca é alterado. |
 | 🧾 **Relatório de vendas completo** | Hoje, uma data ou um período: Gerencial, NFC-e e NF-e, vendedores, formas de pagamento, itens, busca avançada, gráficos e temas. |
 | 🔎 **Consulta de estoque sem limites** | Todos os itens, busca em todas as colunas (nome, código, código de barras, referência, fornecedor…), leitor de código de barras pela câmera e exportação para Excel. |
-| 🌐 **Rede da loja e celular** | Abre em qualquer aparelho da rede; no celular, por QR code. Encontra sozinho o banco em outra máquina. |
+| 🌐 **Rede da loja e celular** | Abre em qualquer aparelho da rede; no celular, por QR code. Localiza automaticamente o banco em outra máquina. |
 | 🤖 **Mínimo de cliques** | Instala dependências, acha o banco, o `gbak` e os backups `.fbk`, recupera-se de falhas e limpa o que ficou pela metade. |
 
 > Versão offline do *Relatórios FDB*: traz todos os recursos dele e pode ser instalada **na mesma máquina**, com porta, tarefa agendada, pasta de dados e ícone de bandeja próprios.
@@ -64,7 +64,7 @@ Ele mantém sozinho uma **cópia offline** do `SMALL.FDB`, feita com as ferramen
 <a id="instalacao"></a>
 ## 🚀 Instalação em 3 passos
 
-> **Requisitos:** Windows 10 ou 11 · Firebird do Small Commerce instalado **nesta máquina** (é ele que abre a cópia offline). O Node.js 18+ e o módulo `node-firebird` são instalados sozinhos.
+> **Requisitos:** Windows 10 ou 11 · Firebird do Small Commerce instalado **nesta máquina** (é ele que abre a cópia offline). O Node.js 18+ e o módulo `node-firebird` são instalados automaticamente.
 
 1. **Copie a pasta do sistema** para o computador (o do banco ou um terminal da rede).
 2. **Execute `instalar-na-inicializacao.bat`.** Ele pede permissão de administrador, instala o que faltar, libera a porta **7735** no firewall, cria a inicialização automática e já liga o servidor.
@@ -85,16 +85,16 @@ Na primeira vez aparece **Preparando a cópia offline**, com barra de progresso,
 | Ver as vendas de hoje | Duplo clique no ícone da bandeja · `http://IP:7735/` |
 | Ver uma data ou um período | Botão **Por período** · bandeja → *Gerar por período...* · `gerar_relatorio_por_data.bat` / `gerar_relatorio_intervalo.bat` |
 | Consultar o estoque | Botão **Estoque** · bandeja → *Consultar estoque* · `http://IP:7735/estoque` |
-| Ler um código de barras | No estoque: botão **Ler código** (câmera ao vivo, também no celular) ou leitor USB direto no campo de busca |
+| Ler um código de barras | No estoque: botão **Ler código** (leitura em tempo real pela câmera, também no celular) ou leitor USB direto no campo de busca |
 | Abrir no celular | Botão **Celular** (QR code) · bandeja → *Abrir no celular (QR code)...* |
 | Abrir fora da loja (4G, outro Wi-Fi) | **Celular → Fora da loja**, com o Tailscale nos dois aparelhos. O endereço usa o **nome fixo** da máquina no Tailscale (ex.: `http://pc-loja.tailxxxx.ts.net:7735/`); o IP `100.x` também funciona. Trocar de endereço não perde o apelido nem as preferências do aparelho |
 | Recarregar a cada venda | *Configurações → Nesta tela → Atualização*. Ligado: recarrega como um F5 (limpa busca, filtros e janelas). Desligado: as vendas entram sem recarregar |
-| Saber de quando são os dados | Selo **Offline** no canto da tela (no celular fica recolhido numa bolinha no canto esquerdo: toque para ver; recolhe sozinho em 5 s ou ao deslizar para a esquerda/para baixo) · cabeçalho do menu da bandeja |
+| Saber de quando são os dados | Selo **Offline** no canto da tela (no celular fica recolhido numa bolinha no canto esquerdo: toque para ver; recolhe automaticamente em 5 s ou ao deslizar para a esquerda/para baixo) · cabeçalho do menu da bandeja |
 | Atualizar a cópia agora | Clique no selo → *Atualizar cópia agora* · bandeja → *Cópia offline do banco → Atualizar a cópia agora* |
 | Acompanhar uma cópia em andamento | Selo e página de espera mostram **porcentagem, tempo decorrido e quanto falta**; a bandeja mostra *copiando N%* |
 | Configurar | Botão **Configurações** · bandeja → *Configurações → Editar configurações...* (funciona com qualquer tela aberta, inclusive o estoque; o botão **Voltar** retorna à tela de onde você veio) |
 | Trocar o banco | Bandeja → *Configurações → Selecionar banco (FDB)...* |
-| Ver o log | Bandeja → *Ferramentas → Abrir o log* ou *Acompanhar o log ao vivo* |
+| Ver o log | Bandeja → *Ferramentas → Abrir o log* ou *Acompanhar o log em tempo real* |
 
 ---
 
@@ -117,7 +117,7 @@ Na primeira vez aparece **Preparando a cópia offline**, com barra de progresso,
 
 - **Nenhuma conexão direta com o banco principal.** O relatório e o estoque leem **só a cópia**. O único contato com o `SMALL.FDB` é o `gbak`, na hora de copiar.
 - **O gbak direto é seguro?** Sim. É o método recomendado pelo próprio Firebird: lê por dentro do servidor, numa "foto" consistente do banco, e com `-g` não faz nem a coleta de lixo. O banco do caixa não é alterado. É o método padrão (`"offlineMetodo": "gbak"`).
-- **Quando atualiza:** a cada **5 min** (`offlineCopiaACadaMin`) e antes disso quando o tamanho ou a data do arquivo mudam (olhados sem abrir o banco). O intervalo mínimo cresce sozinho para 3× a duração da última cópia: a cópia nunca ocupa o banco mais que 1/3 do tempo.
+- **Quando atualiza:** a cada **5 min** (`offlineCopiaACadaMin`) e antes disso quando o tamanho ou a data do arquivo mudam (olhados sem abrir o banco). O intervalo mínimo cresce automaticamente para 3× a duração da última cópia: a cópia nunca ocupa o banco mais que 1/3 do tempo.
 - **Progresso visível:** barra com porcentagem, tempo decorrido e estimativa do que falta, no selo, na página de espera e na bandeja. A porcentagem é calculada pelo tamanho dos arquivos que o `gbak` está gravando e nunca volta para trás.
 
 ### Segurança dos dados durante a cópia
@@ -126,7 +126,7 @@ Na primeira vez aparece **Preparando a cópia offline**, com barra de progresso,
 |---|---|
 | Falha no meio da cópia (banco em manutenção, disco cheio, erro do gbak) | Os temporários são apagados e o sistema **continua com a cópia anterior**. O motivo aparece no selo, na bandeja e no log. |
 | Servidor encerrado pela bandeja ou pelo Gerenciador de Tarefas durante a cópia | A cópia em uso não é afetada: a nova só entra **depois de pronta e conferida**. Na próxima inicialização, os temporários são apagados e qualquer `gbak`/`gfix` que tenha ficado rodando na pasta de cópias é encerrado antes de começar de novo. |
-| Banco principal fora do ar | O selo fica amarelo (*Banco principal indisponível*) e o relatório segue com a última cópia. Quando ele volta, a cópia é atualizada sozinha. |
+| Banco principal fora do ar | O selo fica amarelo (*Banco principal indisponível*) e o relatório segue com a última cópia. Quando ele volta, a cópia é atualizada automaticamente. |
 | Sem banco e sem cópia | O sistema procura um backup `SMALL.fbk` nos lugares conhecidos e restaura. Também dá para escolher um `.fbk` em *Selecionar banco*. |
 
 ### Banco em outra máquina (terminal)
@@ -176,12 +176,12 @@ Todos os itens da tabela `ESTOQUE`, lidos da cópia offline (não pesa no caixa)
 
 ### 📴 Estoque sem o servidor
 
-Cada aparelho que abre o estoque **guarda uma cópia dele** (todos os itens, com os campos da lista), atualizada sozinha quando o estoque muda. Se o servidor de relatórios cair, desligar ou ficar fora de alcance:
+Cada aparelho que abre o estoque **guarda uma cópia dele** (todos os itens, com os campos da lista), atualizada automaticamente quando o estoque muda. Se o servidor de relatórios cair, desligar ou ficar fora de alcance:
 
-- uma faixa avisa: **"Servidor de relatórios fora do ar — somente o estoque está disponível"**, com a **data e a hora** dos dados, a **quantidade de itens** e o **tamanho** da cópia (ex.: *estoque atualizado em 29/10/2026 16:26 · 9.102 itens · 3,2 MB*);
+- uma faixa avisa: **"Servidor de relatórios indisponível — somente o estoque está disponível"**, com a **data e a hora** dos dados, a **quantidade de itens** e o **tamanho** da cópia (ex.: *estoque atualizado em 29/10/2026 16:26 · 9.102 itens · 3,2 MB*);
 - a busca continua funcionando **com as mesmas regras** (nome, código, código de barras, "Contém", filtros, ordem), inclusive pelo leitor de código de barras;
 - o detalhe do item mostra os campos principais (todas as colunas voltam com o servidor) e **Exportar** gera o CSV da cópia;
-- quando o servidor volta (a página confere a cada 15 s), aparece a faixa verde **"✓ Servidor de relatórios no ar de novo"** com o botão **Voltar ao ao vivo** (dentro do relatório: **Voltar ao relatório ao vivo** ou **Continuar no estoque, ao vivo**) — nada troca sozinho no meio de uma consulta. As duas faixas minimizam (botão **−** ou sozinhas em 8 s) e voltam pelo botão ⤢;
+- quando o servidor volta (a página confere a cada 15 s), aparece a faixa verde **"✓ O servidor de relatórios está disponível novamente"** com o botão **Retornar aos dados em tempo real** (dentro do relatório: **Retornar ao relatório em tempo real** ou **Continuar no estoque em tempo real**) — nada é trocado automaticamente no meio de uma consulta. As duas faixas podem ser minimizadas (botão **−** ou automaticamente após 8 s) e restauradas pelo botão ⤢;
 - no relatório (computador e celular), a faixa "servidor encerrado / sem conexão" avisa **"Somente o estoque está disponível"**, com a data, os itens e o tamanho, e o botão **Abrir o estoque**: ele abre em tela cheia a cópia da página do estoque guardada no aparelho — funciona em qualquer celular, sem o servidor.
 
 **Abrir o estoque com o servidor já desligado** (fechou a página ou reiniciou o aparelho): no próprio computador (`localhost`) ou pelo endereço seguro com o **certificado do Tailscale** (HTTPS ligado no painel do Tailscale), o navegador guarda a página e ela abre direto. Com o certificado próprio do sistema (o que mostra aviso), o navegador não deixa guardar a página: use o botão **Abrir o estoque** do relatório. Se o botão disser que o aparelho ainda não tem a cópia, abra o estoque uma vez com o servidor ligado (ela é guardada sozinha).
@@ -191,7 +191,7 @@ Cada aparelho que abre o estoque **guarda uma cópia dele** (todos os itens, com
 <a id="bandeja"></a>
 ## 🛠️ Bandeja do Windows
 
-O ícone da bandeja mostra o estado ao vivo (data da cópia em uso e, durante uma cópia, *copiando N%*) e reúne tudo em um menu:
+O ícone da bandeja mostra o estado em tempo real (data da cópia em uso e, durante uma cópia, *copiando N%*) e reúne tudo em um menu:
 
 | Grupo | Itens |
 |---|---|
@@ -200,7 +200,7 @@ O ícone da bandeja mostra o estado ao vivo (data da cópia em uso e, durante um
 | **Cópia offline do banco** | Atualizar a cópia agora · Situação da cópia · Abrir a pasta das cópias |
 | **Telas abertas** | Trazer para frente · Recarregar todas · Enviar aviso · Tema das telas |
 | **Configurações** | Editar configurações · Selecionar banco (FDB) · Status do banco de dados |
-| **Ferramentas** | Informações do sistema · Copiar endereço · Pasta do sistema · Log · Log ao vivo · Cliente da API · Programas |
+| **Ferramentas** | Informações do sistema · Copiar endereço · Pasta do sistema · Log · Log em tempo real · Cliente da API · Programas |
 | **Sistema** | Dispositivos conectados · Reiniciar servidor · Sair |
 
 Os comandos chegam a **qualquer tela aberta**: relatório, período, página de carregamento e estoque.
@@ -227,7 +227,7 @@ A maior parte é editada pela própria tela (**Configurações**), no computador
 | `gbakPath` | automático | Caminho do `gbak.exe` (padrão: o do Firebird em execução) |
 | `offlineManterFbk` | `true` | Guarda o último backup `.fbk` (segurança extra) |
 | `fastPollCopiaMs` | `2000` | Intervalo da verificação interna sobre a cópia (0 a 60000 ms) |
-| `portaHttps` | porta + 1 (`7736`) | Porta HTTPS do leitor ao vivo no celular (`0` desliga). O instalador libera essa porta no firewall |
+| `portaHttps` | porta + 1 (`7736`) | Porta HTTPS da leitura em tempo real pela câmera do celular (`0` desliga). O instalador libera essa porta no firewall |
 
 ---
 
@@ -250,7 +250,7 @@ Todas as rotas do *Relatórios FDB* continuam disponíveis (veja o `api.ps1`, co
 
 | Rota | Método | Descrição |
 |---|---|---|
-| `/api/offline` | GET | Estado da cópia: modo, data dos dados, banco principal no ar, etapa e **progresso** (`pct`, decorrido, restante), último erro |
+| `/api/offline` | GET | Estado da cópia: modo, data dos dados, disponibilidade do banco principal, etapa e **progresso** (`pct`, decorrido, restante), último erro |
 | `/api/offline/atualizar` | POST/GET | Faz uma cópia nova já (rede local) |
 | `/api/offline/importar` | POST | `{ "caminho": "C:\\...\\SMALL.fbk" }` restaura um backup como cópia (computador do servidor) |
 | `/estoque` | GET | Tela da consulta de estoque |
@@ -274,12 +274,12 @@ Todas as rotas do *Relatórios FDB* continuam disponíveis (veja o `api.ps1`, co
 | "não permite criar a cópia nesta pasta" | No `firebird.conf`, `DatabaseAccess` está restrito: libere a pasta das cópias ou mude `offlinePasta` |
 | Cópia demora muito | Aumente `offlineIntervaloMin` (e `offlineTimeoutMin` se der tempo esgotado). A barra de progresso mostra quanto falta |
 | Estoque: ativos e inativos trocados | O log mostra a linha *Estoque: coluna de situação …* com a coluna e a interpretação usada; envie essa linha ao suporte |
-| Instalador: "falha ao criar o bootstrap" / antivírus acusa `bootstrap.vbs` | Falso positivo. Em *Segurança do Windows → Proteção contra vírus e ameaças → Histórico de proteção*, escolha *Permitir no dispositivo* e rode o instalador de novo |
-| Celular: "Ler código" só tira foto / não abre o leitor ao vivo | Rode o instalador de novo (ele libera a porta 7736 no firewall) e aceite o aviso de certificado na primeira vez. O log mostra `HTTPS (leitor ao vivo no celular): porta 7736` |
-| Instalação nova: "Node.js não foi instalado corretamente" na 1ª vez | Corrigido na versão 1.6.0 (o instalador espera o Node terminar e relê o PATH). Se ainda acontecer, rode o instalador de novo |
-| Bandeja avisa "Preparando a cópia offline do banco" | Normal na primeira vez (ou depois de apagar as cópias): o relatório abre sozinho quando a cópia ficar pronta. O banco principal só é lido pelo gbak, em modo leitura |
+| Instalador: "falha ao criar o bootstrap" / antivírus acusa `bootstrap.vbs` | Falso positivo. Em *Segurança do Windows → Proteção contra vírus e ameaças → Histórico de proteção*, escolha *Permitir no dispositivo* e execute o instalador novamente |
+| Celular: "Ler código" só tira foto / não abre a leitura em tempo real | Execute o instalador novamente (ele libera a porta 7736 no firewall) e aceite o aviso de certificado na primeira vez. O log mostra `HTTPS (leitura em tempo real pela câmera do celular): porta 7736` |
+| Instalação nova: "Node.js não foi instalado corretamente" na 1ª vez | Corrigido na versão 1.6.0 (o instalador espera o Node terminar e relê o PATH). Se ainda ocorrer, execute o instalador novamente |
+| Bandeja avisa "Preparando a cópia offline do banco" | Normal na primeira vez (ou depois de apagar as cópias): o relatório será aberto automaticamente quando a cópia estiver pronta. O banco principal só é lido pelo gbak, em modo leitura |
 | Servidor reinicia sozinho a cada minuto | Corrigido na 1.6.5: com o banco numa unidade de rede lenta ou fora do ar, o servidor travava esperando a rede e a bandeja o reiniciava. Se continuar, veja no `relatorio.log` as linhas `[TRAY]` ("sem resposta na checagem", "forçando reinício" ou "processo não está mais ativo") |
-| "Falha ao iniciar node: spawn ... node.exe ENOENT" | O Node.js foi atualizado ou reinstalado com o servidor ligado. Desde a 1.6.6 o servidor acha o Node de novo sozinho; se a mensagem continuar, use *Reiniciar servidor* na bandeja |
+| "Falha ao iniciar node: spawn ... node.exe ENOENT" | O Node.js foi atualizado ou reinstalado com o servidor ligado. Desde a 1.6.6 o servidor localiza o Node novamente de forma automática; se a mensagem continuar, use *Reiniciar servidor* na bandeja |
 | Fica em "Iniciando servidor de relatórios..." / log diz "Outra instância já está rodando" | Corrigido na 1.8.1: depois de **Sair**, a bandeja ficava presa esperando o OK de uma janela escondida. Agora ela termina de verdade, e uma bandeja presa é encerrada sozinha ao abrir de novo (~20 s). Na primeira vez depois de atualizar, se ainda acontecer, reinicie o computador |
 | Qualquer outro problema | `relatorio.log` (bandeja → *Ferramentas → Abrir o log*), categorias `[OFFLINE]` e `[ESTOQUE]` |
 
@@ -325,9 +325,9 @@ npm test
 | `gerar-relatorio-html.js` | Gerador do relatório (lê a cópia) |
 | `offline-copia.js` | Cópia offline: gbak, progresso, conferência, troca atômica, limpeza |
 | `localizar-banco.js` | Localiza o `SMALL.FDB` (local, rede, terminais) sem conectar no banco |
-| `https-local.js` | Endereço HTTPS (porta 7736) com certificado gerado aqui, para a câmera ao vivo no celular |
+| `https-local.js` | Endereço HTTPS (porta 7736) com certificado gerado aqui, para a leitura em tempo real pela câmera do celular |
 | `estoque-offline.js` · `estoque.html` | Consulta de estoque (dados e tela) |
-| `estoque-busca.js` | Regras da busca do estoque, as mesmas no servidor e no aparelho (servidor fora do ar) |
+| `estoque-busca.js` | Regras da busca do estoque, as mesmas no servidor e no aparelho (servidor indisponível) |
 | `estoque-sw.js` | Guarda a página do estoque e o leitor no aparelho, para abrir sem o servidor |
 | `leitor/` | Leitor de código de barras e bibliotecas locais |
 | `iniciar-tray.ps1` · `api.ps1` | Bandeja do Windows e cliente da API |

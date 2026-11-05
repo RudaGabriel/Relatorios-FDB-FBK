@@ -1,5 +1,5 @@
 # =============================================================================
-# _remover-inicializacao.ps1                                          v1.0.1
+# _remover-inicializacao.ps1                                          v1.0.2
 # Autor: Ruda Gabriel
 # -----------------------------------------------------------------------------
 # Auxiliar do remover-inicializacao.bat (nao precisa ser executado direto).
@@ -34,7 +34,7 @@
 # Codigo de saida: 0 = tudo removido/encerrado, 1 = sobrou algo (listado).
 #
 # (Historico completo das versoes: CHANGELOG.md no repositorio.)
-# CHANGELOG 1.0.1 - 2026-10-07 22:30 - Data e hora do log do MESMO instante.
+# CHANGELOG 1.0.2 - 2026-11-05 - Mensagem em linguagem formal ("Execute novamente").
 # =============================================================================
 
 param(
@@ -462,7 +462,7 @@ if ($script:Falhas.Count -eq 0) {
 } else {
     Write-Host "  Concluido com $($script:Falhas.Count) pendencia(s):" -ForegroundColor Yellow
     foreach ($f in $script:Falhas) { Write-Host "    - $f" -ForegroundColor Yellow }
-    Write-Host '  Execute de novo como Administrador (botao direito >'
+    Write-Host '  Execute novamente como Administrador (botao direito >'
     Write-Host '  "Executar como administrador") para concluir.'
 }
 Write-Host '======================================================='

@@ -142,18 +142,13 @@ timeout /t 5 >nul
 :ja_elevado
 
 :: =========================================================
-:: instalar-na-inicializacao.bat                       v1.14.1
+:: instalar-na-inicializacao.bat                       v1.14.2
 ::  Autor: Ruda Gabriel
 :: Configura o servidor para iniciar automaticamente no logon.
 ::
 :: (Historico completo das versoes: CHANGELOG.md no repositorio.)
-:: CHANGELOG 1.14.1 - 2026-10-29 - Primeira instalacao do Node.js.
-::   - Num computador sem Node, a 1a execucao parava em "Node.js nao foi
-::     instalado corretamente" e so' a 2a funcionava: o PATH desta janela era
-::     relido so' do sistema, sem expandir variaveis. Agora procura nas pastas
-::     conhecidas do Node, rele Machine + User expandidos e espera ate 30 s.
-::   - Cria %%APPDATA%%\npm antes do "npm install" (npm novo falhava com ENOENT).
-::   - Firewall: libera tambem a porta HTTPS (porta + 1) do leitor ao vivo.
+:: CHANGELOG 1.14.2 - 2026-11-05 - Mensagens em linguagem formal
+::   ("execute este instalador novamente", "desconsidere").
 ::
 :: =========================================================
 
@@ -317,7 +312,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "!_TMPPS!" 2>nul
 if %errorlevel% neq 0 (
     echo.
     echo AVISO: nao foi possivel salvar o nome no config.json automaticamente.
-    echo O sistema vai continuar com o nome "!NOVO_NOME!" apenas nesta sessao -
+    echo O sistema continuara com o nome "!NOVO_NOME!" apenas nesta sessao -
     echo edite config.json manualmente (campo "appName"^) se quiser persistir.
     echo.
 )
@@ -349,9 +344,9 @@ if not exist "!LAUNCHER_PATH!" (
     echo AVISO: launcher.vbs nao foi encontrado em:
     echo   !LAUNCHER_PATH!
     echo.
-    echo Se essa pasta e' de REDE e ainda nao esta montada, pode ignorar -
+    echo Se essa pasta e' de REDE e ainda nao esta montada, desconsidere -
     echo o bootstrap aguarda ate 30 min por ele no logon.
-    echo Caso contrario, a instalacao esta incompleta e o servidor NAO vai
+    echo Caso contrario, a instalacao esta incompleta e o servidor NAO ira
     echo iniciar automaticamente: copie o launcher.vbs para essa pasta.
     echo.
     timeout /t 8 >nul
@@ -452,7 +447,7 @@ echo.
 echo Causa mais comum: o antivirus ^(Microsoft Defender^) apagou a copia do
 echo bootstrap.vbs. Abra Seguranca do Windows - Protecao contra virus e
 echo ameacas - Historico de protecao, restaure o arquivo ^(Permitir no
-echo dispositivo^) e rode este instalador de novo.
+echo dispositivo^) e execute este instalador novamente.
 echo Outra causa possivel: sem permissao de escrita nessa pasta.
 echo.
 set "_LT=%TIME: =0%"

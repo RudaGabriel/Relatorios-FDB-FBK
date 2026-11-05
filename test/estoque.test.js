@@ -230,7 +230,7 @@ test("servidor: página /estoque, /api/estoque, detalhe e exportação", async (
         assert.ok(cfgEst.includes('data-voltar="/estoque?q=racao%20gato"') && cfgEst.includes("Voltar para o estoque"), "botão não volta para o estoque: " + (cfgEst.match(/<button[^>]*voltarBtn[^>]*>[^<]*/) || [cfgEst.slice(0, 300)])[0]);
         for (const ruim of ["//exemplo.com", "https://exemplo.com", "javascript:alert(1)", "/\\exemplo.com", "/config?voltar=/estoque", "/x\"onmouseover=\"1"]) {
             const t = await (await fetch(base + "/config?voltar=" + encodeURIComponent(ruim))).text();
-            assert.ok(t.includes('data-voltar="/"') && t.includes("Voltar para o relatorio"), "voltar inseguro aceito: " + ruim);
+            assert.ok(t.includes('data-voltar="/"') && t.includes("Voltar para o relatório"), "voltar inseguro aceito: " + ruim);
         }
         // HTTPS (leitor ao vivo no celular): mesma aplicação na portaHttps, certificado próprio.
         const https = require("node:https");

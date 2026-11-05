@@ -1,5 +1,21 @@
 # Changelog
 
+## Relatórios SmallSoft Offline 1.8.4 — 2026-11-05
+
+- **Textos em linguagem formal, em todo o sistema** (estoque, relatório, configurações, bandeja, cópia offline,
+  leitor de código de barras, instalador e cliente da API). Exemplos:
+  - "Servidor de relatórios no ar de novo" → **"O servidor de relatórios está disponível novamente"**;
+  - "Voltar ao ao vivo" → **"Retornar aos dados em tempo real"**; "Sem servidor · só o estoque" →
+    **"Servidor indisponível · somente o estoque"**;
+  - "A página recarrega sozinha…" → **"A página será recarregada automaticamente…"**;
+  - bandeja: "● No ar" → **"● Em funcionamento"**, "Acompanhar o log ao vivo" → **"Acompanhar o log em tempo real"**,
+    "fechou sozinho" → **"encerrou inesperadamente"**;
+  - página de **Configurações** com a acentuação correta ("Configurações", "título", "padrão", "Duração"…).
+- Nenhuma mudança de funcionamento.
+- `servidor-relatorio.js` 3.7.4, `gerar-relatorio-html.js` 3.26.4, `offline-copia.js` 1.5.1, `estoque-offline.js` 1.2.1,
+  `https-local.js` 1.0.1, `estoque-sw.js` 1.0.3, `iniciar-tray.ps1` 1.7.3, `api.ps1` 1.8.1,
+  `instalar-na-inicializacao.bat` 1.14.2, `remover-inicializacao.bat` 1.0.1, `_remover-inicializacao.ps1` 1.0.2.
+
 ## Relatórios SmallSoft Offline 1.8.3 — 2026-11-05
 
 - **Celular, servidor encerrado: "Abrir o estoque" não fazia nada.** O botão da faixa vermelha preferia o endereço

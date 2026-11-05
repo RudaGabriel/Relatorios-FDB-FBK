@@ -2,7 +2,7 @@
 
 /**
  * estoque-offline.js
- * @version 1.2.0
+ * @version 1.2.1
  * @author Ruda Gabriel
  * @description Consulta de estoque completa (Relatórios SmallSoft Offline).
  *
@@ -19,12 +19,11 @@
  *
  * SOMENTE LEITURA: só SELECT, sempre pelo Firebird blindado do servidor.
  *
- * 1.2.0 — Regras da busca em estoque-busca.js (as mesmas no navegador) e pacote do
- *         estoque para o aparelho guardar e usar com o servidor fora do ar.
+ * 1.2.1 — Mensagem "item não encontrado" em linguagem formal ("refaça a pesquisa").
  * Histórico completo das versões: CHANGELOG.md no repositório.
  */
 
-const VERSAO = "1.2.0";
+const VERSAO = "1.2.1";
 const Busca = require("./estoque-busca.js");
 const TABELAS = ["ESTOQUE", "PRODUTOS", "PRODUTO", "CADPRO", "MERCADORIAS"];
 
@@ -310,7 +309,7 @@ function criarEstoque(opcoes) {
             garantir(false, (err, c) => {
                 if (err || !c) { cb(err || new Error("Estoque indisponível.")); return; }
                 const i = parseInt(id, 10);
-                if (!(i >= 0 && i < c.linhas.length)) { cb(new Error("Item não encontrado (o estoque pode ter sido recarregado — pesquise de novo).")); return; }
+                if (!(i >= 0 && i < c.linhas.length)) { cb(new Error("Item não encontrado (o estoque pode ter sido recarregado — refaça a pesquisa).")); return; }
                 cb(null, { ok: true, id: i, resumo: resumo(c, i), campos: c.colunas.map((col, k) => ({ nome: col.nome, tipo: col.tipo, valor: c.linhas[i][k] })), carregadoEm: c.carregadoEm });
             });
         },
