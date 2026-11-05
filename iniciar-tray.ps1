@@ -3,14 +3,12 @@
 # Instancia unica via mutex global.
 # Abrir Relatorio: se ja tem aba aberta (SSE), foca ela. Se nao, abre browser.
 #
-# @version 1.7.4
+# @version 1.7.5
 # @author Ruda Gabriel
 # @changelog
 #   (Historico completo das versoes: CHANGELOG.md no repositorio.)
-#   1.7.4 - 2026-11-05 - Partida automatica (logon / ligar o computador) silenciosa: com
-#     -Inicializacao (passado pelo launcher.vbs a pedido do bootstrap.vbs) nenhuma janela nem
-#     balao informativo aparece; erros da partida vao para o relatorio.log e, se o icone ja
-#     existir, viram um balao de aviso. Aberta pelo usuario, tudo continua como antes.
+#   1.7.5 - 2026-11-05 - "Sair": o aviso "servidor encerrado" vira notificacao do Windows (sem
+#     janela com OK); o icone fica alguns segundos para a notificacao aparecer e some sozinho.
 
 param([switch]$Inicializacao)
 
@@ -1691,9 +1689,15 @@ $menu.Items.Add((New-ItemMenu "Reiniciar servidor" "reiniciar" "#D97706" {
     }
 })) | Out-Null
 $menu.Items.Add((New-ItemMenu "Sair" "sair" "#DC2626" {
+    if ($script:saindo) { return }   # duplo clique em "Sair" durante o encerramento
+    $script:saindo = $true
     Write-TrayLog "Encerramento solicitado pelo usuario via bandeja."
     $watchTimer.Stop()   # impede o watchdog de relancar o servidor durante o encerramento
-    $tray.Visible = $false
+    try { $dbTimer.Stop() } catch {}
+    try { if ($script:dispTimer) { $script:dispTimer.Stop() } } catch {}
+    # v1.7.5: o icone continua visivel (sem menu) para a notificacao final aparecer.
+    try { $tray.ContextMenuStrip = $null } catch {}
+    try { $tray.Text = $APP_NAME + " - " + (L "encerrando...") } catch {}
     $comoParou = Stop-ServidorOrdenado
     Write-TrayLog "Servidor encerrado pela bandeja ($comoParou). Bandeja finalizada."
     $script:nodeProc = $null
@@ -1701,10 +1705,23 @@ $menu.Items.Add((New-ItemMenu "Sair" "sair" "#DC2626" {
     # atras das outras) segurava o mutex ate alguem clicar OK: abrir o sistema de novo
     # dizia "outra instancia ja esta rodando" e ficava em "Iniciando..." para sempre.
     try { $mutex.ReleaseMutex() } catch {}
-    try { $dbTimer.Stop() } catch {}
-    try { $tray.Dispose() } catch {}
-    Show-AvisoJanela "O servidor de relatorios foi encerrado.`n`nOs relatorios abertos no navegador mostram o aviso 'Servidor encerrado' e sao restabelecidos automaticamente quando o servidor for iniciado novamente. No celular, o estoque continua disponivel pela copia salva no aparelho.`n`nPara iniciar novamente: abra gerar_relatorio_do_dia.bat ou reinicie o computador." "$APP_NAME - Servidor encerrado" "Information"
-    [System.Windows.Forms.Application]::Exit()
+    # v1.7.5: notificacao do Windows (sem janela com OK). Fica ~7 s com o icone para o
+    # Windows exibir a notificacao; depois o icone some e o processo termina.
+    try {
+        $tray.Text = $APP_NAME + " - " + (L "servidor encerrado")
+        $tray.BalloonTipTitle = $APP_NAME + " - " + (L "Servidor encerrado")
+        $tray.BalloonTipText  = (L "O servidor de relat\u00f3rios foi encerrado. Os relat\u00f3rios abertos voltam automaticamente quando ele for iniciado novamente; no celular, o estoque continua dispon\u00edvel. Para iniciar: gerar_relatorio_do_dia.bat ou reinicie o computador.")
+        $tray.BalloonTipIcon  = [System.Windows.Forms.ToolTipIcon]::Info
+        $tray.ShowBalloonTip(7000)
+    } catch {}
+    $fim = New-Object System.Windows.Forms.Timer
+    $fim.Interval = 7000
+    $fim.Add_Tick({
+        try { $this.Stop() } catch {}
+        try { $tray.Visible = $false; $tray.Dispose() } catch {}
+        [System.Windows.Forms.Application]::Exit()
+    })
+    $fim.Start()
 })) | Out-Null
 
 $tray.ContextMenuStrip = $menu

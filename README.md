@@ -4,12 +4,12 @@
 
 ### Vendas do dia e consulta de estoque do Small Commerce, lendo uma **cópia offline** do banco Firebird
 
-<img alt="versão: 1.8.6" src="https://img.shields.io/badge/vers%C3%A3o-1.8.6-2563EB?style=flat">
+<img alt="versão: 1.8.7" src="https://img.shields.io/badge/vers%C3%A3o-1.8.7-2563EB?style=flat">
 <img alt="servidor: v3.7.4" src="https://img.shields.io/badge/servidor-v3.7.4-2563EB?style=flat">
 <img alt="cópia offline: v1.5.1" src="https://img.shields.io/badge/c%C3%B3pia%20offline-v1.5.1-0D9488?style=flat">
 <img alt="estoque: v1.2.1" src="https://img.shields.io/badge/estoque-v1.2.1-0D9488?style=flat">
 <img alt="gerador: v3.26.4" src="https://img.shields.io/badge/gerador-v3.26.4-2563EB?style=flat">
-<img alt="bandeja: v1.7.4" src="https://img.shields.io/badge/bandeja-v1.7.4-2563EB?style=flat">
+<img alt="bandeja: v1.7.5" src="https://img.shields.io/badge/bandeja-v1.7.5-2563EB?style=flat">
 <img alt="testes: 48 passando" src="https://img.shields.io/badge/testes-48%20passando-22C55E?style=flat">
 
 <img alt="plataforma: Windows 10 | 11" src="https://img.shields.io/badge/plataforma-Windows%2010%20%7C%2011-0078D4?style=flat&logo=windows&logoColor=white">
@@ -201,7 +201,7 @@ O ícone da bandeja mostra o estado em tempo real (data da cópia em uso e, dura
 | **Telas abertas** | Trazer para frente · Recarregar todas · Enviar aviso · Tema das telas |
 | **Configurações** | Editar configurações · Selecionar banco (FDB) · Status do banco de dados |
 | **Ferramentas** | Informações do sistema · Copiar endereço · Pasta do sistema · Log · Log em tempo real · Cliente da API · Programas |
-| **Sistema** | Dispositivos conectados · Reiniciar servidor · Sair |
+| **Sistema** | Dispositivos conectados · Reiniciar servidor · Sair (encerra o servidor e avisa por uma notificação do Windows, sem janela para confirmar) |
 
 Os comandos chegam a **qualquer tela aberta**: relatório, período, página de carregamento e estoque.
 
