@@ -5,7 +5,7 @@ if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
 
 /**
  * servidor-relatorio.js — Relatórios SmallSoft Offline
- * @version 3.7.7
+ * @version 3.7.8
  * @author Ruda Gabriel
  * @description Servidor HTTP + Firebird de relatórios com SSE, fast-poll e
  *              geração em subprocesso. SOMENTE LEITURA no banco.
@@ -14,9 +14,8 @@ if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
  *              principal em atualização, manutenção ou fora do ar.
  * @changelog
  *   (Histórico completo das versões: CHANGELOG.md no repositório.)
- *   3.7.7 - 2026-11-05 - Estoque sem o servidor mesmo sem a pagina aberta: com o HTTPS do
- *     Tailscale, o celular passa sozinho do http para o endereco seguro e o relatorio registra o
- *     service worker, que abre o estoque guardado quando o servidor nao responde.
+ *   3.7.8 - 2026-11-05 - Avisos temporarios ("Aviso" da bandeja e correcao de horario) com uma
+ *     barrinha que mostra quanto falta para sumirem (como os avisos do relatorio).
  */
 
 
@@ -24,7 +23,7 @@ if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
 // Registrada na linha de início do log para que se saiba, ao investigar
 // qualquer ocorrência, qual versão do servidor estava no ar naquele momento
 // (o gerar-relatorio-html.js já faz o mesmo via SCRIPT_VERSION).
-const SERVER_VERSION = "3.7.7";
+const SERVER_VERSION = "3.7.8";
 
 // ===== Logger Global seguro — flush debounced 300ms =====
 const _fs = require('fs');
@@ -2414,6 +2413,10 @@ var gerarEmBackground=function(inicio,fim,chave,_pollTriggered){
             // (servidor derrubado à força, rede caiu). Some e a página recarrega
             // sozinha assim que o servidor volta a responder.
             "var _srvFora=false,_srvErroDesde=0;" +
+            // v3.7.8: barrinha no rodapé de um aviso temporário — encolhe até ele sumir.
+            "var _srvBarra=function(el,ms,cor){try{var b=document.createElement('div');" +
+            "b.style.cssText='position:absolute;left:0;bottom:0;height:3px;width:100%;transform-origin:left;transform:scaleX(1);background:'+(cor||'linear-gradient(90deg,#3b82f6,#0ea5e9)')+';transition:transform '+ms+'ms linear;pointer-events:none';" +
+            "el.appendChild(b);requestAnimationFrame(function(){requestAnimationFrame(function(){b.style.transform='scaleX(0)';});});}catch(_){}};" +
             "var _srvAviso=function(titulo,detalhe,cor){try{" +
             "var b=document.getElementById('__srv_fora');" +
             "if(!b){b=document.createElement('div');b.id='__srv_fora';b.setAttribute('role','alert');" +
@@ -2591,7 +2594,7 @@ var gerarEmBackground=function(inicio,fim,chave,_pollTriggered){
             "_aw=document.createElement('div');_aw.id='__srv_aviso';_aw.setAttribute('role','alert');" +
             "_aw.style.cssText='position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:2147483647;max-width:min(560px,92vw);" +
             "padding:14px 44px 14px 18px;border-radius:12px;background:#0f172a;color:#f1f5f9;border:1px solid rgba(56,189,248,.55);" +
-            "box-shadow:0 10px 40px rgba(0,0,0,.6);font:600 14px Inter,Arial,sans-serif;line-height:1.45;word-break:break-word;opacity:1;transition:opacity .4s';" +
+            "box-shadow:0 10px 40px rgba(0,0,0,.6);font:600 14px Inter,Arial,sans-serif;line-height:1.45;word-break:break-word;opacity:1;transition:opacity .4s;overflow:hidden';" +
             "var _at=document.createElement('div');_at.style.cssText='font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#38bdf8;margin-bottom:4px';_at.textContent='Aviso';_aw.appendChild(_at);" +
             "var _am=document.createElement('div');_am.textContent=String(d.msg);_aw.appendChild(_am);" +
             "var _ax=document.createElement('button');_ax.type='button';_ax.textContent='\u00d7';_ax.setAttribute('aria-label','Fechar');" +
@@ -2599,6 +2602,7 @@ var gerarEmBackground=function(inicio,fim,chave,_pollTriggered){
             "_ax.onclick=function(){try{_aw.parentNode.removeChild(_aw);}catch(_){}};_aw.appendChild(_ax);" +
             "document.body.appendChild(_aw);" +
             "var _as=Math.max(3,Math.min(120,Number(d.segundos)||12));" +
+            "_srvBarra(_aw,_as*1000,'#38bdf8');" +
             "setTimeout(function(){_aw.style.opacity='0';setTimeout(function(){try{_aw.parentNode&&_aw.parentNode.removeChild(_aw);}catch(_){}},450);},_as*1000);" +
             "}catch(_){}}" +
             "if(d.type==='navigate-hash'&&d.hash){" +
@@ -2659,9 +2663,10 @@ var gerarEmBackground=function(inicio,fim,chave,_pollTriggered){
             "+';border-radius:10px;padding:10px 14px;font-size:12px;line-height:1.5;" +
             "color:#e2e8f0;font-family:Inter,Arial,sans-serif;" +
             "box-shadow:0 4px 24px rgba(0,0,0,.65);opacity:1;transition:opacity .5s ease;" +
-            "pointer-events:none;word-break:break-word';" +
+            "pointer-events:none;word-break:break-word;position:relative;overflow:hidden';" +
             "_t.textContent=c.msg;" +
             "_tw.appendChild(_t);" +
+            "_srvBarra(_t,(window.__TOAST_MS>=500?window.__TOAST_MS:" + TOAST_DURATION + "),c.cor||'#0ea5e9');" +
             "setTimeout(function(){_t.style.opacity='0';" +
             "setTimeout(function(){try{_t.parentNode&&_t.parentNode.removeChild(_t);}catch(_){}},550);}," +
             "(window.__TOAST_MS>=500?window.__TOAST_MS:" + TOAST_DURATION + "));" +
