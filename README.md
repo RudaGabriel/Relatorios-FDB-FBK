@@ -4,13 +4,13 @@
 
 ### Vendas do dia e consulta de estoque do Small Commerce, lendo uma **cópia offline** do banco Firebird
 
-<img alt="versão: 1.8.7" src="https://img.shields.io/badge/vers%C3%A3o-1.8.7-2563EB?style=flat">
-<img alt="servidor: v3.7.4" src="https://img.shields.io/badge/servidor-v3.7.4-2563EB?style=flat">
-<img alt="cópia offline: v1.5.1" src="https://img.shields.io/badge/c%C3%B3pia%20offline-v1.5.1-0D9488?style=flat">
+<img alt="versão: 1.8.8" src="https://img.shields.io/badge/vers%C3%A3o-1.8.8-2563EB?style=flat">
+<img alt="servidor: v3.7.5" src="https://img.shields.io/badge/servidor-v3.7.5-2563EB?style=flat">
+<img alt="cópia offline: v1.6.0" src="https://img.shields.io/badge/c%C3%B3pia%20offline-v1.6.0-0D9488?style=flat">
 <img alt="estoque: v1.2.1" src="https://img.shields.io/badge/estoque-v1.2.1-0D9488?style=flat">
 <img alt="gerador: v3.26.4" src="https://img.shields.io/badge/gerador-v3.26.4-2563EB?style=flat">
-<img alt="bandeja: v1.7.5" src="https://img.shields.io/badge/bandeja-v1.7.5-2563EB?style=flat">
-<img alt="testes: 48 passando" src="https://img.shields.io/badge/testes-48%20passando-22C55E?style=flat">
+<img alt="bandeja: v1.7.6" src="https://img.shields.io/badge/bandeja-v1.7.6-2563EB?style=flat">
+<img alt="testes: 49 passando" src="https://img.shields.io/badge/testes-49%20passando-22C55E?style=flat">
 
 <img alt="plataforma: Windows 10 | 11" src="https://img.shields.io/badge/plataforma-Windows%2010%20%7C%2011-0078D4?style=flat&logo=windows&logoColor=white">
 <img alt="banco: somente leitura" src="https://img.shields.io/badge/banco-somente%20leitura-DC2626?style=flat">
@@ -91,6 +91,7 @@ Na primeira vez aparece **Preparando a cópia offline**, com barra de progresso,
 | Recarregar a cada venda | *Configurações → Nesta tela → Atualização*. Ligado: recarrega como um F5 (limpa busca, filtros e janelas). Desligado: as vendas entram sem recarregar |
 | Saber de quando são os dados | Selo **Offline** no canto da tela (no celular fica recolhido numa bolinha no canto esquerdo: toque para ver; recolhe automaticamente em 5 s ou ao deslizar para a esquerda/para baixo) · cabeçalho do menu da bandeja |
 | Atualizar a cópia agora | Clique no selo → *Atualizar cópia agora* · bandeja → *Cópia offline do banco → Atualizar a cópia agora* |
+| Cancelar uma cópia em andamento | Clique no selo → *Cancelar a cópia* (também na tela *Preparando a cópia*) · bandeja → *Cópia offline do banco → Cancelar a cópia em andamento*. Pede confirmação; a cópia em uso continua valendo e a próxima cópia automática fica para depois de 30 min (*Atualizar a cópia agora* faz uma nova quando quiser) |
 | Acompanhar uma cópia em andamento | Selo e página de espera mostram **porcentagem, tempo decorrido e quanto falta**; a bandeja mostra *copiando N%* |
 | Configurar | Botão **Configurações** · bandeja → *Configurações → Editar configurações...* (funciona com qualquer tela aberta, inclusive o estoque; o botão **Voltar** retorna à tela de onde você veio) |
 | Trocar o banco | Bandeja → *Configurações → Selecionar banco (FDB)...* |
@@ -125,6 +126,7 @@ Na primeira vez aparece **Preparando a cópia offline**, com barra de progresso,
 | Situação | O que acontece |
 |---|---|
 | Falha no meio da cópia (banco em manutenção, disco cheio, erro do gbak) | Os temporários são apagados e o sistema **continua com a cópia anterior**. O motivo aparece no selo, na bandeja e no log. |
+| Cópia cancelada pelo usuário | O `gbak`/`gfix` (ou a cópia do arquivo) é encerrado, os temporários são apagados e o sistema **continua com a cópia anterior**. Uma cópia interrompida nunca é retomada: a próxima começa do zero. |
 | Servidor encerrado pela bandeja ou pelo Gerenciador de Tarefas durante a cópia | A cópia em uso não é afetada: a nova só entra **depois de pronta e conferida**. Na próxima inicialização, os temporários são apagados e qualquer `gbak`/`gfix` que tenha ficado rodando na pasta de cópias é encerrado antes de começar de novo. |
 | Banco principal fora do ar | O selo fica amarelo (*Banco principal indisponível*) e o relatório segue com a última cópia. Quando ele volta, a cópia é atualizada automaticamente. |
 | Sem banco e sem cópia | O sistema procura um backup `SMALL.fbk` nos lugares conhecidos e restaura. Também dá para escolher um `.fbk` em *Selecionar banco*. |
@@ -197,7 +199,7 @@ O ícone da bandeja mostra o estado em tempo real (data da cópia em uso e, dura
 |---|---|
 | **Abrir** | Abrir relatório · Abrir em nova aba · Abrir no celular (QR code) · Consultar estoque |
 | **Relatório** | Atualizar dados de hoje · Gerar por período |
-| **Cópia offline do banco** | Atualizar a cópia agora · Situação da cópia · Abrir a pasta das cópias |
+| **Cópia offline do banco** | Atualizar a cópia agora · Cancelar a cópia em andamento · Situação da cópia · Abrir a pasta das cópias |
 | **Telas abertas** | Trazer para frente · Recarregar todas · Enviar aviso · Tema das telas |
 | **Configurações** | Editar configurações · Selecionar banco (FDB) · Status do banco de dados |
 | **Ferramentas** | Informações do sistema · Copiar endereço · Pasta do sistema · Log · Log em tempo real · Cliente da API · Programas |
@@ -223,6 +225,7 @@ A maior parte é editada pela própria tela (**Configurações**), no computador
 | `offlineQuietoSeg` | `5` | Métodos `auto`/`arquivo`: segundos sem gravação antes de copiar o arquivo (0 a 600) |
 | `offlineMaxIdadeMin` | `180` | Refaz a cópia depois desse tempo mesmo sem mudança |
 | `offlineTimeoutMin` | `30` | Tempo máximo de uma cópia (banco muito grande: aumente) |
+| `offlineAdiarAposCancelarMin` | `30` | Depois de o usuário cancelar uma cópia, quanto tempo a próxima cópia **automática** espera (0 a 1440 min; 0 = só o intervalo mínimo) |
 | `offlinePasta` | automático | Pasta das cópias (disco local desta máquina) |
 | `gbakPath` | automático | Caminho do `gbak.exe` (padrão: o do Firebird em execução) |
 | `offlineManterFbk` | `true` | Guarda o último backup `.fbk` (segurança extra) |
@@ -252,6 +255,7 @@ Todas as rotas do *Relatórios FDB* continuam disponíveis (veja o `api.ps1`, co
 |---|---|---|
 | `/api/offline` | GET | Estado da cópia: modo, data dos dados, disponibilidade do banco principal, etapa e **progresso** (`pct`, decorrido, restante), último erro |
 | `/api/offline/atualizar` | POST/GET | Faz uma cópia nova já (rede local) |
+| `/api/offline/cancelar` | POST | Cancela a cópia em andamento; a cópia em uso continua (rede local) |
 | `/api/offline/importar` | POST | `{ "caminho": "C:\\...\\SMALL.fbk" }` restaura um backup como cópia (computador do servidor) |
 | `/estoque` | GET | Tela da consulta de estoque |
 | `/api/estoque?q=&estoque=&ordem=&ativos=1&contem=1&pagina=&limite=` | GET | Busca (até 1000 por página; `estoque`: todos/com/sem/negativo/abaixo; `contem=0`: só itens que começam com o texto) |
