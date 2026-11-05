@@ -1,5 +1,5 @@
 ' =============================================================================
-' bootstrap.vbs                                                        v1.2.0
+' bootstrap.vbs                                                        v1.3.0
 ' Autor: Ruda Gabriel
 ' -----------------------------------------------------------------------------
 ' Inicializacao automatica do Relatorios SmallSoft Offline.
@@ -14,12 +14,9 @@
 ' 3 = launcher.path vazio, 5 = launcher nao apareceu em 30 minutos.
 '
 ' (Historico completo das versoes: CHANGELOG.md no repositorio.)
-' CHANGELOG 1.2.0 - 2026-10-29 - Codigo simplificado e legivel.
-'   O Microsoft Defender classificava a versao anterior como
-'   "Trojan:Script/ObfusScript.A!ml" (falso positivo do modelo de aprendizado
-'   de maquina). Sem ADODB.Stream, sem montar texto com Chr/ChrW e sem
-'   "On Error Resume Next" geral: launcher.path agora e' gravado pelo
-'   instalador em UTF-16, que o Scripting.FileSystemObject le direto.
+' CHANGELOG 1.3.0 - 2026-11-05 - Partida automatica silenciosa.
+'   Abre o launcher com "/inicializacao": a bandeja inicia sem nenhuma
+'   janela nem balao informativo (avisos de erro vao para o relatorio.log).
 ' =============================================================================
 
 Option Explicit
@@ -49,7 +46,7 @@ End If
 
 For tentativa = 1 To TENTATIVAS
     If arquivos.FileExists(caminhoDoLauncher) Then
-        shell.Run "wscript.exe """ & caminhoDoLauncher & """", 1, False
+        shell.Run "wscript.exe """ & caminhoDoLauncher & """ /inicializacao", 0, False
         WScript.Quit 0
     End If
     WScript.Sleep ESPERA_MS

@@ -3,12 +3,20 @@
 # Instancia unica via mutex global.
 # Abrir Relatorio: se ja tem aba aberta (SSE), foca ela. Se nao, abre browser.
 #
-# @version 1.7.3
+# @version 1.7.4
 # @author Ruda Gabriel
 # @changelog
 #   (Historico completo das versoes: CHANGELOG.md no repositorio.)
-#   1.7.3 - 2026-11-05 - Textos do menu, dos baloes e das janelas em linguagem formal
-#     ("Em funcionamento", "Acompanhar o log em tempo real", "encerrou inesperadamente").
+#   1.7.4 - 2026-11-05 - Partida automatica (logon / ligar o computador) silenciosa: com
+#     -Inicializacao (passado pelo launcher.vbs a pedido do bootstrap.vbs) nenhuma janela nem
+#     balao informativo aparece; erros da partida vao para o relatorio.log e, se o icone ja
+#     existir, viram um balao de aviso. Aberta pelo usuario, tudo continua como antes.
+
+param([switch]$Inicializacao)
+
+# Partida automatica silenciosa (v1.7.4). Vale so para os avisos AUTOMATICOS da
+# partida; o que o usuario pede pelo menu (Sair, Status...) continua abrindo janela.
+$script:SILENCIOSO = [bool]$Inicializacao
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -45,6 +53,25 @@ $LOG_PATH = Join-Path $DIR "relatorio.log"
 # processo oculto (sem icone visivel) abria atras das outras janelas e o processo
 # ficava parado esperando um OK que ninguem via.
 function Show-AvisoFrente([string]$Texto, [string]$Titulo, [string]$Icone = "Information") {
+    # v1.7.4: na partida automatica, nenhuma janela - registra no log e, com o icone
+    # ja na bandeja, mostra um balao de aviso (nao bloqueia nem rouba o foco).
+    if ($script:SILENCIOSO) {
+        try { Write-TrayLog ("Partida automatica (sem janela): " + $Titulo + " - " + ($Texto -replace "`r?`n", " | ")) "AVISO" } catch {}
+        try {
+            $ti = Get-Variable -Name tray -Scope Script -ValueOnly -ErrorAction Stop
+            if ($ti -and $ti.Visible) {
+                $ti.BalloonTipTitle = $Titulo
+                $ti.BalloonTipText  = $(if ($Texto.Length -gt 250) { $Texto.Substring(0, 247) + "..." } else { $Texto })
+                $ti.BalloonTipIcon  = $(if ($Icone -eq "Error") { [System.Windows.Forms.ToolTipIcon]::Error } else { [System.Windows.Forms.ToolTipIcon]::Warning })
+                $ti.ShowBalloonTip(10000)
+            }
+        } catch {}
+        return
+    }
+    Show-AvisoJanela $Texto $Titulo $Icone
+}
+# Janela de aviso sempre na frente (pedidos do usuario pelo menu usam esta direto).
+function Show-AvisoJanela([string]$Texto, [string]$Titulo, [string]$Icone = "Information") {
     $dono = $null
     try {
         $dono = New-Object System.Windows.Forms.Form
@@ -1081,7 +1108,7 @@ function Show-Balao([string]$Titulo, [string]$Texto, [string]$Tipo = "Info", [in
     } catch {}
 }
 function Show-Mensagem([string]$Texto, [string]$Titulo, [string]$Icone = "Information") {
-    Show-AvisoFrente $Texto $Titulo $Icone
+    Show-AvisoJanela $Texto $Titulo $Icone
 }
 function Get-MaquinaIP {
     try {
@@ -1676,7 +1703,7 @@ $menu.Items.Add((New-ItemMenu "Sair" "sair" "#DC2626" {
     try { $mutex.ReleaseMutex() } catch {}
     try { $dbTimer.Stop() } catch {}
     try { $tray.Dispose() } catch {}
-    Show-AvisoFrente "O servidor de relatorios foi encerrado.`n`nOs relatorios abertos no navegador mostram o aviso 'Servidor encerrado' e sao restabelecidos automaticamente quando o servidor for iniciado novamente. No celular, o estoque continua disponivel pela copia salva no aparelho.`n`nPara iniciar novamente: abra gerar_relatorio_do_dia.bat ou reinicie o computador." "$APP_NAME - Servidor encerrado" "Information"
+    Show-AvisoJanela "O servidor de relatorios foi encerrado.`n`nOs relatorios abertos no navegador mostram o aviso 'Servidor encerrado' e sao restabelecidos automaticamente quando o servidor for iniciado novamente. No celular, o estoque continua disponivel pela copia salva no aparelho.`n`nPara iniciar novamente: abra gerar_relatorio_do_dia.bat ou reinicie o computador." "$APP_NAME - Servidor encerrado" "Information"
     [System.Windows.Forms.Application]::Exit()
 })) | Out-Null
 
@@ -1823,10 +1850,13 @@ $dbTimer.Add_Tick({
         if ($texto) {
             if ($texto.Length -gt 250) { $texto = $texto.Substring(0, 247) + "..." }
             Write-TrayLog ("Checagem inicial da copia offline: " + ($texto -replace "`n", " | ")) $(if ($icone -eq "Info") { "INFO" } else { "AVISO" })
-            $tray.BalloonTipTitle = $titulo
-            $tray.BalloonTipText  = $texto
-            $tray.BalloonTipIcon  = [System.Windows.Forms.ToolTipIcon]::$icone
-            $tray.ShowBalloonTip(10000)
+            # v1.7.4: na partida automatica, so os avisos (nada de balao informativo).
+            if (-not ($script:SILENCIOSO -and $icone -eq "Info")) {
+                $tray.BalloonTipTitle = $titulo
+                $tray.BalloonTipText  = $texto
+                $tray.BalloonTipIcon  = [System.Windows.Forms.ToolTipIcon]::$icone
+                $tray.ShowBalloonTip(10000)
+            }
         }
     } catch {}
 })
@@ -1842,7 +1872,9 @@ if ($MAQUINA_IP) {
     $tray.BalloonTipText = "Servidor iniciado! Duplo clique para abrir."
 }
 $tray.BalloonTipIcon  = [System.Windows.Forms.ToolTipIcon]::Info
-$tray.ShowBalloonTip(3500)
+# v1.7.4: na partida automatica (logon / ligar o computador) inicia em silencio.
+if ($script:SILENCIOSO) { Write-TrayLog "Partida automatica: iniciado em silencio (sem janela nem balao)." }
+else { $tray.ShowBalloonTip(3500) }
 
 # ---------------------------------------------------------------------------
 # Loop de mensagens Windows
