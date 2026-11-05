@@ -1,5 +1,13 @@
 # Changelog
 
+## Relatórios SmallSoft Offline 1.8.7 — 2026-11-05
+
+- **"Sair" da bandeja avisa por notificação**, sem a janela com o botão OK: a notificação do Windows "Servidor
+  encerrado" informa que os relatórios abertos voltam automaticamente quando o servidor for iniciado e que, no celular, o
+  estoque continua disponível. O ícone permanece ~7 s (sem menu) para a notificação aparecer e então some; um segundo
+  clique em "Sair" durante o encerramento é ignorado.
+- `iniciar-tray.ps1` 1.7.5.
+
 ## Relatórios SmallSoft Offline 1.8.6 — 2026-11-05
 
 - **A instalação volta a mostrar a janela** (etapas, pausas e o nome do sistema), como antes da 1.8.5.
