@@ -1,11 +1,11 @@
 /**
  * gerar-relatorio-html.js
- * @version 3.26.3
+ * @version 3.26.4
  * @author Ruda Gabriel
  * @description Gerador de relatório HTML (subprocesso spawnado pelo servidor). SOMENTE LEITURA.
  * @changelog (único, exclusivo desta versão — sem acumular histórico de versões anteriores)
  *   (Histórico completo das versões: CHANGELOG.md no repositório.)
- *   3.26.3 - 2026-11-04 - Recarga automática (opção ligada) volta limpa, como F5 (igual ao Relatórios FDB 3.28.1).
+ *   3.26.4 - 2026-11-05 - Textos das janelas (aparência, QR code, duplicatas, proibidos) em linguagem formal.
  */
 
 (function() {
@@ -13,7 +13,7 @@
     // Embutida no HTML gerado (comentário + atributo data-*) para rastreabilidade:
     // suporte técnico consegue identificar qual versão do script gerou um relatório
     // específico sem precisar abrir o gerar-relatorio-html.js.
-    const SCRIPT_VERSION = "3.26.3";
+    const SCRIPT_VERSION = "3.26.4";
     // Lista-mestra dos temas. id = valor de data-theme no HTML e de "fdb_theme" salvo no navegador;
     // ordem = ordem no menu e no "próximo tema". O CSS de cada id é o bloco [data-theme="id"] do <style>
     // (variáveis) mais, nos temas de estilo, as regras html[data-theme="id"] (forma: cantos, bordas,
@@ -568,7 +568,7 @@
 	const _queryBase = (db, sql, params, timeoutMs) => new Promise((resolve, reject) => {
 		const _qt = setTimeout(() => {
 			const seg = Math.round((timeoutMs || _tQuery) / 1000);
-			reject(new Error(`Timeout na query apos ${seg}s. Conexao pode estar travada.`));
+			reject(new Error(`Timeout na query apos ${seg}s. A conexao pode estar bloqueada.`));
 		}, timeoutMs || _tQuery);
 		db.transaction(null, (errTx, tx) => {
 			if (errTx) {
@@ -3853,11 +3853,11 @@ const _htmlPrefsTela = () => '<div class="tmPerf"><div class="tmHead tmPerfHead"
         +     '<button type="button" class="tmPerfOp" role="radio" data-perf="completo">Completo</button>'
         +     '<button type="button" class="tmPerfOp" role="radio" data-perf="leve">Leve</button>'
         +   '</div>'
-        +   '<div class="tmPerfDica">Leve: sem animações, desfoque nem sombras pesadas — para computadores, notebooks e celulares mais fracos. O automático detecta sozinho.</div>'
+        +   '<div class="tmPerfDica">Leve: sem animações, desfoque nem sombras pesadas — para computadores, notebooks e celulares mais fracos. O modo automático escolhe a opção adequada ao aparelho.</div>'
         + '</div>'
         + '<div class="tmPerf"><div class="tmHead tmPerfHead"><span class="tmTitulo">Atualização</span><span class="tmAtual tmRecEstado"></span></div>'
         +   '<label class="tmRecLbl"><input type="checkbox" id="tmRecAuto"><span>Recarregar relatório ao detectar mudanças</span></label>'
-        +   '<div class="tmPerfDica">Ligado: a cada venda a página recarrega como um F5 — limpa busca, filtros e janelas abertas e volta ao topo. Desligado: as vendas novas entram sozinhas sem recarregar — filtros, busca, rolagem e janelas abertas ficam como estão. Vale só para este aparelho.</div>'
+        +   '<div class="tmPerfDica">Ligado: a cada venda a página recarrega como um F5 — limpa busca, filtros e janelas abertas e volta ao topo. Desligado: as vendas novas são incluídas automaticamente, sem recarregar — filtros, busca, rolagem e janelas abertas ficam como estão. Vale somente para este aparelho.</div>'
         + '</div>'
         + '<div class="tmPerf tmZoom"><div class="tmHead tmPerfHead"><span class="tmTitulo">Tamanho do texto</span><span class="tmAtual tmZoomEstado"></span></div>'
         +   '<div class="tmPerfOps tmZoomOps" role="group" aria-label="Tamanho do texto">'
@@ -4624,7 +4624,7 @@ const abrirDuplicatas=(itens, destaque)=>{
             '<div style="padding:10px 10px 4px;font-size:12px;font-weight:700;opacity:.7">Já decididas — clique em outra opção para trocar (a página recarrega já com a nova escolha)</div>'
             + listaDec.map(d => linhaItem(d, true)).join("");
         const txtManterTodas = _dupManterTodasAtivo ? 'Desativar "manter todas"' : "Manter todas as duplicatas";
-        bg.innerHTML='<div class="modal" role="dialog" aria-modal="true"><div class="mhead"><div><div class="mtitle">Duplicatas</div><div class="msub">Gerenciais convertidas em NFC-e/NF-e e NFC-e reemitidas como NF-e — por padrão só o documento final fica. Escolha o que fazer com cada par.</div></div><div class="btn" id="dupFechar"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>Fechar</div></div>'
+        bg.innerHTML='<div class="modal" role="dialog" aria-modal="true"><div class="mhead"><div><div class="mtitle">Duplicatas</div><div class="msub">Gerenciais convertidas em NFC-e/NF-e e NFC-e reemitidas como NF-e — por padrão, somente o documento final é mantido. Escolha o que fazer com cada par.</div></div><div class="btn" id="dupFechar"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>Fechar</div></div>'
             + '<div class="mbody" style="padding-bottom:0">'
             + '<div class="btn" id="dupBtnTodas" style="margin-bottom:10px;width:100%;justify-content:center">'+txtManterTodas+'</div>'
             + '</div>'
@@ -6646,7 +6646,7 @@ const abrirEditorProibidos=()=>{
     if (document.getElementById("ovProib")) return;
     const bg=document.createElement("div"); bg.className="ov"; bg.id="ovProib"; bg.setAttribute("aria-hidden","false");
     const _prRemoto = !!(window.__APARELHO__ && window.__APARELHO__.servidor === false);
-    bg.innerHTML='<div class="modal" role="dialog" aria-modal="true"><div class="mhead"><div><div class="mtitle">Proibidos</div><div class="msub">Um por linha — nome do produto a ocultar. Colou separado por vírgula, ponto e vírgula, tabulação ou em lista? O formato é ajustado sozinho. '+(_prRemoto?'Vale só para este aparelho.':'Salvo no servidor (config.json) — padrão de todos os aparelhos.')+'</div></div><div class="btn" id="prFechar"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>Fechar</div></div><div class="mbody"><textarea id="prTa" spellcheck="false" style="width:100%;height:260px;resize:vertical;border-radius:14px;border:1px solid var(--field-border);background:var(--field-bg);/*color:#e6eaf2;*/padding:12px;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,&quot;Liberation Mono&quot;,&quot;Courier New&quot;,monospace;font-size:12px;outline:none"></textarea><div id="prCont" aria-live="polite" style="font-size:12px;color:var(--text-muted);min-height:18px;padding:4px 2px 0;line-height:1.4"></div>'+(_prRemoto?_BTN_IMPORTAR_PR("prImportar","prJuntar"):'')+'<div id="prMsg" style="font-size:12px;color:var(--text-muted);min-height:18px;padding:4px 0"></div><div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap"><div class="btn" id="prCancelar"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.42"/></svg>Restaurar padrão</div><div class="btn" id="prSalvar"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>Salvar</div></div></div></div>';
+    bg.innerHTML='<div class="modal" role="dialog" aria-modal="true"><div class="mhead"><div><div class="mtitle">Proibidos</div><div class="msub">Um por linha — nome do produto a ocultar. Colou separado por vírgula, ponto e vírgula, tabulação ou em lista? O formato é ajustado automaticamente. '+(_prRemoto?'Vale somente para este aparelho.':'Salvo no servidor (config.json) — padrão de todos os aparelhos.')+'</div></div><div class="btn" id="prFechar"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>Fechar</div></div><div class="mbody"><textarea id="prTa" spellcheck="false" style="width:100%;height:260px;resize:vertical;border-radius:14px;border:1px solid var(--field-border);background:var(--field-bg);/*color:#e6eaf2;*/padding:12px;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,&quot;Liberation Mono&quot;,&quot;Courier New&quot;,monospace;font-size:12px;outline:none"></textarea><div id="prCont" aria-live="polite" style="font-size:12px;color:var(--text-muted);min-height:18px;padding:4px 2px 0;line-height:1.4"></div>'+(_prRemoto?_BTN_IMPORTAR_PR("prImportar","prJuntar"):'')+'<div id="prMsg" style="font-size:12px;color:var(--text-muted);min-height:18px;padding:4px 0"></div><div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap"><div class="btn" id="prCancelar"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.42"/></svg>Restaurar padrão</div><div class="btn" id="prSalvar"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>Salvar</div></div></div></div>';
     document.body.appendChild(bg);
     // Fix de transição: className precisa entrar no DOM SEM "on" e ganhar a
     // classe depois (com reflow forçado no meio) — se "on" já vier junto no
@@ -6906,7 +6906,7 @@ const mb3=qs("#mbMais");if(mb3)mb3.addEventListener("click",abrirAcoes);
             if (el) return { dados: JSON.parse(el.textContent || "{}"), doc };
             await new Promise(res => setTimeout(res, 700));   // ainda gerando ("Gerando relatório...")
         }
-        throw new Error("o relatório novo não ficou pronto a tempo");
+        throw new Error("o novo relatório não foi concluído a tempo");
     };
     const aplicar = (novo, doc) => {
         _prepararDados(novo);
@@ -7201,7 +7201,7 @@ var __abrirModalQr = function() {
             '<div class="qrCaixa"><img id="qrImg" alt="QR code do endereço do relatório" src="/qr.svg?t=' + Date.now() + '"></div>' +
             '<div class="qrUrl" id="qrUrl">…</div>' +
             '<button class="btn" id="qrCopiar" type="button" style="width:100%;justify-content:center;min-height:42px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copiar endereço</button>' +
-            '<div class="qrDica" id="qrDica">O celular precisa estar no <b>mesmo Wi-Fi</b> desta máquina. Também dá para digitar o endereço no navegador do celular.</div>' +
+            '<div class="qrDica" id="qrDica">O celular precisa estar no <b>mesmo Wi-Fi</b> desta máquina. Também é possível digitar o endereço no navegador do celular.</div>' +
           '</div>' +
         '</div>';
     document.body.appendChild(_bg);
@@ -7217,9 +7217,9 @@ var __abrirModalQr = function() {
         var cx = _img.parentNode; if (cx) cx.innerHTML = '<div class="qrDica" style="padding:90px 10px">Não foi possível gerar o QR code — o servidor está ligado?</div>';
     });
     var _qrDados = { url: location.origin + "/", externo: null, externoNome: null, externoIP: null };
-    var _DICA_LOJA = 'O celular precisa estar no <b>mesmo Wi-Fi</b> desta máquina. Também dá para digitar o endereço no navegador do celular.';
+    var _DICA_LOJA = 'O celular precisa estar no <b>mesmo Wi-Fi</b> desta máquina. Também é possível digitar o endereço no navegador do celular.';
     var _DICA_FORA = 'Funciona em qualquer lugar (4G, outro Wi-Fi) com o app <b>Tailscale</b> ligado no celular, na <b>mesma conta</b> desta máquina. Rede privada e criptografada — só os seus aparelhos entram.';
-    var _DICA_SEM_TS = '<b>Para acessar fora da loja:</b><br>1. Instale o <b>Tailscale</b> nesta máquina (tailscale.com/download) e entre com uma conta.<br>2. Instale o app <b>Tailscale</b> no celular e entre com a <b>mesma conta</b>.<br>3. Abra esta janela de novo: aparece o QR code para usar em qualquer lugar.<br>Grátis, criptografado e sem abrir porta no roteador.';
+    var _DICA_SEM_TS = '<b>Para acessar fora da loja:</b><br>1. Instale o <b>Tailscale</b> nesta máquina (tailscale.com/download) e entre com uma conta.<br>2. Instale o app <b>Tailscale</b> no celular e entre com a <b>mesma conta</b>.<br>3. Abra esta janela novamente: o QR code para acesso de qualquer lugar será exibido.<br>Grátis, criptografado e sem abrir porta no roteador.';
     var _abaQr = "loja";
     var _mostrarAba = function(aba) {
         _abaQr = aba;
@@ -7232,7 +7232,7 @@ var __abrirModalQr = function() {
         if (end) _img.src = "/qr.svg?" + (fora ? "externo=1&" : "") + "t=" + Date.now();
         if (d) d.innerHTML = fora
             ? (end ? _DICA_FORA + (_qrDados.externoNome
-                ? '<br><br>Endereço <b>fixo</b> (nome do Tailscale — não muda sozinho). Também funciona pelo IP: <b>' + esc(String(_qrDados.externoIP || "")) + '</b>'
+                ? '<br><br>Endereço <b>fixo</b> (nome do Tailscale — não se altera). Também funciona pelo IP: <b>' + esc(String(_qrDados.externoIP || "")) + '</b>'
                 : '<br><br>Dica: ative o <b>MagicDNS</b> no painel do Tailscale para usar um nome fixo no lugar do IP.') : _DICA_SEM_TS)
             : _DICA_LOJA;
     };
@@ -8092,7 +8092,7 @@ const abrirAutoTeste = (todos, verificacoes) => {
         ? '<div style="padding:16px;opacity:.75;font-size:13px">Nenhum problema encontrado nesta geração.</div>'
         : itens.map(linha).join("");
     bg.innerHTML = '<div class="modal" role="dialog" aria-modal="true"><div class="mhead"><div><div class="mtitle">Auto-teste</div>'
-        + '<div class="msub">' + esc(verificacoes) + ' verificações no servidor + conferência da tela. Roda sozinho a cada atualização.</div></div>'
+        + '<div class="msub">' + esc(verificacoes) + ' verificações no servidor + conferência da tela. Executada automaticamente a cada atualização.</div></div>'
         + '<div class="btn" id="autoFechar"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>Fechar</div></div>'
         + '<div class="mbody" style="max-height:60vh;overflow:auto;padding-top:0">' + corpo + '</div></div>';
     bg.querySelector("#autoFechar").addEventListener("click", fechar);

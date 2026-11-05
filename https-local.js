@@ -2,7 +2,7 @@
 
 /**
  * https-local.js
- * @version 1.0.0
+ * @version 1.0.1
  * @author Ruda Gabriel
  * @description Endereço HTTPS do sistema (Relatórios SmallSoft Offline).
  *
@@ -22,7 +22,7 @@
  *
  * Nada aqui toca no banco. Arquivos só na pasta "https" ao lado das cópias.
  *
- * 1.0.0 — primeira versão.
+ * 1.0.1 — Mensagens do log em linguagem formal ("leitura em tempo real pela câmera").
  * Histórico completo das versões: CHANGELOG.md no repositório.
  */
 
@@ -34,7 +34,7 @@ const tls = require("tls");
 const crypto = require("crypto");
 const cp = require("child_process");
 
-const VERSAO = "1.0.0";
+const VERSAO = "1.0.1";
 const DIAS_VALIDADE = 397;          // limite aceito pelos navegadores da Apple
 const RENOVAR_ANTES_DIAS = 30;
 const RENOVAR_TS_MS = 12 * 3600 * 1000;
@@ -218,11 +218,11 @@ function criarHttpsLocal(o) {
         srv.on("error", e => {
             st.ativo = false;
             st.erro = e && e.code === "EADDRINUSE" ? "a porta " + porta + " já está em uso" : String(e && e.message || e);
-            log("HTTPS: não foi possível abrir a porta " + porta + " (" + st.erro + "). O leitor ao vivo no celular fica indisponível; o resto funciona normal.");
+            log("HTTPS: não foi possível abrir a porta " + porta + " (" + st.erro + "). A leitura em tempo real pela câmera do celular fica indisponível; as demais funções operam normalmente.");
         });
         srv.listen(porta, o.bind || "0.0.0.0", () => {
             st.ativo = true; st.erro = "";
-            log("HTTPS (leitor ao vivo no celular): porta " + porta + ".");
+            log("HTTPS (leitura em tempo real pela câmera do celular): porta " + porta + ".");
         });
         st.server = srv;
         atualizarTailscale();

@@ -5,7 +5,7 @@ if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
 
 /**
  * servidor-relatorio.js — Relatórios SmallSoft Offline
- * @version 3.7.3
+ * @version 3.7.4
  * @author Ruda Gabriel
  * @description Servidor HTTP + Firebird de relatórios com SSE, fast-poll e
  *              geração em subprocesso. SOMENTE LEITURA no banco.
@@ -14,8 +14,8 @@ if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
  *              principal em atualização, manutenção ou fora do ar.
  * @changelog
  *   (Histórico completo das versões: CHANGELOG.md no repositório.)
- *   3.7.3 - 2026-11-05 - "Abrir o estoque" (servidor fora do ar) abre sempre a cópia da página
- *     guardada no aparelho — antes, no celular, podia apontar para uma página que não abria.
+ *   3.7.4 - 2026-11-05 - Textos em linguagem formal (avisos de servidor encerrado, página de
+ *     configurações com acentuação correta, mensagens da cópia offline).
  */
 
 
@@ -23,7 +23,7 @@ if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
 // Registrada na linha de início do log para que se saiba, ao investigar
 // qualquer ocorrência, qual versão do servidor estava no ar naquele momento
 // (o gerar-relatorio-html.js já faz o mesmo via SCRIPT_VERSION).
-const SERVER_VERSION = "3.7.3";
+const SERVER_VERSION = "3.7.4";
 
 // ===== Logger Global seguro — flush debounced 300ms =====
 const _fs = require('fs');
@@ -2289,7 +2289,7 @@ var gerarEmBackground=function(inicio,fim,chave,_pollTriggered){
         // rodando): procura de novo e tenta outra vez sozinho, sem página de erro.
         if (e && e.code === "ENOENT" && _tentativa < MAX_TENTATIVAS) {
             _nodeExeCache.ts = 0; _descartarReserva();
-            logTs("Node.js não encontrado ao gerar o relatório (" + label + ") — procurando de novo e tentando outra vez em 3 s (" + _tentativa + "/" + MAX_TENTATIVAS + ").");
+            logTs("Node.js não encontrado ao gerar o relatório (" + label + ") — nova busca e nova tentativa em 3 s (" + _tentativa + "/" + MAX_TENTATIVAS + ").");
             // "matando" (como no retry por tempo esgotado): a tela segue em "gerando..." e
             // gerarEmBackground não é barrado por gerando:true.
             cache[chave] = {html:null, gerando:false, erro:null, qt:0, tot:0, matando:true, tentativa:_tentativa};
@@ -2300,7 +2300,7 @@ var gerarEmBackground=function(inicio,fim,chave,_pollTriggered){
             return;
         }
         cache[chave]={html:null,gerando:false,erro:(e && e.code === "ENOENT")
-            ? "O Node.js não foi encontrado (foi atualizado ou removido com o servidor ligado?). Reinicie o servidor pela bandeja (Reiniciar servidor) ou rode o instalador de novo. Detalhe: " + e.message
+            ? "O Node.js não foi encontrado (foi atualizado ou removido com o servidor ligado?). Reinicie o servidor pela bandeja (Reiniciar servidor) ou execute o instalador novamente. Detalhe: " + e.message
             : "Falha ao iniciar node: "+e.message};
         _gerarTentativas[chave] = 0;
     });
@@ -2465,8 +2465,8 @@ var gerarEmBackground=function(inicio,fim,chave,_pollTriggered){
             ".then(function(d){if(d&&d.ok&&d.url&&String(d.url).indexOf('https://')===0&&String(d.url).length<200)localStorage.setItem('estoqueOffline.https',String(d.url));}).catch(function(){});}catch(_){}" +
             "var _srvAvisoEncerrado=function(reiniciando){_srvAviso(" +
             "reiniciando?'Servidor reiniciando...':'Servidor de relatórios encerrado'," +
-            "reiniciando?'O relatório volta sozinho em alguns segundos.':" +
-            "'Os dados desta tela pararam de ser atualizados. A página recarrega sozinha quando o servidor for iniciado de novo.'," +
+            "reiniciando?'O relatório será restabelecido automaticamente em alguns segundos.':" +
+            "'Os dados desta tela deixaram de ser atualizados. A página será recarregada automaticamente quando o servidor for iniciado novamente.'," +
             "reiniciando?'#b45309':'#b91c1c');};" +
             // Recarregamento automático (v2.17.0): antes, a página guarda rolagem e
             // filtros (window.__antesRecarga, do gerador 3.19.0+) — a nova volta ao mesmo
@@ -2631,7 +2631,7 @@ var gerarEmBackground=function(inicio,fim,chave,_pollTriggered){
             "if(_pollErros<=3)console.log('[srv] poll erro #'+_pollErros+': '+err);" +
             "if(!_srvErroDesde)_srvErroDesde=Date.now();" +
             "if(!_srvFora&&Date.now()-_srvErroDesde>4000)_srvAviso('Sem conexão com o servidor de relatórios'," +
-            "'O servidor pode ter sido encerrado ou a rede caiu. Os dados desta tela pararam de ser atualizados; a página recarrega sozinha quando a conexão voltar.','#b91c1c');" +
+            "'O servidor pode ter sido encerrado ou a conexão de rede foi interrompida. Os dados desta tela deixaram de ser atualizados; a página será recarregada automaticamente quando a conexão for restabelecida.','#b91c1c');" +
             "});};" +
             "setInterval(_poll,"+pollMs+");"
             ) : "") +
@@ -4473,7 +4473,7 @@ var aplicarNovoFdb = function(caminhoBruto, cb) {
     logTs("Banco principal definido: " + (FONTE_ARQUIVO ? "arquivo " + FONTE_ARQUIVO : novoHost + ":" + novoPath) + " — fazendo a cópia offline.", "OFFLINE");
     if (!FONTE_ARQUIVO) setTimeout(function() { _procurarBanco("banco escolhido em outra máquina"); }, 100);
     if (_offline) _offline.atualizarAgora(function() {});
-    cb({ ok: true, msg: "Banco principal salvo. A cópia offline está sendo feita; o relatório abre com ela sozinho." });
+    cb({ ok: true, msg: "Banco principal salvo. A cópia offline está sendo gerada; o relatório passará a utilizá-la automaticamente." });
     return;
     _aplicandoFdb = true;
     logTs("[FDB Manual] Testando conexão em " + novoHost + ":" + novoPath + "...");
@@ -4834,7 +4834,7 @@ var _paginaAguardandoCopia = function() {
         "<div class=\"c\"><h1>" + nome + "</h1><p>Preparando a cópia offline do banco. O relatório lê só a cópia — o banco do caixa não é usado direto.</p>" +
         "<div id=\"et\"><span class=\"sp\"></span><span id=\"tx\">Verificando...</span></div>" +
         "<div id=\"pb\" role=\"progressbar\" aria-valuemin=\"0\" aria-valuemax=\"100\"><div id=\"pbf\"></div></div><p id=\"pbt\"></p><div id=\"er\"></div>" +
-        "<p>Esta página entra no relatório sozinha quando a cópia ficar pronta.</p>" +
+        "<p>Esta página exibirá o relatório automaticamente quando a cópia estiver pronta.</p>" +
         "<button type=\"button\" id=\"at\">Tentar a cópia agora</button><a href=\"/selecionar-fdb\">Escolher o banco ou um backup (.fbk)</a><a href=\"/estoque\">Estoque</a></div>" +
         "<script>(function(){var tx=document.getElementById('tx'),er=document.getElementById('er');" +
         "function v(){fetch('/api/offline',{cache:'no-store'}).then(function(r){return r.json();}).then(function(s){" +
@@ -5470,7 +5470,7 @@ var _prefsAparelhos = Object.create(null);
                                    apelido: _prefsApelido(a.apelido), atualizado: Number(a.atualizado) || 0, prefs: _prefsSanitizar(a.prefs) };
         });
     } catch (e) {
-        logTs("AVISO: preferencias-aparelhos.json inválido (" + e.message + ") — os aparelhos usam o padrão do servidor até alguém salvar de novo.", "CONFIG");
+        logTs("AVISO: preferencias-aparelhos.json inválido (" + e.message + ") — os aparelhos utilizam o padrão do servidor até que as preferências sejam salvas novamente.", "CONFIG");
     }
 })();
 var _prefsGravar = function() {
@@ -6418,7 +6418,7 @@ var server=http.createServer(function(req,res){
             if (/^\/config(?:[?#/]|$)/i.test(v)) return "/";
             return v;
         })();
-        var _voltarRot = /^\/estoque(?:[?#/]|$)/i.test(_voltarCfg) ? "Voltar para o estoque" : "Voltar para o relatorio";
+        var _voltarRot = /^\/estoque(?:[?#/]|$)/i.test(_voltarCfg) ? "Voltar para o estoque" : "Voltar para o relatório";
         var cfgHtml=(function(){
             // Usa _config em memória — sem readFileSync por request de página
             var cc=_config;
@@ -6431,7 +6431,7 @@ var server=http.createServer(function(req,res){
             // XSS FIX (v2.9.0): JSON.stringify não escapa "</script>" — um termo
             // proibido com esse texto executava código nesta página.
             var _pr=_jsonParaScript(Array.isArray(cc.proibidos)?cc.proibidos:[]);
-            return "<!doctype html><html lang=\"pt-br\"><head><meta charset=\"utf-8\">"+htmlFavicon+"<title>Configuracoes</title>"+
+            return "<!doctype html><html lang=\"pt-br\"><head><meta charset=\"utf-8\">"+htmlFavicon+"<title>Configurações</title>"+
             "<script>(function(){try{var t=localStorage.getItem('fdb_theme')||(document.cookie.match(/fdb_theme=([^;]+)/)||[])[1]||'ultra-dark';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();"+SC3+
             "<style>"+
             "*{box-sizing:border-box}"+
@@ -6455,15 +6455,15 @@ var server=http.createServer(function(req,res){
             ".er{background:rgba(248,113,113,.12);color:#f87171;border:1px solid rgba(248,113,113,.25)}"+
             ".sep{border:none;border-top:1px solid rgba(255,255,255,.07);margin:12px 0}"+
             "</style></head><body><div class=\"box\">"+
-            "<h2>Configuracoes</h2><p class=\"sub\">Apenas campos editaveis pelo painel. Outras opcoes: edite config.json diretamente.</p>"+
+            "<h2>Configurações</h2><p class=\"sub\">Apenas campos editáveis pelo painel. Outras opções: edite config.json diretamente.</p>"+
             "<div id=\"msg\"></div>"+
-            "<div class=\"field\"><label>Nome do sistema (appName)</label><input type=\"text\" id=\"appName\" value=\""+_pn+"\"><p class=\"hint\">Exibido no titulo da pagina e no icone da bandeja.</p></div>"+
+            "<div class=\"field\"><label>Nome do sistema (appName)</label><input type=\"text\" id=\"appName\" value=\""+_pn+"\"><p class=\"hint\">Exibido no título da página e no ícone da bandeja.</p></div>"+
             "<div class=\"row\">"+
             "<div class=\"field\"><label>Intervalo de polling (ms)</label><input type=\"number\" id=\"pollInterval\" value=\""+_pi+"\" min=\"100\" max=\"60000\" step=\"50\"><p class=\"hint\">De 100 ms a 60000 ms</p></div>"+
-            "<div class=\"field\"><label>Maximo de linhas de log</label><input type=\"number\" id=\"maxLogLines\" value=\""+_ml+"\" min=\"100\" max=\"100000\" step=\"100\"><p class=\"hint\">De 100 a 100000 linhas</p></div>"+
+            "<div class=\"field\"><label>Máximo de linhas de log</label><input type=\"number\" id=\"maxLogLines\" value=\""+_ml+"\" min=\"100\" max=\"100000\" step=\"100\"><p class=\"hint\">De 100 a 100000 linhas</p></div>"+
             "</div>"+
-            "<div class=\"field\"><label>Janela de correcao de horario (min)</label><input type=\"number\" id=\"janelaHora\" value=\""+_jh+"\" min=\""+JANELA_HORA_MIN_MIN+"\" max=\""+JANELA_HORA_MAX_MIN+"\" step=\"5\"><p class=\"hint\">Vendas gerenciais com hora no futuro ou entre 3 min e este tempo atras passam a usar a hora atual; mais antigas sao ignoradas. Padrao: 180 (3 horas). Minimo "+JANELA_HORA_MIN_MIN+", maximo "+JANELA_HORA_MAX_MIN+".</p></div>"+
-            "<div class=\"field\"><label>Duracao do toast (ms)</label><input type=\"number\" id=\"toastDuration\" value=\""+_td+"\" min=\"500\" max=\"60000\" step=\"500\"><p class=\"hint\">Tempo que a notificacao de mudanca fica visivel. Minimo: 500 ms, maximo: 60 000 ms.</p></div>"+
+            "<div class=\"field\"><label>Janela de correção de horário (min)</label><input type=\"number\" id=\"janelaHora\" value=\""+_jh+"\" min=\""+JANELA_HORA_MIN_MIN+"\" max=\""+JANELA_HORA_MAX_MIN+"\" step=\"5\"><p class=\"hint\">Vendas gerenciais com hora no futuro ou entre 3 min e este tempo atrás passam a usar a hora atual; mais antigas são ignoradas. Padrão: 180 (3 horas). Mínimo "+JANELA_HORA_MIN_MIN+", máximo "+JANELA_HORA_MAX_MIN+".</p></div>"+
+            "<div class=\"field\"><label>Duração do toast (ms)</label><input type=\"number\" id=\"toastDuration\" value=\""+_td+"\" min=\"500\" max=\"60000\" step=\"500\"><p class=\"hint\">Tempo que a notificação de mudança fica visível. Mínimo: 500 ms, máximo: 60 000 ms.</p></div>"+
             "<div class=\"field\">"+
               "<label>Ícone (favicon)</label>"+
               "<div style=\"display:flex;gap:2px;align-items:center;flex-wrap:wrap\">"+
@@ -6471,13 +6471,13 @@ var server=http.createServer(function(req,res){
                 "<button class=\"btn btn-sec\" type=\"button\" id=\"favPick\" style=\"white-space:nowrap;height:38px;padding:0 14px\" title=\"Selecionar arquivo do computador\">" + SVG_FOLDER + "Procurar</button>"+
                 "<input type=\"file\" id=\"favFile\" accept=\".png,.ico,.jpg,.jpeg\" style=\"display:none\">"+
               "</div>"+
-              "<p class=\"hint\" id=\"favHint\">"+(_fv?"Atual: "+_fv:"Usando favicon.png padrao na mesma pasta dos arquivos")+"</p>"+
+              "<p class=\"hint\" id=\"favHint\">"+(_fv?"Atual: "+_fv:"Usando favicon.png padrão na mesma pasta dos arquivos")+"</p>"+
             "</div>"+
             "<hr class=\"sep\">"+
             "<div class=\"field\"><label>Proibidos (um por linha)</label>"+
             "<textarea id=\"proibidos\" placeholder=\"Nome1\nNome2\nProduto A\"></textarea>"+
-            "<p class=\"hint\">Vendas com esses termos serao ocultadas do relatorio.</p></div>"+
-            "<button class=\"btn\" id=\"salvarBtn\" onclick=\"salvar()\">Salvar configuracoes</button>"+
+            "<p class=\"hint\">Vendas com esses termos serão ocultadas do relatório.</p></div>"+
+            "<button class=\"btn\" id=\"salvarBtn\" onclick=\"salvar()\">Salvar configurações</button>"+
             "<button class=\"btn btn-sec\" style=\"margin-top:10px\" id=\"voltarBtn\" data-voltar=\""+escH(_voltarCfg)+"\" onclick=\"window.location.href=this.getAttribute('data-voltar')||'/'\">"+_voltarRot+"</button>"+
             "</div>"+
             "<script>"+
@@ -6490,7 +6490,7 @@ var server=http.createServer(function(req,res){
             "var f=_fi.files&&_fi.files[0];"+
             "if(!f)return;"+
             "var h=document.getElementById('favHint');"+
-            "if(h)h.textContent='Arquivo selecionado: '+f.name+' ('+Math.round(f.size/1024)+' KB) — sera enviado ao salvar.';"+
+            "if(h)h.textContent='Arquivo selecionado: '+f.name+' ('+Math.round(f.size/1024)+' KB) — será enviado ao salvar.';"+
             "document.getElementById('favicon').value='';"+
             "});"+
             "})();"+
@@ -6506,24 +6506,24 @@ var server=http.createServer(function(req,res){
             "var praw=document.getElementById('proibidos').value;"+
             "var pr=praw.split('\\n').map(function(s){return s.trim();}).filter(function(s){return s.length>0;});"+
             "var favFile=document.getElementById('favFile').files&&document.getElementById('favFile').files[0];"+
-            "if(!an){showMsg('O nome do sistema nao pode estar vazio.','er');btn.disabled=false;btn.textContent='Salvar configuracoes';return;}"+
+            "if(!an){showMsg('O nome do sistema não pode estar vazio.','er');btn.disabled=false;btn.textContent='Salvar configurações';return;}"+
             // BUG FIX (v2.20.0): exigia 200 ms, mas o servidor aceita a partir de POLL_INTERVAL_MIN
             // (100) e a própria página diz "De 100 ms" — salvar 100 dava "Intervalo mínimo é 200 ms".
-            "if(!(pi>="+POLL_INTERVAL_MIN+"&&pi<="+POLL_INTERVAL_MAX+")){showMsg('Intervalo deve ficar entre "+POLL_INTERVAL_MIN+" e "+POLL_INTERVAL_MAX+" ms.','er');btn.disabled=false;btn.textContent='Salvar configuracoes';return;}"+
-            "if(ml<100){showMsg('Maximo de linhas minimo e 100.','er');btn.disabled=false;btn.textContent='Salvar configuracoes';return;}"+
-            "if(td<500||td>60000){showMsg('Duracao do toast deve estar entre 500 e 60 000 ms.','er');btn.disabled=false;btn.textContent='Salvar configuracoes';return;}"+
-            "if(!(jh>="+JANELA_HORA_MIN_MIN+"&&jh<="+JANELA_HORA_MAX_MIN+")){showMsg('Janela de correcao de horario deve ficar entre "+JANELA_HORA_MIN_MIN+" e "+JANELA_HORA_MAX_MIN+" minutos.','er');btn.disabled=false;btn.textContent='Salvar configuracoes';return;}"+
+            "if(!(pi>="+POLL_INTERVAL_MIN+"&&pi<="+POLL_INTERVAL_MAX+")){showMsg('Intervalo deve ficar entre "+POLL_INTERVAL_MIN+" e "+POLL_INTERVAL_MAX+" ms.','er');btn.disabled=false;btn.textContent='Salvar configurações';return;}"+
+            "if(ml<100){showMsg('O máximo de linhas deve ser de, no mínimo, 100.','er');btn.disabled=false;btn.textContent='Salvar configurações';return;}"+
+            "if(td<500||td>60000){showMsg('Duração do toast deve estar entre 500 e 60 000 ms.','er');btn.disabled=false;btn.textContent='Salvar configurações';return;}"+
+            "if(!(jh>="+JANELA_HORA_MIN_MIN+"&&jh<="+JANELA_HORA_MAX_MIN+")){showMsg('Janela de correção de horário deve ficar entre "+JANELA_HORA_MIN_MIN+" e "+JANELA_HORA_MAX_MIN+" minutos.','er');btn.disabled=false;btn.textContent='Salvar configurações';return;}"+
             "var doSave=function(){"+
             "fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},"+
             "body:JSON.stringify({appName:an,pollInterval:pi,maxLogLines:ml,toastDuration:td,janelaCorrecaoHoraMin:jh,favicon:fv,proibidos:pr})})"+
             ".then(function(r){return r.json();})"+
             ".then(function(d){"+
-            "if(d.ok&&d.escopo==='aparelho'){showMsg('Salvo so para este aparelho (duracao dos avisos e proibidos).'+(d.ignorados&&d.ignorados.length?' Nome, intervalo, log, janela e icone so podem ser alterados no computador do servidor.':''),'ok');}"+
-            "else if(d.ok){showMsg('Configuracoes salvas com sucesso! O relatorio sera atualizado.','ok');}"+
+            "if(d.ok&&d.escopo==='aparelho'){showMsg('Salvo somente para este aparelho (duração dos avisos e proibidos).'+(d.ignorados&&d.ignorados.length?' Nome, intervalo, log, janela e ícone só podem ser alterados no computador do servidor.':''),'ok');}"+
+            "else if(d.ok){showMsg('Configurações salvas com sucesso! O relatório será atualizado.','ok');}"+
             "else{showMsg('Erro: '+(d.erro||'Falha desconhecida'),'er');}"+
-            "btn.disabled=false;btn.textContent='Salvar configuracoes';"+
+            "btn.disabled=false;btn.textContent='Salvar configurações';"+
             "})"+
-            ".catch(function(e){showMsg('Erro de rede: '+e.message,'er');btn.disabled=false;btn.textContent='Salvar configuracoes';});"+
+            ".catch(function(e){showMsg('Erro de rede: '+e.message,'er');btn.disabled=false;btn.textContent='Salvar configurações';});"+
             "};"+
             "if(favFile){"+
             "var reader=new FileReader();"+
@@ -6534,7 +6534,7 @@ var server=http.createServer(function(req,res){
             "if(d.ok){fv='';var h=document.getElementById('favHint');if(h)h.textContent='Favicon atualizado com sucesso!';}"+
             "else{showMsg('Aviso favicon: '+(d.erro||'Falha no upload'),'er');}"+
             "doSave();"+
-            "}).catch(function(){showMsg('Aviso: falha no upload do favicon — salvando demais configuracoes.','er');doSave();});"+
+            "}).catch(function(){showMsg('Aviso: falha no upload do favicon — salvando demais configurações.','er');doSave();});"+
             "};"+
             "reader.readAsArrayBuffer(favFile);"+
             "}else{doSave();}"+
@@ -7149,7 +7149,7 @@ var server=http.createServer(function(req,res){
             var _gerandoPeriodos=Object.keys(cache).filter(function(k){return k.indexOf("|")>0&&cache[k]&&cache[k].gerando;}).length;
             if(_gerandoPeriodos>=_MAX_PERIODOS_SIMULTANEOS){
                 res.writeHead(503,{"Content-Type":"text/html; charset=utf-8","Retry-After":"5"});
-                res.end(paginaErro("Muitos relatórios de período sendo gerados agora","Aguarde alguns segundos e tente de novo.",urlDest));
+                res.end(paginaErro("Muitos relatórios de período sendo gerados agora","Aguarde alguns segundos e tente novamente.",urlDest));
                 return;
             }
             gerarEmBackground(inicio,fim,chave);ep=cache[chave];

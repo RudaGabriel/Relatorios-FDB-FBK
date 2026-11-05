@@ -1,7 +1,7 @@
 @echo off
 setlocal enabledelayedexpansion
 :: =========================================================
-::  remover-inicializacao.bat                          v1.0.0
+::  remover-inicializacao.bat                          v1.0.1
 ::  Autor: Ruda Gabriel
 ::  Desfaz o instalar-na-inicializacao.bat: remove TUDO o que
 ::  faz o relatorio iniciar sozinho no logon (tarefa agendada,
@@ -18,7 +18,7 @@ setlocal enabledelayedexpansion
 ::  Codigo de saida: 0 = tudo removido, 1 = sobrou pendencia.
 ::
 ::  (Historico completo das versoes: CHANGELOG.md no repositorio.)
-::  CHANGELOG 1.0.0 - 2026-10-06 10:00 - Primeira versao.
+::  CHANGELOG 1.0.1 - 2026-11-05 - Mensagem em linguagem formal ("automaticamente").
 ::   Mantem CRLF e somente ASCII - edite com editor que
 ::   preserve CRLF.
 :: =========================================================
@@ -52,7 +52,7 @@ echo =======================================================
 echo   Remover inicializacao automatica do relatorio
 echo =======================================================
 echo.
-echo Sera removido tudo o que inicia o relatorio sozinho
+echo Sera removido tudo o que inicia o relatorio automaticamente
 echo ao ligar/entrar no Windows:
 echo   - tarefa agendada
 echo   - atalho na pasta Inicializar e chave Run do registro
