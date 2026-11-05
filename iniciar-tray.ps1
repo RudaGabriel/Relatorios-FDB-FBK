@@ -3,12 +3,12 @@
 # Instancia unica via mutex global.
 # Abrir Relatorio: se ja tem aba aberta (SSE), foca ela. Se nao, abre browser.
 #
-# @version 1.7.5
+# @version 1.7.6
 # @author Ruda Gabriel
 # @changelog
 #   (Historico completo das versoes: CHANGELOG.md no repositorio.)
-#   1.7.5 - 2026-11-05 - "Sair": o aviso "servidor encerrado" vira notificacao do Windows (sem
-#     janela com OK); o icone fica alguns segundos para a notificacao aparecer e some sozinho.
+#   1.7.6 - 2026-11-05 - Copia offline do banco > "Cancelar a copia em andamento" (pede
+#     confirmacao; a copia em uso continua valendo).
 
 param([switch]$Inicializacao)
 
@@ -1039,6 +1039,7 @@ $ICONES = @{
     ferramentas = 'p:M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z'
     reiniciar   = 'p:M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8;p:M3 3v5h5'
     sair        = 'p:M12 2v10;p:M18.4 6.6a9 9 0 1 1-12.77.04'
+    cancelar    = 'c:12,12,10;p:M15 9 9 15;p:M9 9 15 15'
     servidor    = 'r:2,2,20,8,2;r:2,14,20,8,2;p:M6 6h.01;p:M6 18h.01'
     estoque     = 'p:M21 8l-9-5-9 5 9 5 9-5z;p:M3 8v8l9 5 9-5V8;p:M12 13v8'
     copia       = 'e:12,5,9,3;p:M3 5v6a9 3 0 0 0 9 3;p:M3 11v6a9 3 0 0 0 9 3;p:M21 5v4;p:M17 14v8;p:m14 19 3 3 3-3'
@@ -1418,6 +1419,21 @@ $subCopia.DropDownItems.Add((New-ItemMenu "Atualizar a c\u00f3pia agora" "atuali
     $r = Invoke-Api "/api/offline/atualizar" "POST" -Timeout 5
     if ($null -eq $r) { Show-Balao "$APP_NAME" ((L "N\u00e3o foi poss\u00edvel pedir a c\u00f3pia: ") + $script:ultimoErroApi) "Warning"; return }
     $txt = if ($r.msg) { [string]$r.msg } elseif ($r.erro) { [string]$r.erro } else { L "C\u00f3pia solicitada." }
+    Show-Balao "$APP_NAME" $txt $(if ($r.ok) { "Info" } else { "Warning" })
+})) | Out-Null
+$subCopia.DropDownItems.Add((New-ItemMenu "Cancelar a c\u00f3pia em andamento" "cancelar" "#DC2626" {
+    $o = Invoke-Api "/api/offline" -Timeout 3
+    if ($null -eq $o) { Show-Balao "$APP_NAME" ((L "O servidor n\u00e3o respondeu: ") + $script:ultimoErroApi) "Warning"; return }
+    if (-not $o.emAndamento) { Show-Balao "$APP_NAME" (L "N\u00e3o h\u00e1 c\u00f3pia em andamento para cancelar.") "Info"; return }
+    if ($o.cancelando) { Show-Balao "$APP_NAME" (L "A c\u00f3pia j\u00e1 est\u00e1 sendo cancelada.") "Info"; return }
+    $pct = if ($o.progresso -and $null -ne $o.progresso.pct) { " (" + [int]$o.progresso.pct + "%)" } else { "" }
+    $msg = (L "Cancelar a c\u00f3pia em andamento") + $pct + "?`n`n" + $(if ($o.copia) { L "O relat\u00f3rio continua com a c\u00f3pia atual." } else { L "Ainda n\u00e3o h\u00e1 c\u00f3pia: o relat\u00f3rio s\u00f3 abre depois que uma c\u00f3pia ficar pronta." }) + " " + (L "A pr\u00f3xima c\u00f3pia autom\u00e1tica fica para mais tarde.")
+    $resp = [System.Windows.Forms.DialogResult]::No
+    try { $resp = [System.Windows.Forms.MessageBox]::Show($msg, "$APP_NAME", [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Question, [System.Windows.Forms.MessageBoxDefaultButton]::Button2) } catch {}
+    if ($resp -ne [System.Windows.Forms.DialogResult]::Yes) { return }
+    $r = Invoke-Api "/api/offline/cancelar" "POST" -Timeout 5
+    if ($null -eq $r) { Show-Balao "$APP_NAME" ((L "N\u00e3o foi poss\u00edvel cancelar: ") + $script:ultimoErroApi) "Warning"; return }
+    $txt = if ($r.msg) { [string]$r.msg } elseif ($r.erro) { [string]$r.erro } else { L "Cancelamento solicitado." }
     Show-Balao "$APP_NAME" $txt $(if ($r.ok) { "Info" } else { "Warning" })
 })) | Out-Null
 $subCopia.DropDownItems.Add((New-ItemMenu "Situa\u00e7\u00e3o da c\u00f3pia..." "info" "#0D9488" {

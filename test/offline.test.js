@@ -518,6 +518,11 @@ test("servidor: espera a cópia sem tocar no banco principal, depois lê só a c
         assert.ok(gb.some(c => c.args.includes("-b")), "o gbak não rodou");
         gb.forEach(c => assert.ok(!c.args.some(x => x.endsWith("SMALL.FDB") || x.endsWith("OUTRO.FDB")), "o gbak recebeu o banco principal: " + c.args.join(" ")));
         assert.strictEqual((await json("/api/offline")).metodo, "auto");
+        // Cancelar: só POST; sem cópia em andamento responde 409 com o motivo.
+        assert.strictEqual((await fetch(base + "/api/offline/cancelar")).status, 405);
+        const cc = await fetch(base + "/api/offline/cancelar", { method: "POST" });
+        const ccj = await cc.json();
+        assert.ok(cc.status === 409 ? ccj.ok === false && /andamento/.test(ccj.erro) : ccj.ok === true, "resposta inesperada do cancelamento: " + cc.status + " " + JSON.stringify(ccj));
     } finally {
         try { proc.kill(); } catch (_) {}
         await p3050.fechar();
@@ -543,4 +548,43 @@ test("cópia offline: banco numa rede que não responde não trava o servidor (a
         assert.ok(/sem resposta/.test(oc.status().fonteErro || ""), oc.status().fonteErro);
         t.semConexaoNaFonte();
     } finally { clearInterval(relogio); fs.stat = statOriginal; oc.parar(); }
+});
+
+test("cópia offline: o usuário cancela a cópia em andamento — gbak encerrado, temporários apagados, cópia em uso mantida", async () => {
+    const local = await abrirPortaLocal();
+    const t = montar({ porta: local.porta, metodo: "gbak" });
+    const oc = criarCopiaOffline(t.opcoes);
+    try {
+        oc.iniciar();
+        assert.ok(await ate(() => t.trocas.length > 0, 15000), "primeira cópia não saiu");
+        const boa = oc.status().copia.arquivo;
+        // Sem cópia em andamento: nada a cancelar.
+        const r0 = await new Promise(r => oc.cancelar(r));
+        assert.strictEqual(r0.ok, false);
+        // Cópia lenta (gbak demora 30 s): cancela no meio.
+        process.env.MOCK_GBAK_ATRASO_MS = "30000";
+        oc.atualizarAgora();
+        assert.ok(await ate(() => oc.status().emAndamento && /gbak/.test(oc.status().etapa || ""), 15000), "a cópia lenta não começou");
+        await esperar(500);
+        const r1 = await new Promise(r => oc.cancelar(r));
+        assert.strictEqual(r1.ok, true, JSON.stringify(r1));
+        assert.strictEqual(oc.status().cancelando, true);
+        const r2 = await new Promise(r => oc.cancelar(r));
+        assert.ok(r2.ok && r2.jaCancelando, "segundo pedido deveria só confirmar");
+        assert.ok(await ate(() => !oc.status().emAndamento, 10000), "a cópia não parou depois do cancelamento");
+        const st = oc.status();
+        assert.match(st.ultimoErro || "", /cancelada pelo usuário/);
+        assert.notStrictEqual(st.fonteOk, false, "cancelar não é falha do banco principal");
+        assert.strictEqual(st.copia.arquivo, boa, "perdeu a cópia em uso");
+        assert.strictEqual(t.trocas.length, 1, "trocou de leitura depois de cancelar");
+        assert.ok(st.proximaPermitida - Date.now() > 25 * 60000, "a próxima cópia automática não foi adiada");
+        await esperar(300);
+        assert.deepStrictEqual(fs.readdirSync(t.pasta).filter(n => /\.tmp$/i.test(n)), [], "sobrou temporário");
+        assert.deepStrictEqual(t.copias(), [boa], "cópia parcial ficou na pasta");
+        // "Atualizar agora" continua valendo depois de cancelar.
+        delete process.env.MOCK_GBAK_ATRASO_MS;
+        oc.atualizarAgora();
+        assert.ok(await ate(() => t.trocas.length > 1, 20000), "não fez a cópia pedida depois do cancelamento");
+        t.semConexaoNaFonte();
+    } finally { delete process.env.MOCK_GBAK_ATRASO_MS; oc.parar(); await local.fechar(); }
 });

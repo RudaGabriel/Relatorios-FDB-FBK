@@ -5,7 +5,7 @@ if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
 
 /**
  * servidor-relatorio.js — Relatórios SmallSoft Offline
- * @version 3.7.4
+ * @version 3.7.5
  * @author Ruda Gabriel
  * @description Servidor HTTP + Firebird de relatórios com SSE, fast-poll e
  *              geração em subprocesso. SOMENTE LEITURA no banco.
@@ -14,8 +14,8 @@ if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
  *              principal em atualização, manutenção ou fora do ar.
  * @changelog
  *   (Histórico completo das versões: CHANGELOG.md no repositório.)
- *   3.7.4 - 2026-11-05 - Textos em linguagem formal (avisos de servidor encerrado, página de
- *     configurações com acentuação correta, mensagens da cópia offline).
+ *   3.7.5 - 2026-11-05 - Cancelar a cópia offline em andamento: POST /api/offline/cancelar
+ *     (rede local), botão "Cancelar a cópia" no selo e na tela "Preparando a cópia".
  */
 
 
@@ -23,7 +23,7 @@ if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
 // Registrada na linha de início do log para que se saiba, ao investigar
 // qualquer ocorrência, qual versão do servidor estava no ar naquele momento
 // (o gerar-relatorio-html.js já faz o mesmo via SCRIPT_VERSION).
-const SERVER_VERSION = "3.7.4";
+const SERVER_VERSION = "3.7.5";
 
 // ===== Logger Global seguro — flush debounced 300ms =====
 const _fs = require('fs');
@@ -1131,6 +1131,8 @@ var _offlineCfg = function(c) {
         verificarMs:    (_naFaixa(c.offlineVerificarSeg, 5, 3600) || 20) * 1000,
         maxIdadeMs:     (_naFaixa(c.offlineMaxIdadeMin, 5, 10080) || 180) * 60000,
         timeoutMs:      (_naFaixa(c.offlineTimeoutMin, 1, 360) || 30) * 60000,
+        // Depois de o usuário cancelar uma cópia, a próxima AUTOMÁTICA espera isto (0 = só o intervalo mínimo).
+        adiarAposCancelarMs: (_naFaixa(c.offlineAdiarAposCancelarMin, 0, 1440) === null ? 30 : _naFaixa(c.offlineAdiarAposCancelarMin, 0, 1440)) * 60000,
         periodoMs:      (_naFaixa(c.offlineCopiaACadaMin, 1, 1440) || 5) * 60000,
         metodo:         ["auto", "arquivo", "gbak"].indexOf(String(c.offlineMetodo || "gbak").toLowerCase()) >= 0 ? String(c.offlineMetodo || "gbak").toLowerCase() : "gbak",
         quietoMs:       (_naFaixa(c.offlineQuietoSeg, 0, 600) === null ? 5 : _naFaixa(c.offlineQuietoSeg, 0, 600)) * 1000
@@ -1160,7 +1162,7 @@ if (_FP_COPIA_MS === null) _FP_COPIA_MS = 2000;
             _offline = mod.criarCopiaOffline({
                 appName: APP_NAME, pasta: pasta, gbak: gbak, user: USER, pass: PASS, porta: FIREBIRD_PORT, charset: FB_CHARSET,
                 intervaloMinMs: oc.intervaloMinMs, verificarMs: oc.verificarMs, maxIdadeMs: oc.maxIdadeMs, timeoutMs: oc.timeoutMs,
-                metodo: oc.metodo, quietoMs: oc.quietoMs, periodoMs: oc.periodoMs,
+                metodo: oc.metodo, quietoMs: oc.quietoMs, periodoMs: oc.periodoMs, adiarAposCancelarMs: oc.adiarAposCancelarMs,
                 // O gbak achou o banco num dos endereços candidatos: vira o banco principal.
                 aoServidorEncontrado: function(a) {
                     if (!a || !a.host || !a.path) return;
@@ -4602,7 +4604,7 @@ var _offlineSeloCliente = function() {
             } else if (s.emAndamento) { cls = "av"; txt = "Preparando a cópia offline" + (s.progresso ? " · " + s.progresso.pct + "%" : "..."); }
             else if (!s.disponivel) { cls = "er"; txt = "Cópia offline indisponível"; }
             else { cls = "av"; txt = "Aguardando a cópia offline"; }
-            if (s.emAndamento && (s.copia || s.lendo === "copia")) { txt += " · atualizando" + (s.progresso ? " " + s.progresso.pct + "%" : "..."); cls += " at"; }
+            if (s.emAndamento && (s.copia || s.lendo === "copia")) { txt += s.cancelando ? " · cancelando a cópia..." : " · atualizando" + (s.progresso ? " " + s.progresso.pct + "%" : "..."); cls += " at"; }
             chip.className = cls;
             chip.querySelector(".t").textContent = txt;
             chip.style.display = "";
@@ -4628,7 +4630,11 @@ var _offlineSeloCliente = function() {
             if (s.indisponivel) h += "<div class=\"m\">" + esc(s.indisponivel) + "</div>";
             else if (s.ultimoErro && !s.emAndamento) h += "<div class=\"m\">Última tentativa falhou: " + esc(s.ultimoErro) + "</div>";
             if (msgAcao) h += "<div class=\"m ok\">" + esc(msgAcao) + "</div>";
-            if (s.podeAtualizar) h += "<button type=\"button\" class=\"bt\" id=\"__off_at\"" + (s.emAndamento ? " disabled" : "") + ">" + (s.emAndamento ? "Cópia em andamento..." : "Atualizar cópia agora") + "</button>";
+            if (s.podeAtualizar) {
+                if (!s.emAndamento) h += "<button type=\"button\" class=\"bt\" id=\"__off_at\">Atualizar cópia agora</button>";
+                // v3.7.5: cópia em andamento → pode ser cancelada (a cópia em uso continua valendo).
+                else h += "<button type=\"button\" class=\"bt\" id=\"__off_cc\" style=\"background:#b91c1c\"" + (s.cancelando ? " disabled" : "") + ">" + (s.cancelando ? "Cancelando a cópia..." : "Cancelar a cópia") + "</button>";
+            }
             if (s.podeConfigurar) {
                 h += "<div class=\"cf\"><label for=\"__off_iv\">Intervalo mínimo (min)</label><input id=\"__off_iv\" type=\"number\" min=\"1\" max=\"1440\" value=\"" + esc(s.intervaloMinMin || 5) + "\"></div>" +
                     "<button type=\"button\" class=\"bt\" id=\"__off_sv\" style=\"background:#475569\">Salvar</button>";
@@ -4638,6 +4644,14 @@ var _offlineSeloCliente = function() {
             if (bAt) bAt.onclick = function() {
                 bAt.disabled = true; bAt.textContent = "Pedindo...";
                 fetch("/api/offline/atualizar", { method: "POST", cache: "no-store" }).then(function(r) { return r.json().catch(function() { return {}; }); })
+                    .then(function(r) { msgAcao = r && (r.msg || r.erro) || "Pedido enviado."; buscar(); })
+                    .catch(function() { msgAcao = "Sem resposta do servidor."; buscar(); });
+            };
+            var bCc = document.getElementById("__off_cc");
+            if (bCc) bCc.onclick = function() {
+                if (!window.confirm("Cancelar a cópia em andamento?\n\n" + (s.copia ? "O relatório continua com a cópia atual (dados de " + quando(s.copia.dadosDe) + ")." : "Ainda não há cópia: o relatório só abre depois que uma cópia ficar pronta.") + " A próxima cópia automática fica para mais tarde.")) return;
+                bCc.disabled = true; bCc.textContent = "Cancelando...";
+                fetch("/api/offline/cancelar", { method: "POST", cache: "no-store" }).then(function(r) { return r.json().catch(function() { return {}; }); })
                     .then(function(r) { msgAcao = r && (r.msg || r.erro) || "Pedido enviado."; buscar(); })
                     .catch(function() { msgAcao = "Sem resposta do servidor."; buscar(); });
             };
@@ -4835,17 +4849,19 @@ var _paginaAguardandoCopia = function() {
         "<div id=\"et\"><span class=\"sp\"></span><span id=\"tx\">Verificando...</span></div>" +
         "<div id=\"pb\" role=\"progressbar\" aria-valuemin=\"0\" aria-valuemax=\"100\"><div id=\"pbf\"></div></div><p id=\"pbt\"></p><div id=\"er\"></div>" +
         "<p>Esta página exibirá o relatório automaticamente quando a cópia estiver pronta.</p>" +
-        "<button type=\"button\" id=\"at\">Tentar a cópia agora</button><a href=\"/selecionar-fdb\">Escolher o banco ou um backup (.fbk)</a><a href=\"/estoque\">Estoque</a></div>" +
+        "<button type=\"button\" id=\"at\">Tentar a cópia agora</button><button type=\"button\" id=\"cc\" style=\"display:none;background:#7f1d1d\">Cancelar a cópia</button><a href=\"/selecionar-fdb\">Escolher o banco ou um backup (.fbk)</a><a href=\"/estoque\">Estoque</a></div>" +
         "<script>(function(){var tx=document.getElementById('tx'),er=document.getElementById('er');" +
         "function v(){fetch('/api/offline',{cache:'no-store'}).then(function(r){return r.json();}).then(function(s){" +
         "if(s&&s.lendo==='copia'&&s.copia){location.replace('/');return;}" +
         "var pr=s&&s.emAndamento&&s.progresso,pb=document.getElementById('pb'),pbt=document.getElementById('pbt');" +
         "var du=function(x){x=Math.max(0,Math.round(x||0));return x<60?x+' s':Math.floor(x/60)+' min'+(x%60?' '+(x%60)+' s':'');};" +
-        "tx.textContent=s&&s.emAndamento?('Fazendo a cópia'+(pr?': '+pr.pct+'%':'...')):'Aguardando a próxima tentativa...';" +
+        "tx.textContent=s&&s.emAndamento?(s.cancelando?'Cancelando a cópia...':('Fazendo a cópia'+(pr?': '+pr.pct+'%':'...'))):'Aguardando a próxima tentativa...';" +
+        "var cc=document.getElementById('cc');cc.style.display=s&&s.emAndamento&&s.podeAtualizar?'inline-block':'none';cc.disabled=!!(s&&s.cancelando);" +
         "pb.style.display=pr?'block':'none';pbt.style.display=pr?'block':'none';" +
         "if(pr){document.getElementById('pbf').style.width=pr.pct+'%';pb.setAttribute('aria-valuenow',pr.pct);pbt.textContent=(s.etapa||'')+' · '+du(pr.decorridoS)+(pr.restanteS?' · faltam ~'+du(pr.restanteS):'');}" +
         "var m=s&&(s.indisponivel||s.ultimoErro||s.fonteErro);er.style.display=m?'block':'none';er.textContent=m||'';" +
         "}).catch(function(){tx.textContent='Sem resposta do servidor...';});}" +
+        "document.getElementById('cc').onclick=function(){if(!confirm('Cancelar a cópia em andamento? O relatório só abre depois que uma cópia ficar pronta.'))return;this.disabled=true;fetch('/api/offline/cancelar',{method:'POST'}).then(function(r){return r.json();}).then(function(r){tx.textContent=(r&&(r.msg||r.erro))||'Pedido enviado.';}).catch(function(){});};" +
         "document.getElementById('at').onclick=function(){fetch('/api/offline/atualizar',{method:'POST'}).then(function(r){return r.json();}).then(function(r){tx.textContent=(r&&(r.msg||r.erro))||'Pedido enviado.';}).catch(function(){});};" +
         "v();setInterval(v,3000);})();<\/script></body></html>";
 };
@@ -5907,6 +5923,15 @@ var server=http.createServer(function(req,res){
         if (!_offline) { sendJson({ok:false, erro:"Módulo de cópia offline não carregado."}, 503); return; }
         logTs("Cópia offline pedida por " + _ipDaRequisicao(req) + ".", "OFFLINE");
         _offline.atualizarAgora(function(r) { sendJson(r, r && r.ok ? 200 : 409); });
+        return;
+    }
+    // /api/offline/cancelar — cancela a cópia em andamento (rede local). A cópia em uso continua.
+    if(rota==="/api/offline/cancelar"){
+        if (req.method !== "POST") { sendJson({ok:false, erro:"Use POST."}, 405); return; }
+        if (!_requisicaoDaRedeLocal(req)) { sendJson({ok:false, erro:"Disponível apenas a partir da rede local."}, 403); return; }
+        if (!_offline || typeof _offline.cancelar !== "function") { sendJson({ok:false, erro:"Módulo de cópia offline não carregado."}, 503); return; }
+        logTs("Cancelamento da cópia offline pedido por " + _ipDaRequisicao(req) + ".", "OFFLINE");
+        _offline.cancelar(function(r) { sendJson(r, r && r.ok ? 200 : 409); });
         return;
     }
     // /api/offline/importar — restaura um .fbk como cópia offline (computador do servidor)

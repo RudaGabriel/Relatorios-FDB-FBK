@@ -1,5 +1,17 @@
 # Changelog
 
+## Relatórios SmallSoft Offline 1.8.8 — 2026-11-05
+
+- **Cancelar a cópia offline em andamento.** No selo (*Cancelar a cópia*), na tela *Preparando a cópia* e na bandeja
+  (*Cópia offline do banco → Cancelar a cópia em andamento*), com confirmação. O `gbak`/`gfix` (ou a cópia do arquivo)
+  é encerrado, os temporários são apagados e o relatório **continua com a cópia em uso**. Cancelar não marca o banco
+  principal como indisponível.
+  - A próxima cópia **automática** espera `offlineAdiarAposCancelarMin` (padrão 30 min); *Atualizar a cópia agora*
+    continua fazendo uma nova quando o usuário quiser.
+  - Nova rota `POST /api/offline/cancelar` (rede local); `/api/offline` traz `cancelando`.
+  - Novo teste automático (49 no total).
+- `offline-copia.js` 1.6.0, `servidor-relatorio.js` 3.7.5, `iniciar-tray.ps1` 1.7.6.
+
 ## Relatórios SmallSoft Offline 1.8.7 — 2026-11-05
 
 - **"Sair" da bandeja avisa por notificação**, sem a janela com o botão OK: a notificação do Windows "Servidor

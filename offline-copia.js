@@ -2,7 +2,7 @@
 
 /**
  * offline-copia.js
- * @version 1.5.1
+ * @version 1.6.0
  * @author Ruda Gabriel
  * @description Cópia offline do banco do Small Commerce (Relatórios SmallSoft Offline).
  * @changelog
@@ -70,8 +70,10 @@
  * Este arquivo não depende de nada do servidor: tudo chega por `opcoes`
  * (o que também permite testá-lo isolado, com gbak e Firebird simulados).
  *
- * 1.5.1 — Mensagens do log e da tela em linguagem formal ("nova tentativa em andamento",
- *         "a cópia do arquivo falhou").
+ * 1.6.0 — Cancelar a cópia em andamento (api.cancelar): encerra o gbak/gfix ou a cópia
+ *         do arquivo, apaga os temporários, mantém a cópia em uso e adia a próxima
+ *         cópia automática (offlineAdiarAposCancelarMin, padrão 30 min); "Atualizar
+ *         agora" continua valendo. status.cancelando enquanto encerra.
  * Histórico completo das versões: CHANGELOG.md no repositório.
  */
 
@@ -82,7 +84,7 @@ const cp = require("child_process");
 const { pipeline } = require("stream");
 const net = require("net");
 
-const VERSAO = "1.5.1";
+const VERSAO = "1.6.0";
 const MANIFESTO = "copia-offline.json";
 const PREFIXO = "SMALL_OFFLINE_";
 // Únicos nomes que este módulo cria — e os ÚNICOS que ele apaga.
@@ -239,7 +241,10 @@ function criarCopiaOffline(opcoes) {
         indisponivel: "",      // motivo de a cópia não poder ser feita (sem gbak etc.)
         pendentesApagar: []    // cópias antigas esperando o Firebird soltar o arquivo
     };
+    let adiarAposCancelarMs = _faixa(o.adiarAposCancelarMs, 0, 24 * 3600000, 30 * 60000);
     let timerVerif = null, timerApagar = null, filhoAtual = null, parado = true, geracao = 0;
+    // Cancelamento pedido pelo usuário (1.6.0): quando foi pedido e o que está rodando agora.
+    let cancelPedidoEm = 0, filhoCancelado = null, copiaStreams = null;
 
     // ── Manifesto (gravação atômica) ────────────────────────────────────────
     const gravarManifesto = () => {
@@ -345,6 +350,7 @@ function criarCopiaOffline(opcoes) {
             if (fim) return; fim = true;
             clearTimeout(tmo);
             if (filhoAtual === filho) filhoAtual = null;
+            if (filho && filhoCancelado === filho) { filhoCancelado = null; err = new Error("cancelada"); }
             cb(err, saida);
         };
         const tmo = setTimeout(() => {
@@ -498,6 +504,8 @@ function criarCopiaOffline(opcoes) {
         }
 
         st.emAndamento = true; st.ultimaTentativa = Date.now(); st.ultimoErro = ""; st.progMax = 0;
+        cancelPedidoEm = 0;
+        const minhaGer = geracao; // capturada ANTES da espera: cancelar durante ela também vale
         etapa("verificando o Firebird desta máquina");
         firebirdLocalNoAr((noAr) => {
         if (!noAr) {
@@ -509,7 +517,6 @@ function criarCopiaOffline(opcoes) {
             cb({ ok: false, erro: st.indisponivel });
             return;
         }
-        const minhaGer = geracao;
         const inicio = Date.now();
         const agora = new Date();
         let nome = PREFIXO + _carimbo(agora) + ".FDB", n = 1;
@@ -527,11 +534,24 @@ function criarCopiaOffline(opcoes) {
 
         const falhar = (e, etapaFalha) => {
             st.emAndamento = false; st.etapa = "";
+            copiaStreams = null; filhoCancelado = null;
             apagar(fbkTmp); apagar(tempFdb);
             // O Firebird pode ainda segurar o arquivo: o que não sair agora fica na fila.
             [destinoTmp, destino].forEach(a => {
                 if (!apagar(a)) { const b = path.basename(a); if (st.pendentesApagar.indexOf(b) < 0) { st.pendentesApagar.push(b); gravarManifesto(); clearTimeout(timerApagar); timerApagar = setTimeout(processarPendentes, 30000); if (timerApagar.unref) timerApagar.unref(); } }
             });
+            // Cancelada pelo usuário: não é falha do banco; adia a próxima cópia automática.
+            if (cancelPedidoEm) {
+                const pedido = cancelPedidoEm; cancelPedidoEm = 0;
+                st.ultimoErro = "Cópia cancelada pelo usuário às " + new Date(pedido).toLocaleTimeString("pt-BR") + " (durante: " + etapaFalha + ").";
+                st.pedidoManual = false;
+                st.proximaPermitida = Date.now() + Math.max(intervaloMinMs, adiarAposCancelarMs);
+                log("Cópia offline CANCELADA pelo usuário (" + etapaFalha + "). Temporários apagados; o relatório continua com " +
+                    (st.ativa ? "a cópia de " + new Date(st.ativa.dadosDe).toLocaleString("pt-BR") : "a cópia anterior (ainda não há cópia)") +
+                    ". Próxima cópia automática a partir de " + new Date(st.proximaPermitida).toLocaleTimeString("pt-BR") + ".");
+                cb({ ok: false, cancelada: true, erro: st.ultimoErro });
+                return;
+            }
             const bruto = _txt(e && (e.message || e), 500);
             const amigavel = explicarErro(bruto);
             st.ultimoErro = (amigavel ? amigavel + " " : "") + "[" + etapaFalha + "] " + bruto;
@@ -546,6 +566,7 @@ function criarCopiaOffline(opcoes) {
             cb({ ok: false, erro: st.ultimoErro });
         };
         const cancelado = () => minhaGer !== geracao || parado;
+        if (cancelado()) return falhar(new Error("cancelada"), "início");
 
         let faixaRestauracao = origem.tipo === "fbk" ? 0 : 55;
         let tamFbk = 0;
@@ -651,6 +672,7 @@ function criarCopiaOffline(opcoes) {
                 const dadosDe = Date.now(); // a foto do gbak é tirada no início da transação
                 apagar(fbkTmp);
                 rodarGbak(["-b", "-g", _alvoGbak(alvo.host, porta, alvo.path), fbkTmp], "gbak (backup)", (e1) => {
+                    if (cancelado()) return falhar(new Error("cancelada"), "backup");
                     if (!e1) {
                         metodoUsadoAlvo = alvo;
                         if (k > 0 || alvo.host !== origem.host || alvo.path !== origem.path) {
@@ -683,7 +705,7 @@ function criarCopiaOffline(opcoes) {
         const viaArquivo = () => {
             jaTentouArquivo = true;
             etapa("copiando o arquivo do banco para a pasta temporária (sem conectar)");
-            copiarArquivoConsistente(origem.arquivo, tempFdb, (eC, dadosDe) => {
+            copiarArquivoConsistente(origem.arquivo, tempFdb, cancelado, (eC, dadosDe) => {
                 if (eC) return reservaOuFalha(eC, "cópia do arquivo");
                 if (cancelado()) return reservaOuFalha(new Error("cancelada"), "cópia do arquivo");
                 const converter = () => {
@@ -718,10 +740,10 @@ function criarCopiaOffline(opcoes) {
     // arquivo NÃO mudou do começo ao fim (tamanho e data iguais) — senão a
     // cópia pode misturar páginas de momentos diferentes. Espera o banco ficar
     // sem gravações por `quietoMs` antes de começar e tenta `tentativasArquivo` vezes.
-    const copiarArquivoConsistente = (src, dst, cb) => {
+    const copiarArquivoConsistente = (src, dst, deveParar, cb) => {
         let tentativa = 0, esperas = 0;
         const tentar = () => {
-            if (parado) { cb(new Error("cancelada")); return; }
+            if (parado || deveParar()) { cb(new Error("cancelada")); return; }
             statLimite(src, 15000, (e0, s0) => {
             if (e0) { cb(e0); return; }
             if (!s0.isFile() || s0.size <= 0) { cb(new Error("arquivo do banco vazio ou inválido: " + src)); return; }
@@ -740,7 +762,10 @@ function criarCopiaOffline(opcoes) {
                 leitor = fs.createReadStream(src, { flags: "r", highWaterMark: 1 << 20 }); // só leitura
                 escritor = fs.createWriteStream(dst, { flags: "w" });
             } catch (e) { cb(e); return; }
+            copiaStreams = [leitor, escritor];
             pipeline(leitor, escritor, (e) => {
+                copiaStreams = null;
+                if (deveParar()) { cb(new Error("cancelada")); return; }
                 if (e) { cb(e); return; }
                 try { if (ganchoTeste && typeof ganchoTeste.depoisDeLer === "function") ganchoTeste.depoisDeLer(src, tentativa); } catch (_) {}
                 statLimite(src, 15000, (e2, s1) => {
@@ -749,7 +774,7 @@ function criarCopiaOffline(opcoes) {
                 try { d = fs.statSync(dst); } catch (e3) { cb(e3); return; } // dst: pasta local das cópias
                 const mudou = s1.size !== s0.size || Math.round(s1.mtimeMs) !== Math.round(s0.mtimeMs) || d.size !== s0.size;
                 if (!mudou) { cb(null, inicio); return; }
-                if (tentativa < tentativasArquivo) {
+                if (tentativa < tentativasArquivo && !deveParar()) {
                     log("Cópia offline: o banco foi gravado durante a cópia do arquivo — descartada, nova tentativa em andamento.");
                     const t = setTimeout(tentar, 2000);
                     if (t.unref) t.unref();
@@ -935,6 +960,24 @@ function criarCopiaOffline(opcoes) {
             clearTimeout(timerVerif); clearTimeout(timerApagar);
             if (filhoAtual) { matarFilho(filhoAtual); filhoAtual = null; }
         },
+        /**
+         * Cancela a cópia em andamento (1.6.0). Encerra o gbak/gfix (ou a cópia do
+         * arquivo), apaga os temporários e mantém a cópia em uso. A próxima cópia
+         * automática fica para depois de offlineAdiarAposCancelarMin.
+         */
+        cancelar(cb) {
+            cb = typeof cb === "function" ? cb : () => {};
+            if (!st.emAndamento) { cb({ ok: false, erro: "Não há cópia em andamento para cancelar." }); return; }
+            if (cancelPedidoEm) { cb({ ok: true, jaCancelando: true, msg: "A cópia já está sendo cancelada." }); return; }
+            cancelPedidoEm = Date.now();
+            geracao++;
+            st.pedidoManual = false;
+            log("Cópia offline: cancelamento pedido pelo usuário (etapa: " + (st.etapa || "?") + ").");
+            st.etapa = "cancelando a cópia";
+            if (filhoAtual) { filhoCancelado = filhoAtual; matarFilho(filhoAtual); }
+            if (copiaStreams) copiaStreams.forEach(x => { try { x.destroy(new Error("cancelada")); } catch (_) {} });
+            cb({ ok: true, msg: "Cancelando a cópia em andamento. A cópia em uso continua valendo; a próxima cópia automática fica para mais tarde (\"Atualizar a cópia agora\" faz uma nova quando quiser)." });
+        },
         /** Pede uma cópia já (ignora o intervalo mínimo). */
         atualizarAgora(cb) {
             cb = typeof cb === "function" ? cb : () => {};
@@ -970,6 +1013,7 @@ function criarCopiaOffline(opcoes) {
             if (n.maxIdadeMs !== undefined) maxIdadeMs = _faixa(n.maxIdadeMs, 5 * 60000, 7 * 24 * 3600000, maxIdadeMs);
             if (n.metodo !== undefined && ["auto", "arquivo", "gbak"].indexOf(String(n.metodo)) >= 0 && n.metodo !== metodo) { log("Cópia offline: método \"" + metodo + "\" → \"" + n.metodo + "\"."); metodo = String(n.metodo); }
             if (n.timeoutMs !== undefined) timeoutMs = _faixa(n.timeoutMs, 60000, 6 * 3600000, timeoutMs);
+            if (n.adiarAposCancelarMs !== undefined) adiarAposCancelarMs = _faixa(n.adiarAposCancelarMs, 0, 24 * 3600000, adiarAposCancelarMs);
         },
         status() {
             const agora = Date.now();
@@ -986,6 +1030,7 @@ function criarCopiaOffline(opcoes) {
                 fonte: (() => { const f = fonteAtual(); return f ? { host: f.host, path: f.path, arquivo: f.arquivo } : null; })(),
                 fonteOk: st.fonteOk, fonteErro: st.fonteErro || null, fonteDesde: st.fonteDesde || null,
                 emAndamento: st.emAndamento, etapa: st.etapa || null, etapaDesde: st.etapaDesde || null,
+                cancelando: !!(st.emAndamento && cancelPedidoEm),
                 progresso: progresso(),
                 ultimaTentativa: st.ultimaTentativa || null, ultimoOk: st.ultimoOk || null, ultimoErro: st.ultimoErro || null,
                 proximaPermitida: st.proximaPermitida || null, ultimaVerificacao: st.ultimaVerificacao || null,
