@@ -1,5 +1,12 @@
 # Changelog
 
+## Relatórios SmallSoft Offline 1.9.3 — 2026-11-09
+
+- **X de limpar a busca fora do lugar.** No modo de desempenho **Leve**, a regra geral dos botões anulava a
+  centralização do X dentro do campo de busca: ao passar o mouse ele descia até a borda de baixo (no modo Completo,
+  ao clicar). Agora o X fica sempre centralizado, em qualquer modo e estado.
+- `gerar-relatorio-html.js` 3.26.5.
+
 ## Relatórios SmallSoft Offline 1.9.2 — 2026-11-05
 
 - **Todos os avisos temporários com barrinha de tempo.** Uma barrinha no rodapé do aviso encolhe até ele sumir: no
