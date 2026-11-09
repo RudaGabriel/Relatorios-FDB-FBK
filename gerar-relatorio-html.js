@@ -1,11 +1,11 @@
 /**
  * gerar-relatorio-html.js
- * @version 3.26.4
+ * @version 3.26.5
  * @author Ruda Gabriel
  * @description Gerador de relatório HTML (subprocesso spawnado pelo servidor). SOMENTE LEITURA.
  * @changelog (único, exclusivo desta versão — sem acumular histórico de versões anteriores)
  *   (Histórico completo das versões: CHANGELOG.md no repositório.)
- *   3.26.4 - 2026-11-05 - Textos das janelas (aparência, QR code, duplicatas, proibidos) em linguagem formal.
+ *   3.26.5 - 2026-11-09 - X de limpar a busca sempre centralizado no campo (antes descia até a borda ao passar o mouse no modo Leve ou ao clicar).
  */
 
 (function() {
@@ -13,7 +13,7 @@
     // Embutida no HTML gerado (comentário + atributo data-*) para rastreabilidade:
     // suporte técnico consegue identificar qual versão do script gerou um relatório
     // específico sem precisar abrir o gerar-relatorio-html.js.
-    const SCRIPT_VERSION = "3.26.4";
+    const SCRIPT_VERSION = "3.26.5";
     // Lista-mestra dos temas. id = valor de data-theme no HTML e de "fdb_theme" salvo no navegador;
     // ordem = ordem no menu e no "próximo tema". O CSS de cada id é o bloco [data-theme="id"] do <style>
     // (variáveis) mais, nos temas de estilo, as regras html[data-theme="id"] (forma: cantos, bordas,
@@ -2928,14 +2928,18 @@ html, body { height: 100%; margin: 0; background: var(--bg-app); color: var(--te
 .inputWrap { position: relative; flex: 1 1 160px; display: flex; align-items: center; min-width: min(160px, 100%); }
 .inputWrap .input { padding-right: 36px; }
 .inputWrap #limpar {
-  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  position: absolute; right: 6px; top: 0; bottom: 0; margin: auto 0; transform: none;
   width: 24px; height: 24px; padding: 0; border: none; border-radius: 50%;
   background: transparent; box-shadow: none; font-size: 13px; font-weight: 700;
   color: var(--text-muted); opacity: 0; pointer-events: none;
   transition: opacity 0.15s, color 0.15s, background 0.15s;
   display: flex; align-items: center; justify-content: center;
 }
-.inputWrap #limpar:hover { background: var(--bg-hover); color: var(--text-main); transform: translateY(-50%); box-shadow: none; }
+.inputWrap #limpar:hover { background: var(--bg-hover); color: var(--text-main); box-shadow: none; }
+/* X sempre centralizado no campo: centraliza sem transform (top/bottom 0 + margin auto) e
+   ignora o "transform" geral dos botões (modo Leve: none !important; Completo: scale ao clicar),
+   que antes desciam o X até a borda de baixo ao passar o mouse ou clicar. */
+.inputWrap #limpar, .inputWrap #limpar:hover, .inputWrap #limpar:active, .inputWrap #limpar:focus { transform: none !important; }
 .inputWrap #limpar.visivel { opacity: 1; pointer-events: auto; }
 .radioBusca { display: flex; align-items: center; gap: 6px; background: var(--bg-panel); padding: 4px; border-radius: 99px; border: 1px solid var(--border); }
 .radioBusca .radio { user-select: none; display: inline-flex; align-items: center; padding: 6px 16px; border-radius: 99px; background: transparent; cursor: pointer; transition: var(--transition-fast); margin: 0; }
