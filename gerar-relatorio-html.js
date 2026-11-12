@@ -1,11 +1,11 @@
 /**
  * gerar-relatorio-html.js
- * @version 3.26.5
+ * @version 3.26.6
  * @author Ruda Gabriel
  * @description Gerador de relatório HTML (subprocesso spawnado pelo servidor). SOMENTE LEITURA.
  * @changelog (único, exclusivo desta versão — sem acumular histórico de versões anteriores)
  *   (Histórico completo das versões: CHANGELOG.md no repositório.)
- *   3.26.5 - 2026-11-09 - X de limpar a busca sempre centralizado no campo (antes descia até a borda ao passar o mouse no modo Leve ou ao clicar).
+ *   3.26.6 - 2026-11-12 - Comentários sem referências a outros projetos (projeto autônomo).
  */
 
 (function() {
@@ -13,7 +13,7 @@
     // Embutida no HTML gerado (comentário + atributo data-*) para rastreabilidade:
     // suporte técnico consegue identificar qual versão do script gerou um relatório
     // específico sem precisar abrir o gerar-relatorio-html.js.
-    const SCRIPT_VERSION = "3.26.5";
+    const SCRIPT_VERSION = "3.26.6";
     // Lista-mestra dos temas. id = valor de data-theme no HTML e de "fdb_theme" salvo no navegador;
     // ordem = ordem no menu e no "próximo tema". O CSS de cada id é o bloco [data-theme="id"] do <style>
     // (variáveis) mais, nos temas de estilo, as regras html[data-theme="id"] (forma: cantos, bordas,
@@ -7879,7 +7879,7 @@ const fixHead=()=>{
 // tem altura). Chamado pelo script do servidor (window.__antesRecarga).
 // { limpar: true } (recarga automática com "Recarregar relatório ao detectar mudanças"
 // LIGADO) guarda só o necessário para não piscar — a página volta limpa, como um F5:
-// sem busca, filtro de tipo/vendedor, rolagem nem janelas abertas (igual ao Relatórios FDB 3.28.1).
+// sem busca, filtro de tipo/vendedor, rolagem nem janelas abertas.
 window.__antesRecarga = (opcoes) => {
     try {
         if (opcoes && opcoes.limpar) {

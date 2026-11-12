@@ -5,7 +5,7 @@ if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
 
 /**
  * servidor-relatorio.js — Relatórios SmallSoft Offline
- * @version 3.7.8
+ * @version 3.7.9
  * @author Ruda Gabriel
  * @description Servidor HTTP + Firebird de relatórios com SSE, fast-poll e
  *              geração em subprocesso. SOMENTE LEITURA no banco.
@@ -14,8 +14,7 @@ if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
  *              principal em atualização, manutenção ou fora do ar.
  * @changelog
  *   (Histórico completo das versões: CHANGELOG.md no repositório.)
- *   3.7.8 - 2026-11-05 - Avisos temporarios ("Aviso" da bandeja e correcao de horario) com uma
- *     barrinha que mostra quanto falta para sumirem (como os avisos do relatorio).
+ *   3.7.9 - 2026-11-12 - Comentarios sem referencias a outros projetos (projeto autonomo).
  */
 
 
@@ -23,7 +22,7 @@ if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
 // Registrada na linha de início do log para que se saiba, ao investigar
 // qualquer ocorrência, qual versão do servidor estava no ar naquele momento
 // (o gerar-relatorio-html.js já faz o mesmo via SCRIPT_VERSION).
-const SERVER_VERSION = "3.7.8";
+const SERVER_VERSION = "3.7.9";
 
 // ===== Logger Global seguro — flush debounced 300ms =====
 const _fs = require('fs');
@@ -937,7 +936,7 @@ function logProtegido(msg) {
 var _queryLogsHoje = false;
 
 // ---------------------------------------------------------------------------
-// SVG Icons (Lucide-style, stroke="currentColor") — substituem todos os emojis.
+// Ícones vetoriais (SVG, stroke="currentColor") — substituem todos os emojis.
 // Usados em botões HTML, spans decorativos e innerHTML de elementos de status.
 // ---------------------------------------------------------------------------
 
@@ -1208,7 +1207,7 @@ try {
     });
 } catch (eEst) { logTs("Consulta de estoque indisponível: " + eEst.message, "ESTOQUE"); }
 var _ESTOQUE_HTML = path.join(__dirname, "estoque.html");
-// Leitor de código de barras (do projeto Controle de Vencimento) e suas
+// Leitor de código de barras (leitor/) e suas
 // bibliotecas locais — servidos como arquivos estáticos em /leitor/.
 var _PASTA_LEITOR = path.join(__dirname, "leitor");
 var _TIPOS_LEITOR = { ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".wasm": "application/wasm", ".txt": "text/plain; charset=utf-8" };

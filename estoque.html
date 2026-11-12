@@ -118,7 +118,7 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
 .toast .tb{position:absolute;left:0;bottom:0;height:3px;width:100%;background:linear-gradient(90deg,#3b82f6,#0ea5e9);transform-origin:left;animation:tbar linear forwards}
 @keyframes tbar{to{transform:scaleX(0)}}
 @media print{.top .bt,.fil,.busca,.mais,#__off_chip{display:none!important}}
-/* ===== Leitor de código de barras (visual do Controle de Vencimento) ===== */
+/* ===== Leitor de código de barras ===== */
 .bt-ler{display:inline-flex;align-items:center;gap:6px;border-radius:12px;padding:0 14px}
 .bt-ler svg{flex:none}
 @media (max-width:720px){.bt-ler span{display:none}.bt-ler{padding:0 12px}}
@@ -228,7 +228,7 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
   </div>
 </div>
 <div class="toast" id="toast"></div>
-<!-- Leitor de código de barras (do projeto Controle de Vencimento: leitor/leitor.js) -->
+<!-- Leitor de código de barras (leitor/leitor.js) -->
 <div class="ovL" id="ovLeitor" role="dialog" aria-modal="true" aria-labelledby="tituloLeitor">
   <div class="mdL">
     <header><h2 id="tituloLeitor"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M8 7v10"/><path d="M12 7v10"/><path d="M17 7v10"/></svg>Ler código de barras</h2><button type="button" class="bt" id="btnFecharLeitor" aria-label="Fechar">Fechar</button></header>
@@ -748,7 +748,7 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
 })();
 </script>
 <script type="module">
-/* Leitor de código de barras do projeto Controle de Vencimento (leitor/leitor.js):
+/* Leitor de código de barras (leitor/leitor.js):
    câmera ao vivo quando o navegador permite (página segura: o próprio computador
    ou https); senão, "Tirar foto do código" (abre a câmera do celular e lê da foto). */
 import { criarLeitor } from "/leitor/leitor.js";

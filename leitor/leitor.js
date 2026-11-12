@@ -1,10 +1,10 @@
 /* =========================================================
    Leitor de código de barras
    ---------------------------------------------------------
-   Copiado do projeto Controle de Vencimento (rudagabriel.github.io,
-   leitor.js) para a consulta de estoque do Relatórios SmallSoft
-   Offline. Única mudança: as bibliotecas de leitura vêm do próprio
-   servidor (/leitor/vendor/), não da internet — funciona offline.
+   Consulta de estoque do Relatórios SmallSoft Offline.
+   As bibliotecas de leitura vêm do próprio servidor
+   (/leitor/vendor/), não da internet — funciona offline.
+   Autor: Ruda Gabriel.
    ---------------------------------------------------------
    Funciona em qualquer aparelho, com 3 motores de leitura
    (usa o primeiro que funcionar):

@@ -1,5 +1,5 @@
 # =============================================================================
-# _remover-inicializacao.ps1                                          v1.1.0
+# _remover-inicializacao.ps1                                          v1.1.1
 # Autor: Ruda Gabriel
 # -----------------------------------------------------------------------------
 # Auxiliar do remover-inicializacao.bat (nao precisa ser executado direto).
@@ -34,10 +34,7 @@
 # Codigo de saida: 0 = tudo removido/encerrado, 1 = sobrou algo (listado).
 #
 # (Historico completo das versoes: CHANGELOG.md no repositorio.)
-# CHANGELOG 1.1.0 - 2026-11-05 - Mensagens claras: sem Administrador, o item que
-#   depende dele aparece como "[ADMIN] ... sera removido com permissao de
-#   Administrador" (antes "[FALHA]", mesmo sendo removido logo depois pelo UAC);
-#   a mesma tarefa nao e' mais listada duas vezes (com e sem a barra inicial).
+# CHANGELOG 1.1.1 - 2026-11-12 - Comentarios sem referencias a outros projetos.
 # =============================================================================
 
 param(
@@ -108,9 +105,9 @@ if (-not $APP_NAME) { $APP_NAME = 'Relatorios SmallSoft Offline' }
 # DESTA pasta. Os demais nomes sao exclusivos do sistema.
 $LAUNCHER_RX = [regex]::Escape((Join-Path $PASTA_PROJ 'launcher.vbs'))
 # Linha de comando de processos: casa com arquivos do sistema.
-# Relatorios SmallSoft Offline: os nomes dos arquivos sao os mesmos do sistema
-# "Relatorios FDB" (SSH). Para nunca encerrar/remover o OUTRO sistema instalado
-# na mesma maquina, so' conta o que cita arquivos DESTA pasta.
+# Os nomes dos arquivos sao genericos: outro sistema na mesma maquina pode usar
+# nomes iguais. Para nunca encerrar/remover algo de OUTRA pasta, so' conta o que
+# cita arquivos DESTA pasta.
 $RX_PASTA      = [regex]::Escape($PASTA_PROJ.TrimEnd('\')) + '\\'
 $PADRAO_PROC   = "$RX_PASTA(servidor-relatorio\.js|gerar-relatorio-html\.js|iniciar-tray\.ps1)|RelatoriosOfflineBootstrap|$LAUNCHER_RX"
 # Itens de inicializacao (tarefa, atalho, registro): a cadeia de
