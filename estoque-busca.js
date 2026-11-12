@@ -1,8 +1,8 @@
 /**
  * estoque-busca.js
- * @version 1.0.0
+ * @version 1.0.1
  * @author Ruda Gabriel
- * @description Regras da busca do estoque (Relatórios SmallSoft Offline), num só lugar.
+ * @description Regras da busca do estoque (Relatórios Offline), num só lugar.
  *
  * O MESMO código roda no servidor (estoque-offline.js) e no navegador (estoque.html,
  * quando o servidor está fora do ar e a página usa a cópia salva no aparelho): os
@@ -16,7 +16,7 @@
  *   ativo(i)          true / false / null (sem coluna de situação)
  *   temQtd, temPreco, temAtivo
  *
- * 1.0.0 — primeira versão (extraída do estoque-offline.js 1.1.0, sem mudar as regras).
+ * 1.0.1 — Nome do sistema neutro ("Relatorios Offline"); sem citar o PDV de terceiros.
  * Histórico completo das versões: CHANGELOG.md no repositório.
  */
 (function (raiz, fabrica) {
@@ -24,7 +24,7 @@
     else raiz.EstoqueBusca = fabrica();
 })(typeof self !== "undefined" ? self : this, function () {
     "use strict";
-    var VERSAO = "1.0.0";
+    var VERSAO = "1.0.1";
 
     var semAcento = function (s) { return String(s == null ? "" : s).normalize("NFD").replace(/[̀-ͯ]/g, ""); };
     var normalizar = function (s) { return semAcento(s).toUpperCase().replace(/\s+/g, " ").trim(); };

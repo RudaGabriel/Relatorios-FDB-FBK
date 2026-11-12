@@ -2,11 +2,11 @@
 
 /**
  * estoque-offline.js
- * @version 1.2.1
+ * @version 1.2.2
  * @author Ruda Gabriel
- * @description Consulta de estoque completa (Relatórios SmallSoft Offline).
+ * @description Consulta de estoque completa (Relatórios Offline).
  *
- * Lê TODOS os itens da tabela de produtos do Small Commerce (ESTOQUE) — de
+ * Lê TODOS os itens da tabela de produtos do PDV (ESTOQUE) — de
  * preferência da cópia offline, que não pesa no banco do caixa — e guarda em
  * memória. A busca procura em TODAS as colunas de texto (nome, código, código
  * de barras, referência, fornecedor, grupo, NCM, localização...), sem limite
@@ -19,11 +19,11 @@
  *
  * SOMENTE LEITURA: só SELECT, sempre pelo Firebird blindado do servidor.
  *
- * 1.2.1 — Mensagem "item não encontrado" em linguagem formal ("refaça a pesquisa").
+ * 1.2.2 — Nome do sistema neutro ("Relatorios Offline"); sem citar o PDV de terceiros.
  * Histórico completo das versões: CHANGELOG.md no repositório.
  */
 
-const VERSAO = "1.2.1";
+const VERSAO = "1.2.2";
 const Busca = require("./estoque-busca.js");
 const TABELAS = ["ESTOQUE", "PRODUTOS", "PRODUTO", "CADPRO", "MERCADORIAS"];
 
@@ -65,7 +65,7 @@ function _num(v) {
 }
 
 /**
- * Sentido da coluna de situação: cada sistema usa uma convenção (no Small Commerce,
+ * Sentido da coluna de situação: cada sistema usa uma convenção (no PDV,
  * por exemplo, "0" pode ser ATIVO). Decide pelos dados: numa loja a grande maioria dos
  * itens está ativa — se pela leitura direta quase todos dariam "inativo", inverte.
  */

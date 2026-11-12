@@ -9,11 +9,11 @@ Interface PowerShell para interacao com API do servidor de relatorios.
 - Contem APENAS endpoints implementados no backend atual
 .REQUIREMENTS
 PowerShell 5.1+ ou 7+ | Salvar como UTF-8 sem BOM
-@version 1.8.1
+@version 1.8.2
 @author Ruda Gabriel
 @changelog
   (Historico completo das versoes: CHANGELOG.md no repositorio.)
-  1.8.1 - 2026-11-05 - Mensagens em linguagem formal ("Consulte novamente", "Execute o api.ps1").
+  1.8.2 - 2026-11-12 - Nome do sistema neutro ("Relatorios Offline"); sem citar o PDV de terceiros.
 #>
 [CmdletBinding()]
 param(
@@ -48,7 +48,7 @@ $Config = Get-ConfigSegura -Path $ConfigPath
 # derruba o script se falhar (ex: config.json sem appName) - titulo e so
 # cosmetico, nao pode impedir o uso da ferramenta.
 try {
-    $__appName = if ($Config.appName) { $Config.appName } else { "Relatorios SmallSoft Offline" }
+    $__appName = if ($Config.appName) { $Config.appName } else { "Relatorios Offline" }
     $host.UI.RawUI.WindowTitle = "$__appName - Cliente API"
 } catch {}
 

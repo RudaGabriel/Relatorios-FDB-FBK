@@ -2,14 +2,14 @@
 
 /**
  * offline-copia.js
- * @version 1.6.0
+ * @version 1.6.1
  * @author Ruda Gabriel
- * @description Cópia offline do banco do Small Commerce (Relatórios SmallSoft Offline).
+ * @description Cópia offline do banco do PDV (Relatórios Offline).
  * @changelog
  *   1.4.0 - 2026-10-29 - Progresso da cópia (status.progresso: pct, decorrido, restante) pelo
  *     tamanho dos arquivos que o gbak grava; sem o "1/7" (número do endereço tentado).
  *   1.3.0 - 2026-10-29 - Terminal com banco em unidade de rede: o gbak tenta os endereços
- *     candidatos (servidor da unidade + caminhos padrão do Small) e avisa qual funcionou;
+ *     candidatos (servidor da unidade + caminhos padrão do PDV) e avisa qual funcionou;
  *     último recurso: cópia pelo arquivo. Cópia periódica (a data de um .FDB aberto no
  *     Windows quase não muda). A verificação nunca para; cópia travada é liberada.
  *   1.2.1 - 2026-10-29 - Padrão volta a ser o gbak direto (seguro); cópia pelo arquivo opcional.
@@ -51,7 +51,7 @@
  * só a cópia. No método "auto" o banco principal só é LIDO como arquivo; o
  * gbak conecta nele apenas como reserva (ou sempre, no método "gbak") — nada
  * de consultas de verificação, para não atrapalhar atualização e manutenção
- * do Small Commerce.
+ * do PDV.
  *
  * Quando atualizar a cópia (tudo automático):
  *   - banco principal nesta máquina: a cada `verificarMs` lê só o TAMANHO e a
@@ -70,10 +70,7 @@
  * Este arquivo não depende de nada do servidor: tudo chega por `opcoes`
  * (o que também permite testá-lo isolado, com gbak e Firebird simulados).
  *
- * 1.6.0 — Cancelar a cópia em andamento (api.cancelar): encerra o gbak/gfix ou a cópia
- *         do arquivo, apaga os temporários, mantém a cópia em uso e adia a próxima
- *         cópia automática (offlineAdiarAposCancelarMin, padrão 30 min); "Atualizar
- *         agora" continua valendo. status.cancelando enquanto encerra.
+ * 1.6.1 — Nome do sistema neutro ("Relatorios Offline"); sem citar o PDV de terceiros.
  * Histórico completo das versões: CHANGELOG.md no repositório.
  */
 
@@ -84,7 +81,7 @@ const cp = require("child_process");
 const { pipeline } = require("stream");
 const net = require("net");
 
-const VERSAO = "1.6.0";
+const VERSAO = "1.6.1";
 const MANIFESTO = "copia-offline.json";
 const PREFIXO = "SMALL_OFFLINE_";
 // Únicos nomes que este módulo cria — e os ÚNICOS que ele apaga.
@@ -171,7 +168,7 @@ function pastaPadrao(appName) {
     const base = process.platform === "win32"
         ? (process.env.ProgramData || "C:\\ProgramData")
         : path.join(os.homedir(), ".local", "share");
-    const nome = String(appName || "Relatorios SmallSoft Offline").replace(/[^A-Za-z0-9 _-]+/g, "").trim() || "Relatorios SmallSoft Offline";
+    const nome = String(appName || "Relatorios Offline").replace(/[^A-Za-z0-9 _-]+/g, "").trim() || "Relatorios Offline";
     return path.join(base, nome.replace(/\s+/g, ""), "copias");
 }
 
@@ -364,7 +361,7 @@ function criarCopiaOffline(opcoes) {
                 : cp.spawn(exe, args, { env, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
         } catch (e) { concluir(e); return; }
         filhoAtual = filho;
-        // Prioridade baixa: o caixa (Small Commerce) tem preferência na máquina.
+        // Prioridade baixa: o caixa (PDV) tem preferência na máquina.
         try { if (filho.pid && os.setPriority) os.setPriority(filho.pid, os.constants.priority.PRIORITY_BELOW_NORMAL); } catch (_) {}
         // Mensagens do gbak no Windows vêm na codificação do sistema (Windows-1252), não em
         // UTF-8: sem isto o "não" virava "n�o" no log e na tela.
@@ -420,7 +417,7 @@ function criarCopiaOffline(opcoes) {
                     if (fim) { fechar(db); return; }
                     if (e1) { fim = true; clearTimeout(t); fechar(db); cb(e1); return; }
                     const temNfce = Number(r1 && r1[0] && (r1[0].N !== undefined ? r1[0].N : r1[0].n)) > 0;
-                    if (!temNfce) { fim = true; clearTimeout(t); fechar(db); cb(null, { aviso: "a cópia não tem a tabela NFCE (o banco é mesmo do Small Commerce?)" }); return; }
+                    if (!temNfce) { fim = true; clearTimeout(t); fechar(db); cb(null, { aviso: "a cópia não tem a tabela NFCE (o banco é mesmo do PDV?)" }); return; }
                     db.query("SELECT COUNT(*) AS N FROM NFCE", [], (e2, r2) => {
                         if (fim) { fechar(db); return; }
                         fim = true; clearTimeout(t); fechar(db);
@@ -638,7 +635,7 @@ function criarCopiaOffline(opcoes) {
         };
         // Endereços para o gbak direto, em ordem: o principal (se fizer sentido) e os
         // candidatos achados pela procura (servidor da unidade de rede + caminhos padrão
-        // do Small). "127.0.0.1 + caminho que não existe nesta máquina" é descartado.
+        // do PDV). "127.0.0.1 + caminho que não existe nesta máquina" é descartado.
         const alvosGbak = (() => {
             const lista = [], vistos = new Set();
             const add = (h, pth) => {

@@ -2,9 +2,9 @@
 
 /**
  * https-local.js
- * @version 1.0.1
+ * @version 1.0.2
  * @author Ruda Gabriel
- * @description Endereço HTTPS do sistema (Relatórios SmallSoft Offline).
+ * @description Endereço HTTPS do sistema (Relatórios Offline).
  *
  * POR QUE EXISTE: o navegador do celular só libera a câmera AO VIVO (leitor de
  * código de barras do estoque) em página segura — HTTPS ou localhost. Por
@@ -22,7 +22,7 @@
  *
  * Nada aqui toca no banco. Arquivos só na pasta "https" ao lado das cópias.
  *
- * 1.0.1 — Mensagens do log em linguagem formal ("leitura em tempo real pela câmera").
+ * 1.0.2 — Nome do sistema neutro ("Relatorios Offline"); sem citar o PDV de terceiros.
  * Histórico completo das versões: CHANGELOG.md no repositório.
  */
 
@@ -34,7 +34,7 @@ const tls = require("tls");
 const crypto = require("crypto");
 const cp = require("child_process");
 
-const VERSAO = "1.0.1";
+const VERSAO = "1.0.2";
 const DIAS_VALIDADE = 397;          // limite aceito pelos navegadores da Apple
 const RENOVAR_ANTES_DIAS = 30;
 const RENOVAR_TS_MS = 12 * 3600 * 1000;
@@ -71,7 +71,7 @@ const tempo = d => {
     const corpo = p(d.getUTCMonth() + 1) + p(d.getUTCDate()) + p(d.getUTCHours()) + p(d.getUTCMinutes()) + p(d.getUTCSeconds()) + "Z";
     return y < 2050 ? tlv(0x17, Buffer.from(String(y).slice(2) + corpo)) : tlv(0x18, Buffer.from(y + corpo));
 };
-const nome = cn => seq(set(seq(oid("2.5.4.3"), utf8(cn))), set(seq(oid("2.5.4.10"), utf8("Relatorios SmallSoft Offline"))));
+const nome = cn => seq(set(seq(oid("2.5.4.3"), utf8(cn))), set(seq(oid("2.5.4.10"), utf8("Relatorios Offline"))));
 const ipBytes = ip => {
     if (net4(ip)) return Buffer.from(ip.split(".").map(Number));
     return null;

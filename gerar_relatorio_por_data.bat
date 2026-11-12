@@ -4,7 +4,7 @@ cd /d "%~dp0"
 chcp 65001 >nul 2>&1
 
 :: =========================================================
-::  Relatorio por Data Especifica                    v1.5.0
+::  Relatorio por Data Especifica                    v1.5.1
 ::  Autor: Ruda Gabriel
 ::  - Verifica / instala Node.js automaticamente
 ::  - Verifica / instala modulo node-firebird automaticamente
@@ -12,11 +12,7 @@ chcp 65001 >nul 2>&1
 ::  - Abre relatorio no navegador
 ::
 ::  (Historico completo das versoes: CHANGELOG.md no repositorio.)
-::  CHANGELOG 1.5.0 - 2026-10-05 16:24 - Ano padrao obtido via PowerShell:
-::   "wmic" foi removido do Windows 11 24H2+, e sem ele o ano ficava com
-::   lixo (nao vazio), passando pelo "if not defined". Ano com 2 digitos
-::   (ex: 01/03/26) agora vira 2026, e o ano tambem e' validado (2000-2099)
-::   antes de montar a URL. Mantem CRLF - edite com editor que preserve CRLF.
+::  CHANGELOG 1.5.1 - 2026-11-12 - Nome do sistema neutro ("Relatorios Offline"); sem citar o PDV de terceiros.
 
 call :verificar_node
 if %errorlevel% neq 0 exit /b 1
@@ -81,7 +77,7 @@ exit /b 1
 :: -------------------------------------------------------
 :: Le a porta configurada em config.json (campo "porta").
 :: Le porta e nome do app/loja de config.json (campos "porta" e "appName").
-:: Fallback silencioso para 7735 / "Relatorios SmallSoft Offline". Uma unica chamada
+:: Fallback silencioso para 7735 / "Relatorios Offline". Uma unica chamada
 :: powershell busca os dois valores. !APP_TITULO! (expansao adiada) no
 :: "title" abaixo evita risco de injecao caso o nome da loja contenha
 :: caractere especial de cmd.exe (& | < > ^) - ver comentario completo em
@@ -94,8 +90,8 @@ exit /b 1
 :: usado no restante do arquivo - reduz risco por simplicidade.
 set "PORTA=7735"
 for /f "usebackq delims=" %%P in (`powershell -NoProfile -Command "try{$p=(Get-Content '%~dp0config.json' -Raw -Encoding UTF8 | ConvertFrom-Json).porta; if($p -gt 0){[int]$p}else{7735}}catch{7735}" 2^>nul`) do set "PORTA=%%P"
-set "APP_TITULO=Relatorios SmallSoft Offline"
-for /f "usebackq delims=" %%N in (`powershell -NoProfile -Command "try{$n=(Get-Content '%~dp0config.json' -Raw -Encoding UTF8 | ConvertFrom-Json).appName; if($n){$n}else{'Relatorios SmallSoft Offline'}}catch{'Relatorios SmallSoft Offline'}" 2^>nul`) do set "APP_TITULO=%%N"
+set "APP_TITULO=Relatorios Offline"
+for /f "usebackq delims=" %%N in (`powershell -NoProfile -Command "try{$n=(Get-Content '%~dp0config.json' -Raw -Encoding UTF8 | ConvertFrom-Json).appName; if($n){$n}else{'Relatorios Offline'}}catch{'Relatorios Offline'}" 2^>nul`) do set "APP_TITULO=%%N"
 title !APP_TITULO! - Relatorio por Data
 exit /b 0
 

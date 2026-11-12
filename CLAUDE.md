@@ -4,7 +4,7 @@
 - **Totalmente offline:** o relatório e o estoque leem **só a cópia offline**. O único
   contato com o `SMALL.FDB` principal é o `gbak` (backup em modo leitura, `-g`), na hora
   de copiar. Nada de consultas de verificação no banco principal — não pode atrapalhar
-  atualização nem manutenção do Small Commerce.
+  atualização nem manutenção do PDV.
 - **Somente leitura:** o projeto nunca escreve no Firebird. Só SELECT/WITH, transação
   `readOnly`. Nada de UPDATE/INSERT/DELETE, índices ou mudanças de estrutura.
 - **Cópia à prova de falhas:** a cópia nova só entra depois de pronta e conferida (troca

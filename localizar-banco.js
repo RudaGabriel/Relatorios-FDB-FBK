@@ -2,15 +2,15 @@
 
 /**
  * localizar-banco.js
- * @version 1.2.0
+ * @version 1.2.1
  * @author Ruda Gabriel
- * @description Acha o SMALL.FDB do Small Commerce — nesta máquina ou na rede —
- *              SEM CONECTAR NO BANCO (Relatórios SmallSoft Offline).
+ * @description Acha o SMALL.FDB do PDV — nesta máquina ou na rede —
+ *              SEM CONECTAR NO BANCO (Relatórios Offline).
  *
  * Procura, nesta ordem, e para no primeiro ARQUIVO que existir:
  *   1. o que está no config.json (fdbArquivo, fdbPath);
- *   2. as pastas padrão do Small Commerce nesta máquina;
- *   3. os arquivos de configuração (.ini/.cfg/.conf) da pasta do Small Commerce,
+ *   2. as pastas padrão do PDV nesta máquina;
+ *   3. os arquivos de configuração (.ini/.cfg/.conf) da pasta do PDV,
  *      que dizem onde está o banco ("SERVIDOR:C:\...\SMALL.FDB", "\\servidor\...");
  *   4. as unidades de rede mapeadas (D: a Z:) nas pastas de costume;
  *   5. os compartilhamentos das máquinas citadas nesses arquivos ("net view");
@@ -24,10 +24,7 @@
  *             direto (reserva da cópia offline); "" se não se sabe.
  * Nada aqui abre o banco: só verifica se o arquivo existe (atributos).
  *
- * 1.2.0 - 2026-10-30 - Nunca trava o servidor: as letras de unidade (D: a Z:) eram
- *   testadas com fs.existsSync, e uma unidade de rede desconectada ou lenta congelava o
- *   processo inteiro por dezenas de segundos (a bandeja reiniciava o servidor). Agora o
- *   teste é assíncrono, em paralelo e com prazo; o caminho local "127.0.0.1" também.
+ * 1.2.1 - 2026-11-12 - Nome do sistema neutro ("Relatorios Offline"); sem citar o PDV de terceiros.
  * Histórico completo das versões: CHANGELOG.md no repositório.
  */
 
@@ -37,7 +34,7 @@ const os = require("os");
 const net = require("net");
 const cp = require("child_process");
 
-const VERSAO = "1.2.0";
+const VERSAO = "1.2.1";
 const WIN = process.platform === "win32";
 // Onde o SMALL.FDB costuma ficar dentro de uma unidade ou compartilhamento.
 const SUBCAMINHOS = [
@@ -52,7 +49,7 @@ const SUBCAMINHOS = [
 
 const _ehLocal = h => { const s = String(h || "").trim().toLowerCase(); return !s || s === "127.0.0.1" || s === "localhost" || s === "::1"; };
 const _ehUNC = p => /^\\\\[^\\]+\\[^\\]+/.test(String(p || ""));
-// Onde o Small Commerce instala o banco no SERVIDOR (para o gbak pelo Firebird de lá).
+// Onde o PDV instala o banco no SERVIDOR (para o gbak pelo Firebird de lá).
 const CAMINHOS_SERVIDOR = [
     "C:\\Program Files (x86)\\SmallSoft\\Small Commerce\\SMALL.FDB",
     "C:\\Program Files\\SmallSoft\\Small Commerce\\SMALL.FDB",
@@ -103,7 +100,7 @@ function existeArquivo(arq, prazoMs) {
     });
 }
 
-/** Pastas padrão do Small Commerce nesta máquina. */
+/** Pastas padrão do PDV nesta máquina. */
 function pastasPadrao() {
     const pf86 = process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)";
     const pf = process.env["ProgramFiles"] || "C:\\Program Files";
@@ -198,7 +195,7 @@ function maquinasComFirebird(porta, prazoMs) {
 /**
  * Procura o banco. opcoes:
  *   configHost, configPath, configArquivo — do config.json
- *   pastasIni      — pastas onde procurar arquivos de configuração (padrão: pastas do Small)
+ *   pastasIni      — pastas onde procurar arquivos de configuração (padrão: pastas do PDV)
  *   raizes         — raízes extras (unidades/pastas) onde aplicar SUBCAMINHOS (padrão: D:..Z:)
  *   compartilhamentos(host) → Promise<raízes>   (padrão: net view)
  *   maquinasRede() → Promise<hosts>              (padrão: teste da porta 3050 na /24)
@@ -264,10 +261,10 @@ async function localizarBanco(opcoes) {
     let a = await testar([cfgArq, _ehUNC(cfgPath) ? cfgPath : "", _ehLocal(cfgHost) ? cfgPath : ""].filter(Boolean), "config.json");
     if (a) { a.rede = _ehUNC(a.arquivo); return resultado(a); }
     // 2. pastas padrão nesta máquina
-    a = await testar(pastasSmall.map(d => path.join(d, "SMALL.FDB")), "pasta padrão do Small Commerce");
+    a = await testar(pastasSmall.map(d => path.join(d, "SMALL.FDB")), "pasta padrão do PDV");
     if (a) return resultado(a);
-    // 3. referências nos arquivos de configuração do Small
-    a = await testar(refs.arquivos, "configuração do Small Commerce");
+    // 3. referências nos arquivos de configuração do PDV
+    a = await testar(refs.arquivos, "configuração do PDV");
     if (a) { a.rede = _ehUNC(a.arquivo); return resultado(a); }
     // 4. unidades de rede mapeadas / raízes extras
     const raizes = o.raizes || (WIN ? await raizesExistentes("DEFGHIJKLMNOPQRSTUVWXYZ".split("").map(l => l + ":\\"), 2500) : []);

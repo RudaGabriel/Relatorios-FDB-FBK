@@ -1,7 +1,7 @@
 /* =========================================================
    Leitor de código de barras
    ---------------------------------------------------------
-   Consulta de estoque do Relatórios SmallSoft Offline.
+   Consulta de estoque do Relatórios Offline.
    As bibliotecas de leitura vêm do próprio servidor
    (/leitor/vendor/), não da internet — funciona offline.
    Autor: Ruda Gabriel.
