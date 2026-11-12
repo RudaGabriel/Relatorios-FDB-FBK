@@ -4,11 +4,11 @@
 
 ### Vendas do dia e consulta de estoque do PDV, lendo uma **cópia offline** do banco Firebird
 
-<img alt="versão: 1.9.6" src="https://img.shields.io/badge/vers%C3%A3o-1.9.6-2563EB?style=flat">
-<img alt="servidor: v3.7.11" src="https://img.shields.io/badge/servidor-v3.7.11-2563EB?style=flat">
+<img alt="versão: 1.9.7" src="https://img.shields.io/badge/vers%C3%A3o-1.9.7-2563EB?style=flat">
+<img alt="servidor: v3.7.12" src="https://img.shields.io/badge/servidor-v3.7.12-2563EB?style=flat">
 <img alt="cópia offline: v1.6.1" src="https://img.shields.io/badge/c%C3%B3pia%20offline-v1.6.1-0D9488?style=flat">
 <img alt="estoque: v1.2.2" src="https://img.shields.io/badge/estoque-v1.2.2-0D9488?style=flat">
-<img alt="gerador: v3.26.7" src="https://img.shields.io/badge/gerador-v3.26.7-2563EB?style=flat">
+<img alt="gerador: v3.26.8" src="https://img.shields.io/badge/gerador-v3.26.8-2563EB?style=flat">
 <img alt="bandeja: v1.7.8" src="https://img.shields.io/badge/bandeja-v1.7.8-2563EB?style=flat">
 <img alt="testes: 49 passando" src="https://img.shields.io/badge/testes-49%20passando-22C55E?style=flat">
 
@@ -88,8 +88,8 @@ Na primeira vez aparece **Preparando a cópia offline**, com barra de progresso,
 | Consultar o estoque | Botão **Estoque** · bandeja → *Consultar estoque* · `http://IP:7735/estoque` |
 | Ler um código de barras | No estoque: botão **Ler código** (leitura em tempo real pela câmera, também no celular) ou leitor USB direto no campo de busca |
 | Abrir no celular | Botão **Celular** (QR code) · bandeja → *Abrir no celular (QR code)...* |
-| Abrir fora da loja (4G, outro Wi-Fi) | **Celular → Fora da loja**, com o Tailscale nos dois aparelhos. O endereço usa o **nome fixo** da máquina no Tailscale (ex.: `http://pc-loja.tailxxxx.ts.net:7735/`); o IP `100.x` também funciona. Trocar de endereço não perde o apelido nem as preferências do aparelho |
-| Recarregar a cada venda | *Configurações → Nesta tela → Atualização*. Ligado: recarrega como um F5 (limpa busca, filtros e janelas). Desligado: as vendas entram sem recarregar |
+| Abrir fora da loja (4G, outro Wi-Fi) | **Celular → Fora da loja**, com o Tailscale nos dois aparelhos. A janela mostra **dois campos**, cada um com o botão de copiar: o **nome fixo** da máquina no Tailscale (ex.: `http://pc-loja.tailxxxx.ts.net:7735/`) e o **IP** (`http://100.x.y.z:7735/`); tocar num deles troca o QR code. Trocar de endereço não perde o apelido nem as preferências do aparelho |
+| Recarregar a cada venda | *Configurações → Nesta tela* (abre recolhido: toque no título) *→ Atualização*. Ligado: recarrega como um F5 (limpa busca, filtros e janelas). Desligado: as vendas entram sem recarregar |
 | Saber de quando são os dados | Selo **Offline** no canto da tela (no celular fica recolhido numa bolinha no canto esquerdo: toque para ver; recolhe automaticamente em 5 s ou ao deslizar para a esquerda/para baixo) · cabeçalho do menu da bandeja |
 | Atualizar a cópia agora | Clique no selo → *Atualizar cópia agora* · bandeja → *Cópia offline do banco → Atualizar a cópia agora* |
 | Cancelar uma cópia em andamento | Clique no selo → *Cancelar a cópia* (também na tela *Preparando a cópia*) · bandeja → *Cópia offline do banco → Cancelar a cópia em andamento*. Pede confirmação; a cópia em uso continua valendo e a próxima cópia automática fica para depois de 30 min (*Atualizar a cópia agora* faz uma nova quando quiser) |
@@ -263,6 +263,7 @@ As rotas gerais estão no `api.ps1` (menu interativo). Rotas da cópia offline e
 | `/api/estoque/item?id=N` | GET | Todas as colunas de um item |
 | `/api/estoque/csv?q=...` | GET | CSV com todos os resultados |
 | `/api/estoque/pacote?versao=` | GET | Estoque inteiro (campos da lista + texto de busca) para o aparelho guardar; compactado (gzip); versão igual → `{ igual: true }` |
+| `/qr.svg?externo=1` · `/qr.svg?externo=ip` · `/api/qr` | GET | QR code e endereços do Tailscale para o celular fora da loja: pelo nome (fixo) ou pelo IP |
 | `/api/https` | GET | Endereço HTTPS para quem pediu (`url`, `confiavel` = certificado do Tailscale) |
 | `/api/navigate/config` · `/hash/periodo` · `/hoje` · `/foco` · `/recarregar` · `/aviso` | GET/POST | Comandam as telas abertas via SSE (inclusive o estoque) |
 
