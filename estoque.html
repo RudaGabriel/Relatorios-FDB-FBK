@@ -46,7 +46,7 @@ h1{margin:0;font-size:18px;font-weight:700}
 .semsrv{margin:10px 0 0;padding:12px 14px;border-radius:12px;background:rgba(239,68,68,.14);border:1px solid rgba(239,68,68,.45);color:var(--er);font-weight:600;line-height:1.4}
 .semsrv small{display:block;font-weight:400;color:var(--tx);opacity:.9;margin-top:4px}
 .semsrv[hidden]{display:none}
-/* Servidor de volta: o estoque ainda mostra a cópia do aparelho até a pessoa escolher voltar ao vivo. */
+/* Servidor de volta: o estoque ainda mostra a cópia do aparelho até a pessoa escolher os dados em tempo real. */
 .volta{margin:10px 0 0;padding:12px 14px;border-radius:12px;background:rgba(34,197,94,.14);border:1px solid rgba(34,197,94,.5);color:var(--ok);font-weight:700;line-height:1.4}
 .volta small{display:block;font-weight:400;color:var(--tx);opacity:.9;margin-top:4px}
 .volta .acoes{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
@@ -177,7 +177,6 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
   </div>
   <div class="semsrv" id="semSrv" role="alert" hidden></div>
   <div class="volta" id="srvVolta" role="status" hidden></div>
-  <div class="dica" id="dicaSeg" hidden><span>Use o estoque <b>mesmo com o servidor desligado</b>: acesse uma vez pelo endereço seguro para que ele seja armazenado neste aparelho.</span><button type="button" class="bt pri" id="bSeg">Usar sem o servidor</button><button type="button" class="bt" id="bSegX" aria-label="Fechar a dica">&times;</button></div>
   <div class="busca">
     <div class="campo">
       <input id="q" type="search" inputmode="search" autocomplete="off" autocapitalize="off" spellcheck="false"
@@ -455,7 +454,7 @@ mark{background:rgba(250,204,21,.35);color:inherit;border-radius:3px;padding:0 1
     if (primeira) { toast("Servidor indisponível: somente o estoque está disponível."); vigiarVolta(); }
   };
   // Servidor de volta: NÃO troca sozinho (a pessoa pode estar no meio de uma consulta).
-  // Mostra a faixa verde com o botão para voltar aos dados ao vivo; segue conferindo a
+  // Mostra a faixa verde com o botão para retornar aos dados em tempo real; segue conferindo a
   // cada 15 s (se o servidor cair de novo antes do toque, a faixa vermelha volta).
   var voltaEl = $("srvVolta");
   var dentroDoRelatorio = (function () { try { return window.top !== window.self; } catch (e) { return true; } })();
