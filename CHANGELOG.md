@@ -1,5 +1,14 @@
 # Changelog
 
+## Relatórios SmallSoft Offline 1.9.4 — 2026-11-12
+
+- **Projeto autônomo e neutro.** Retiradas as menções a outros projetos e as citações de terceiros dos comentários,
+  das telas, do README e do histórico. Os avisos de licença exigidos pelos componentes de terceiros incluídos ficam só
+  em `LICENCAS-TERCEIROS.txt` (novo) e `leitor/vendor/LICENCAS.txt`.
+- **Créditos explícitos do autor:** selo "autor: Ruda Gabriel" e seção **Autor** no README (com o perfil no GitHub),
+  `author` e `license` no `package.json`.
+- `servidor-relatorio.js` 3.7.9, `gerar-relatorio-html.js` 3.26.6, `iniciar-tray.ps1` 1.7.7, `_remover-inicializacao.ps1` 1.1.1.
+
 ## Relatórios SmallSoft Offline 1.9.3 — 2026-11-09
 
 - **X de limpar a busca fora do lugar.** No modo de desempenho **Leve**, a regra geral dos botões anulava a
@@ -171,9 +180,9 @@
 
 ## Relatórios SmallSoft Offline 1.7.0 — 2026-11-04
 
-Melhorias recentes do *Relatórios FDB* (os dois projetos são praticamente iguais; só muda a forma de ler o banco):
+Melhorias:
 
-- **Bandeja: vigia sem reinícios falsos** (`iniciar-tray.ps1` 1.7.1, igual ao Relatórios FDB 1.7.0/1.7.1):
+- **Bandeja: vigia sem reinícios falsos** (`iniciar-tray.ps1` 1.7.1):
   - a porta é conferida pela lista do próprio Windows, na hora e sem espera; com isso o servidor volta a iniciar
     sozinho com o Windows;
   - porta que não responde com clareza **não abre um segundo servidor** (antes, com a máquina carregada, a bandeja
@@ -218,7 +227,7 @@ Melhorias recentes do *Relatórios FDB* (os dois projetos são praticamente igua
 ## Relatórios SmallSoft Offline 1.6.4 — 2026-10-30
 
 - **Bandeja: aviso "Não foi possível conectar ao banco!" enganoso.** O relatório nunca conecta no banco principal,
-  mas a checagem de 20 s depois de abrir (herdada do Relatórios FDB) perguntava se o banco que o relatório lê
+  mas a checagem de 20 s depois de abrir (herdada da versão anterior) perguntava se o banco que o relatório lê
   estava pronto; numa instalação nova esse banco é a cópia offline, ainda sendo feita, e o aviso vermelho
   aparecia. Agora a bandeja consulta o estado da cópia:
   - cópia sendo feita → aviso informativo "Preparando a cópia offline do banco (N%)";
@@ -352,7 +361,7 @@ Melhorias recentes do *Relatórios FDB* (os dois projetos são praticamente igua
 
 ## Relatórios SmallSoft Offline 1.3.0 — 2026-10-29
 
-- **Estoque: leitor de código de barras pela câmera** — o leitor do projeto *Controle de Vencimento*
+- **Estoque: leitor de código de barras pela câmera** — leitor
   (`leitor/leitor.js` e `leitor/foco.js`, com câmera ao vivo, flash, troca de câmera, zoom, foco e foto do código).
   Bibliotecas locais em `leitor/vendor/` (barcode-detector 3.2.2, zxing-wasm 3.1.3, @zxing/library 0.23.0 —
   licenças em `leitor/vendor/LICENCAS.txt`): funciona sem internet. Sem página segura (http pela rede), o botão abre
@@ -391,7 +400,7 @@ Melhorias recentes do *Relatórios FDB* (os dois projetos são praticamente igua
 
 ## Relatórios SmallSoft Offline 1.0.0 — 2026-10-28
 
-Projeto offline criado a partir do *Relatórios FDB* (servidor 2.22.0 / gerador 3.26.1), com todos os recursos dele e mais:
+Primeira versão do sistema offline (a partir do servidor 2.22.0 / gerador 3.26.1), com:
 
 - **`offline-copia.js` 1.0.0 (novo):** cópia offline do banco. `gbak -b -g` (leitura, sem coleta de lixo) pelo
   próprio Firebird → `gbak -c -mode read_only` numa cópia nova → conferência → troca atômica (manifesto em
@@ -410,13 +419,13 @@ Projeto offline criado a partir do *Relatórios FDB* (servidor 2.22.0 / gerador 
   seletor de banco, fast-poll espaçado enquanto lê a cópia, porta padrão 7735.
 - **Bandeja, instalador e removedor:** nome "Relatorios SmallSoft Offline", porta 7735, bootstrap em
   `%LOCALAPPDATA%\RelatoriosOfflineBootstrap`, mutex próprio; o removedor só encerra processos **desta** pasta
-  (convive com o *Relatórios FDB* na mesma máquina). Bandeja: *Consultar estoque* e *Cópia offline do banco*.
+  (convive com outros sistemas na mesma máquina). Bandeja: *Consultar estoque* e *Cópia offline do banco*.
 - **Testes:** `test/offline.test.js` e `test/estoque.test.js` (gbak e Firebird simulados).
 - Scripts da versão FBK anterior movidos para `legado/`.
 
 ---
 
-## Histórico herdado do Relatórios FDB
+## Histórico anterior (servidor 2.x e gerador 3.x)
 
 Histórico completo de versões de cada arquivo do projeto, da mais recente para a mais antiga.
 Cada arquivo traz no cabeçalho só a entrada da **versão atual**; o histórico completo fica aqui.
@@ -1122,7 +1131,7 @@ Cliente de linha de comando.
   - **Configurações ▸** editar configurações, selecionar banco (FDB), status do banco de dados;
   - **Ferramentas ▸** informações do sistema, copiar endereço de acesso (para abrir em outro PC ou celular), abrir pasta do sistema, abrir o log, acompanhar o log ao vivo, cliente da API (`api.ps1`), programas (lista do `config.json`);
   - **Reiniciar servidor** e **Sair** (como antes).
-- Ícones vetoriais coloridos — os mesmos SVG (Lucide) do relatório, desenhados por um leitor de SVG embutido (C# compatível com o PowerShell 5.1), nítidos em qualquer escala de tela; menu com fundo branco, destaque azul-claro e textos com acento (o arquivo continua 100% ASCII). Sem `favicon.png`, a bandeja usa um ícone próprio em vez do genérico do Windows.
+- Ícones vetoriais coloridos — os mesmos SVG do relatório, desenhados por um leitor de SVG embutido (C# compatível com o PowerShell 5.1), nítidos em qualquer escala de tela; menu com fundo branco, destaque azul-claro e textos com acento (o arquivo continua 100% ASCII). Sem `favicon.png`, a bandeja usa um ícone próprio em vez do genérico do Windows.
 - Se o visual não puder ser montado (C# bloqueado na máquina, por exemplo), o menu funciona igual, só sem ícones — registrado no log como aviso.
 
 ### 1.4.1 — 2026-10-07 22:30

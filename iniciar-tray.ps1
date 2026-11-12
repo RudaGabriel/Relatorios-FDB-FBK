@@ -3,12 +3,11 @@
 # Instancia unica via mutex global.
 # Abrir Relatorio: se ja tem aba aberta (SSE), foca ela. Se nao, abre browser.
 #
-# @version 1.7.6
+# @version 1.7.7
 # @author Ruda Gabriel
 # @changelog
 #   (Historico completo das versoes: CHANGELOG.md no repositorio.)
-#   1.7.6 - 2026-11-05 - Copia offline do banco > "Cancelar a copia em andamento" (pede
-#     confirmacao; a copia em uso continua valendo).
+#   1.7.7 - 2026-11-12 - Comentarios sem referencias a outros projetos (projeto autonomo).
 
 param([switch]$Inicializacao)
 
@@ -453,7 +452,7 @@ try {
 } catch {}
 
 # ---------------------------------------------------------------------------
-# Visual do menu (v1.5.0): icones vetoriais (os mesmos SVG Lucide do relatorio),
+# Visual do menu (v1.5.0): icones vetoriais (os mesmos SVG do relatorio),
 # cores proprias e nitidez em telas com escala. Codigo C# compilado na hora
 # (compativel com o PowerShell 5.1 do Windows). Se a compilacao falhar por
 # qualquer motivo, o menu continua funcionando, so' que sem icones e no visual
@@ -484,7 +483,7 @@ namespace RelTray
         { Tipo = t; X1 = x1; Y1 = y1; X2 = x2; Y2 = y2; X3 = x3; Y3 = y3; }
     }
 
-    // Leitor minimo de icones SVG (o mesmo desenho dos icones do relatorio - Lucide,
+    // Leitor minimo de icones SVG (o mesmo desenho dos icones do relatorio,
     // grade 24x24). Elementos separados por ";":
     //   p:<d do path>   r:x,y,w,h,rx   c:cx,cy,r   e:cx,cy,rx,ry   l:x1,y1,x2,y2
     // Comandos de path: M L H V C S Q T A Z (maiusculos e minusculos). Arcos viram
@@ -1015,7 +1014,7 @@ try {
     $gDpi.Dispose()
 } catch {}
 
-# Icones (grade 24x24, mesmos desenhos Lucide do relatorio). Formato: elementos
+# Icones (grade 24x24, mesmos desenhos do relatorio). Formato: elementos
 # separados por ";" - p:<path> r:x,y,w,h,rx c:cx,cy,r e:cx,cy,rx,ry l:x1,y1,x2,y2
 $ICONES = @{
     abrir       = 'r:2,3,20,14,2;l:8,21,16,21;l:12,17,12,21'

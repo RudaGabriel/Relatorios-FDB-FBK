@@ -4,12 +4,12 @@
 
 ### Vendas do dia e consulta de estoque do Small Commerce, lendo uma **cópia offline** do banco Firebird
 
-<img alt="versão: 1.9.3" src="https://img.shields.io/badge/vers%C3%A3o-1.9.3-2563EB?style=flat">
-<img alt="servidor: v3.7.8" src="https://img.shields.io/badge/servidor-v3.7.8-2563EB?style=flat">
+<img alt="versão: 1.9.4" src="https://img.shields.io/badge/vers%C3%A3o-1.9.4-2563EB?style=flat">
+<img alt="servidor: v3.7.9" src="https://img.shields.io/badge/servidor-v3.7.9-2563EB?style=flat">
 <img alt="cópia offline: v1.6.0" src="https://img.shields.io/badge/c%C3%B3pia%20offline-v1.6.0-0D9488?style=flat">
 <img alt="estoque: v1.2.1" src="https://img.shields.io/badge/estoque-v1.2.1-0D9488?style=flat">
-<img alt="gerador: v3.26.5" src="https://img.shields.io/badge/gerador-v3.26.5-2563EB?style=flat">
-<img alt="bandeja: v1.7.6" src="https://img.shields.io/badge/bandeja-v1.7.6-2563EB?style=flat">
+<img alt="gerador: v3.26.6" src="https://img.shields.io/badge/gerador-v3.26.6-2563EB?style=flat">
+<img alt="bandeja: v1.7.7" src="https://img.shields.io/badge/bandeja-v1.7.7-2563EB?style=flat">
 <img alt="testes: 49 passando" src="https://img.shields.io/badge/testes-49%20passando-22C55E?style=flat">
 
 <img alt="plataforma: Windows 10 | 11" src="https://img.shields.io/badge/plataforma-Windows%2010%20%7C%2011-0078D4?style=flat&logo=windows&logoColor=white">
@@ -18,6 +18,7 @@
 <img alt="funciona: sem internet" src="https://img.shields.io/badge/funciona-sem%20internet-0891B2?style=flat">
 <img alt="idioma: pt-BR" src="https://img.shields.io/badge/idioma-pt--BR-16A34A?style=flat">
 <img alt="licença: proprietária" src="https://img.shields.io/badge/licen%C3%A7a-propriet%C3%A1ria-6B7280?style=flat">
+<a href="https://github.com/RudaGabriel"><img alt="autor: Ruda Gabriel" src="https://img.shields.io/badge/autor-Ruda%20Gabriel-111827?style=flat&logo=github&logoColor=white"></a>
 
 <img alt="Node.js: 18+" src="https://img.shields.io/badge/Node.js-18%2B-339933?style=flat&logo=nodedotjs&logoColor=white">
 <img alt="JavaScript" src="https://img.shields.io/badge/JavaScript-ES2022-F7DF1E?style=flat&logo=javascript&logoColor=black">
@@ -57,7 +58,7 @@ Ele mantém automaticamente uma **cópia offline** do `SMALL.FDB`, feita com as 
 | 🌐 **Rede da loja e celular** | Abre em qualquer aparelho da rede; no celular, por QR code. Localiza automaticamente o banco em outra máquina. |
 | 🤖 **Mínimo de cliques** | Instala dependências, acha o banco, o `gbak` e os backups `.fbk`, recupera-se de falhas e limpa o que ficou pela metade. |
 
-> Versão offline do *Relatórios FDB*: traz todos os recursos dele e pode ser instalada **na mesma máquina**, com porta, tarefa agendada, pasta de dados e ícone de bandeja próprios.
+> Sistema autônomo: tem porta, tarefa agendada, pasta de dados e ícone de bandeja próprios — pode conviver com outros sistemas na mesma máquina.
 
 ---
 
@@ -169,7 +170,7 @@ Todos os itens da tabela `ESTOQUE`, lidos da cópia offline (não pesa no caixa)
 - **Detalhe do item:** todas as colunas do cadastro, com botão de copiar código e código de barras.
 - **Totais** do resultado (estoque somado e valor de venda) e **Exportar** para CSV/Excel com todas as colunas.
 - **Contador fixo** que acompanha a rolagem (*mostrando 200 de 1.234 encontrados*) e botão **Topo**.
-- **Leitor de código de barras pela câmera** (o mesmo do *Controle de Vencimento*): EAN-13/8, UPC, Code 128/39/93, ITF, Codabar, QR e Data Matrix, com flash, troca de câmera, zoom e *Tirar foto do código*. As bibliotecas ficam na pasta `leitor/`, então **funciona sem internet**. O navegador só libera a câmera ao vivo em página segura (HTTPS). Por isso o sistema também abre na porta **7736** com HTTPS: no celular, ao tocar em **Ler código**, ele leva para esse endereço (mantendo a busca) e abre o leitor ao vivo sozinho.
+- **Leitor de código de barras pela câmera**: EAN-13/8, UPC, Code 128/39/93, ITF, Codabar, QR e Data Matrix, com flash, troca de câmera, zoom e *Tirar foto do código*. As bibliotecas ficam na pasta `leitor/`, então **funciona sem internet**. O navegador só libera a câmera ao vivo em página segura (HTTPS). Por isso o sistema também abre na porta **7736** com HTTPS: no celular, ao tocar em **Ler código**, ele leva para esse endereço (mantendo a busca) e abre o leitor ao vivo sozinho.
   - **Primeira vez no celular:** aparece um aviso de certificado. Toque em *Avançado* / *Mostrar detalhes* e depois em *Continuar* / *Visitar site*. É o certificado do próprio sistema, gerado nesta máquina, válido só na sua rede. Depois disso não pergunta mais.
   - **Sem aviso nenhum:** com o Tailscale nesta máquina e *HTTPS Certificates* ligado em <https://login.tailscale.com/admin/dns>, o sistema usa o certificado oficial do Tailscale ao abrir pelo endereço do Tailscale.
   - Se preferir, *Cancelar* no aviso abre a **foto** pela câmera do celular, lida do mesmo jeito.
@@ -212,11 +213,11 @@ Os comandos chegam a **qualquer tela aberta**: relatório, período, página de 
 <a id="configuracao"></a>
 ## ⚙️ Configuração (`config.json`)
 
-A maior parte é editada pela própria tela (**Configurações**), no computador do servidor. Todas as chaves do *Relatórios FDB* continuam valendo (`appName`, `fbUser`/`fbPass`, `proibidos`, `teclasPersonalizadas`, `programas`…). Chaves da versão offline:
+A maior parte é editada pela própria tela (**Configurações**), no computador do servidor. Chaves gerais: `appName`, `fbUser`/`fbPass`, `proibidos`, `teclasPersonalizadas`, `programas`… Chaves da cópia offline e do estoque:
 
 | Chave | Padrão | Para que serve |
 |---|---|---|
-| `porta` | `7735` | Porta HTTP (o *Relatórios FDB* usa 7734) |
+| `porta` | `7735` | Porta HTTP |
 | `fdbArquivo` | automático | Caminho do arquivo do banco (local, `Z:\...` ou `\\servidor\pasta\SMALL.FDB`) |
 | `offlineMetodo` | `"gbak"` | `gbak` (padrão, seguro), `auto` (copia o arquivo e converte; `gbak` direto de reserva) ou `arquivo` |
 | `offlineCopiaACadaMin` | `5` | Refaz a cópia a cada N min, mesmo sem mudança detectada (1 a 1440) |
@@ -249,7 +250,7 @@ A maior parte é editada pela própria tela (**Configurações**), no computador
 <a id="api"></a>
 ## 🔌 API
 
-Todas as rotas do *Relatórios FDB* continuam disponíveis (veja o `api.ps1`, com menu interativo). Rotas da versão offline:
+As rotas gerais estão no `api.ps1` (menu interativo). Rotas da cópia offline e do estoque:
 
 | Rota | Método | Descrição |
 |---|---|---|
@@ -298,13 +299,13 @@ Todas as rotas do *Relatórios FDB* continuam disponíveis (veja o `api.ps1`, co
 npm test
 ```
 
-**48 testes**, sem Firebird real (Firebird, `gbak` e `gfix` simulados em `test/`):
+**49 testes**, sem Firebird real (Firebird, `gbak` e `gfix` simulados em `test/`):
 
 | Arquivo | Cobre |
 |---|---|
-| `test/offline.test.js` (15) | Primeira cópia, falhas, troca atômica, limpeza, progresso, terminal com banco em rede, rede que não responde (servidor não trava), métodos `auto`/`arquivo`, `.fbk` |
+| `test/offline.test.js` (16) | Primeira cópia, falhas, troca atômica, limpeza, progresso, terminal com banco em rede, rede que não responde (servidor não trava), métodos `auto`/`arquivo`, `.fbk` |
 | `test/estoque.test.js` (5) | Busca, "Contém", filtros, ordem, situação ativo/inativo, detalhe, CSV, leitor, comandos da bandeja, cópia no aparelho (mesmas respostas do servidor) |
-| `test/relatorio.test.js` (28) | Somente leitura, XSS, rotas, tempo real e demais testes herdados do *Relatórios FDB* |
+| `test/relatorio.test.js` (28) | Somente leitura, XSS, rotas, tempo real e geração do relatório |
 
 ---
 
@@ -340,13 +341,22 @@ npm test
 | `iniciar-tray.ps1` · `api.ps1` | Bandeja do Windows e cliente da API |
 | `*.bat` · `*.vbs` | Instalação, inicialização automática e atalhos |
 | `CHANGELOG.md` | Histórico completo das versões |
+| `LICENCAS-TERCEIROS.txt` | Avisos de licença exigidos pelos componentes de terceiros incluídos |
 
 ---
 
 <div align="center">
 
-**Desenvolvido por Ruda Gabriel**: concepção, regras de negócio e manutenção.
+## 👤 Autor
 
-© 2026 Ruda Gabriel. Todos os direitos reservados.
+**Ruda Gabriel** — criador e único desenvolvedor do **Relatórios SmallSoft Offline**: concepção, arquitetura,
+código, regras de negócio, testes e manutenção.
+
+[github.com/RudaGabriel](https://github.com/RudaGabriel)
+
+© 2026 Ruda Gabriel. Todos os direitos reservados. Uso, cópia ou distribuição somente com autorização do autor.
+
+<sub>As bibliotecas de terceiros incluídas na pasta `leitor/vendor/` mantêm as próprias licenças, listadas em
+`LICENCAS-TERCEIROS.txt`.</sub>
 
 </div>
