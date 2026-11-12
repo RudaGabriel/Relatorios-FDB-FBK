@@ -230,7 +230,7 @@ test("padrão de fábrica: config.json do repositório sem dados de loja e sem p
         t.diagnostic("git indisponível ou pasta fora do repositório: config.json de fábrica não conferido (o da pasta é o da loja).");
     } else {
         const cfg = JSON.parse(g.stdout.replace(/^\uFEFF/, ""));
-        assert.strictEqual(cfg.appName, "Relatorios SmallSoft Offline");
+        assert.strictEqual(cfg.appName, "Relatorios Offline");
         assert.deepStrictEqual(cfg.proibidos, []);
         assert.deepStrictEqual(cfg.teclasPersonalizadas, []);
         for (const k of ["fbHost", "fdbPath", "maquinaIP", "fbUser", "fbPass", "favicon"]) assert.strictEqual(cfg[k], "", k + " deveria estar vazio");

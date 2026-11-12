@@ -1,8 +1,8 @@
 ' =============================================================================
-' bootstrap.vbs                                                        v1.3.0
+' bootstrap.vbs                                                        v1.3.1
 ' Autor: Ruda Gabriel
 ' -----------------------------------------------------------------------------
-' Inicializacao automatica do Relatorios SmallSoft Offline.
+' Inicializacao automatica do Relatorios Offline.
 '
 ' A tarefa agendada (criada por instalar-na-inicializacao.bat) roda este
 ' arquivo no logon. Ele le em "launcher.path" (mesma pasta) o caminho do
@@ -14,9 +14,7 @@
 ' 3 = launcher.path vazio, 5 = launcher nao apareceu em 30 minutos.
 '
 ' (Historico completo das versoes: CHANGELOG.md no repositorio.)
-' CHANGELOG 1.3.0 - 2026-11-05 - Partida automatica silenciosa.
-'   Abre o launcher com "/inicializacao": a bandeja inicia sem nenhuma
-'   janela nem balao informativo (avisos de erro vao para o relatorio.log).
+' CHANGELOG 1.3.1 - 2026-11-12 - Nome do sistema neutro ("Relatorios Offline"); sem citar o PDV de terceiros.
 ' =============================================================================
 
 Option Explicit

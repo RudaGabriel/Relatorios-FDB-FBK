@@ -1,5 +1,5 @@
 {
-  "appName": "Relatorios SmallSoft Offline",
+  "appName": "Relatorios Offline",
   "porta": 7735,
   "pollInterval": 100,
   "fbHost": "",

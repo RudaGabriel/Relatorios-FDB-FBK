@@ -4,8 +4,8 @@
 if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
 
 /**
- * servidor-relatorio.js — Relatórios SmallSoft Offline
- * @version 3.7.9
+ * servidor-relatorio.js — Relatórios Offline
+ * @version 3.7.10
  * @author Ruda Gabriel
  * @description Servidor HTTP + Firebird de relatórios com SSE, fast-poll e
  *              geração em subprocesso. SOMENTE LEITURA no banco.
@@ -14,7 +14,7 @@ if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
  *              principal em atualização, manutenção ou fora do ar.
  * @changelog
  *   (Histórico completo das versões: CHANGELOG.md no repositório.)
- *   3.7.9 - 2026-11-12 - Comentarios sem referencias a outros projetos (projeto autonomo).
+ *   3.7.10 - 2026-11-12 - Nome do sistema neutro ("Relatorios Offline"); sem citar o PDV de terceiros.
  */
 
 
@@ -22,7 +22,7 @@ if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
 // Registrada na linha de início do log para que se saiba, ao investigar
 // qualquer ocorrência, qual versão do servidor estava no ar naquele momento
 // (o gerar-relatorio-html.js já faz o mesmo via SCRIPT_VERSION).
-const SERVER_VERSION = "3.7.9";
+const SERVER_VERSION = "3.7.10";
 
 // ===== Logger Global seguro — flush debounced 300ms =====
 const _fs = require('fs');
@@ -185,7 +185,7 @@ var TextDecoder = require("util").TextDecoder;
 
 // Decoder de texto lido como bytes (CHARACTER SET OCTETS) — constante de módulo.
 // UTF-8 válido é usado como está; senão Windows-1252 (colunas sem charset do
-// SmallSoft); Node sem ICU completo cai em latin1 (mesmos acentos).
+// PDV); Node sem ICU completo cai em latin1 (mesmos acentos).
 var _decUtf8Estrito = (function(){ try { return new TextDecoder("utf-8", { fatal: true }); } catch(_) { return null; } })();
 var _decWin1252Base = (function(){ try { return new TextDecoder("windows-1252"); } catch(_) { return null; } })();
 var _win1252Decoder = {
@@ -206,7 +206,7 @@ var _fmtQuantidade = function(v) {
 };
 
 // ===== SOMENTE LEITURA (v2.14.0) ============================================
-// O sistema NUNCA escreve no banco do Small Commerce. Duas travas, em toda
+// O sistema NUNCA escreve no banco do PDV. Duas travas, em toda
 // conexão aberta por este processo (bloco idêntico no servidor e no gerador):
 //  1. Comando: só passa SQL que começa com SELECT ou WITH; qualquer outro
 //     (UPDATE, INSERT, DELETE, EXECUTE, ALTER...) é recusado ANTES de chegar
@@ -613,7 +613,7 @@ var updateConfigKey = function(key, value) {
 var _config       = loadConfig();
 // Alias de compatibilidade — mantido para não alterar referências espalhadas no arquivo.
 var appCfg        = _config;
-var APP_NAME      = (appCfg.appName&&appCfg.appName.trim()) ? appCfg.appName.trim() : "Relatorios SmallSoft Offline";
+var APP_NAME      = (appCfg.appName&&appCfg.appName.trim()) ? appCfg.appName.trim() : "Relatorios Offline";
 // BUG FIX (v2.5.0): FAVICON nunca era inicializado a partir de config.json no
 // boot — só era atualizado em memória pelas rotas /api/config e
 // /api/upload-favicon durante a sessão. Resultado: um favicon customizado
@@ -1094,12 +1094,12 @@ if (fdbArg) {
 var FDB = FDB_HOST+":"+FDB_PATH;
 
 // ---------------------------------------------------------------------------
-// CÓPIA OFFLINE (v3.0.0 — Relatórios SmallSoft Offline)
-// FONTE_* = banco principal do Small Commerce (só o gbak encosta nele, para
+// CÓPIA OFFLINE (v3.0.0 — Relatórios Offline)
+// FONTE_* = banco principal do PDV (só o gbak encosta nele, para
 // copiar). FDB_* = o que o relatório lê: SEMPRE a cópia offline. Sem cópia
 // pronta, FDB_PATH fica vazio e o relatório espera ("Preparando a cópia
 // offline") — o sistema NUNCA conecta direto no banco principal, para não
-// atrapalhar atualização e manutenção do Small Commerce. Ver offline-copia.js.
+// atrapalhar atualização e manutenção do PDV. Ver offline-copia.js.
 // ---------------------------------------------------------------------------
 var FONTE_HOST = FDB_HOST, FONTE_PATH = FDB_PATH;
 // Caminho pelo qual o ARQUIVO do banco principal pode ser copiado (pasta local,
@@ -1138,7 +1138,7 @@ var _offlineCfg = function(c) {
     };
 };
 // Outros endereços {host, path} onde o gbak pode achar o banco (servidor da unidade de
-// rede + caminhos padrão do Small) — vêm da procura (localizar-banco.js).
+// rede + caminhos padrão do PDV) — vêm da procura (localizar-banco.js).
 var FONTE_CANDIDATOS = [];
 var _fonteAtual = function() {
     // UNC não serve para o gbak (o Firebird não abre banco em compartilhamento): só como arquivo.
@@ -3407,7 +3407,7 @@ var _fpLogIndices = function(alvos, faltam) {
     } else {
         logTs("AVISO índices: sem índice em " + faltam.join(", ") + " — cada leitura percorre a tabela inteira " +
               "(mais lenta e mais pesada para o banco do caixa). O sistema é somente leitura e não cria índices; " +
-              "peça ao suporte do Small Commerce (ou ao responsável pelo banco) para criar índice nessa(s) coluna(s).");
+              "peça ao suporte do PDV (ou ao responsável pelo banco) para criar índice nessa(s) coluna(s).");
     }
 };
 
@@ -4304,7 +4304,7 @@ var paginaEscolherFdb = function() {
         msgErro +
         "<label>Caminho do arquivo SMALL.FDB</label>" +
         "<div class=\"row-inp\">" +
-        "<input type=\"text\" id=\"fdbPath\" placeholder=\"Ex: C:\\Program Files (x86)\\SmallSoft\\Small Commerce\\SMALL.FDB  ou  \\\\SERVIDOR\\pasta\\SMALL.FDB\">" +
+        "<input type=\"text\" id=\"fdbPath\" placeholder=\"Ex: C:\\Pasta do sistema\\SMALL.FDB  ou  \\\\SERVIDOR\\pasta\\SMALL.FDB\">" +
         "<button class=\"btn btn-sec\" id=\"btnPicker\" title=\"Abrir seletor de arquivos do Windows\">" + SVG_FOLDER + "Procurar</button>" +
         "</div>" +
         "<p class=\"hint\">Cole o caminho completo ou use o botão <strong>Procurar</strong> para abrir o explorador de arquivos do Windows.</p>" +
@@ -4501,7 +4501,7 @@ var aplicarNovoFdb = function(caminhoBruto, cb) {
     var novoHost = parsed.host;
     var novoPath = parsed.dbPath;
     if (_offline && _offline.ehCopia(novoPath)) {
-        cb({ ok: false, erro: "Esse arquivo é uma cópia offline gerenciada pelo sistema. Escolha o banco principal (SMALL.FDB do Small Commerce)." });
+        cb({ ok: false, erro: "Esse arquivo é uma cópia offline gerenciada pelo sistema. Escolha o banco principal (SMALL.FDB do PDV)." });
         return;
     }
 
@@ -4863,7 +4863,7 @@ var _procurarBanco = function(motivo) {
     var loc = null;
     try { loc = require("./localizar-banco.js"); } catch (e) { logTs("localizar-banco.js não carregou: " + e.message, "OFFLINE"); return; }
     _procurandoBanco = true; _ultimaProcuraBanco = Date.now();
-    logTs("Procurando o SMALL.FDB (" + motivo + "): pastas do Small, configuração, unidades de rede e compartilhamentos — sem conectar no banco.", "OFFLINE");
+    logTs("Procurando o SMALL.FDB (" + motivo + "): pastas do PDV, configuração, unidades de rede e compartilhamentos — sem conectar no banco.", "OFFLINE");
     loc.localizarBanco({ configHost: FONTE_HOST, configPath: FONTE_PATH, configArquivo: FONTE_ARQUIVO, porta: FIREBIRD_PORT, log: function(m) { logTs(m, "OFFLINE"); } })
         .then(function(r) {
             _procurandoBanco = false;
@@ -6137,7 +6137,7 @@ var server=http.createServer(function(req,res){
                 var _ph = _pedidos.map(function(){ return "?"; }).join(",");
 
                 // ROBUSTEZ: QUANTIDADE e ITEM só entram na SQL se existirem no
-                // catálogo — em bases antigas do Small Commerce a ausência de uma
+                // catálogo — em bases antigas do PDV a ausência de uma
                 // delas fazia a query inteira falhar com "column unknown".
                 // DESCRICAO como BYTES (OCTETS): coluna sem charset com acento chegava
                 // com "\uFFFD". Firebird que recusar a conversão: refeita sem ela.

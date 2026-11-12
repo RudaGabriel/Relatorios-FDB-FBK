@@ -1,15 +1,15 @@
 <div align="center">
 
-# 📦 Relatórios SmallSoft Offline
+# 📦 Relatórios Offline
 
-### Vendas do dia e consulta de estoque do Small Commerce, lendo uma **cópia offline** do banco Firebird
+### Vendas do dia e consulta de estoque do PDV, lendo uma **cópia offline** do banco Firebird
 
-<img alt="versão: 1.9.4" src="https://img.shields.io/badge/vers%C3%A3o-1.9.4-2563EB?style=flat">
-<img alt="servidor: v3.7.9" src="https://img.shields.io/badge/servidor-v3.7.9-2563EB?style=flat">
-<img alt="cópia offline: v1.6.0" src="https://img.shields.io/badge/c%C3%B3pia%20offline-v1.6.0-0D9488?style=flat">
-<img alt="estoque: v1.2.1" src="https://img.shields.io/badge/estoque-v1.2.1-0D9488?style=flat">
-<img alt="gerador: v3.26.6" src="https://img.shields.io/badge/gerador-v3.26.6-2563EB?style=flat">
-<img alt="bandeja: v1.7.7" src="https://img.shields.io/badge/bandeja-v1.7.7-2563EB?style=flat">
+<img alt="versão: 1.9.5" src="https://img.shields.io/badge/vers%C3%A3o-1.9.5-2563EB?style=flat">
+<img alt="servidor: v3.7.10" src="https://img.shields.io/badge/servidor-v3.7.10-2563EB?style=flat">
+<img alt="cópia offline: v1.6.1" src="https://img.shields.io/badge/c%C3%B3pia%20offline-v1.6.1-0D9488?style=flat">
+<img alt="estoque: v1.2.2" src="https://img.shields.io/badge/estoque-v1.2.2-0D9488?style=flat">
+<img alt="gerador: v3.26.7" src="https://img.shields.io/badge/gerador-v3.26.7-2563EB?style=flat">
+<img alt="bandeja: v1.7.8" src="https://img.shields.io/badge/bandeja-v1.7.8-2563EB?style=flat">
 <img alt="testes: 49 passando" src="https://img.shields.io/badge/testes-49%20passando-22C55E?style=flat">
 
 <img alt="plataforma: Windows 10 | 11" src="https://img.shields.io/badge/plataforma-Windows%2010%20%7C%2011-0078D4?style=flat&logo=windows&logoColor=white">
@@ -24,7 +24,7 @@
 <img alt="JavaScript" src="https://img.shields.io/badge/JavaScript-ES2022-F7DF1E?style=flat&logo=javascript&logoColor=black">
 <img alt="HTML5" src="https://img.shields.io/badge/HTML5-E34F26?style=flat&logo=html5&logoColor=white">
 <img alt="CSS" src="https://img.shields.io/badge/CSS-1572B6?style=flat&logo=css&logoColor=white">
-<img alt="Firebird: Small Commerce" src="https://img.shields.io/badge/Firebird-Small%20Commerce-B71C1C?style=flat">
+<img alt="Firebird: banco do PDV" src="https://img.shields.io/badge/Firebird-banco%20do%20PDV-B71C1C?style=flat">
 <img alt="gbak: backup e restore" src="https://img.shields.io/badge/gbak-backup%20e%20restore-B71C1C?style=flat">
 <img alt="node-firebird" src="https://img.shields.io/badge/node--firebird-driver-CB3837?style=flat&logo=npm&logoColor=white">
 <img alt="PowerShell: 5.1" src="https://img.shields.io/badge/PowerShell-5.1-012456?style=flat">
@@ -45,7 +45,7 @@
 <a id="visao"></a>
 ## 🧭 Visão geral
 
-O **Relatórios SmallSoft Offline** é um servidor local para Windows que mostra as **vendas do dia** e a **consulta completa de estoque** do Small Commerce no navegador do computador ou do celular, **sem consultar o banco principal**.
+O **Relatórios Offline** é um servidor local para Windows que mostra as **vendas do dia** e a **consulta completa de estoque** do PDV no navegador do computador ou do celular, **sem consultar o banco principal**.
 
 Ele mantém automaticamente uma **cópia offline** do `SMALL.FDB`, feita com as ferramentas oficiais do Firebird, e todas as telas leem **só essa cópia**. Com isso, o relatório continua abrindo quando o banco principal está em atualização, em manutenção, travado ou desligado, e o caixa nunca é atrapalhado.
 
@@ -65,7 +65,7 @@ Ele mantém automaticamente uma **cópia offline** do `SMALL.FDB`, feita com as 
 <a id="instalacao"></a>
 ## 🚀 Instalação em 3 passos
 
-> **Requisitos:** Windows 10 ou 11 · Firebird do Small Commerce instalado **nesta máquina** (é ele que abre a cópia offline). O Node.js 18+ e o módulo `node-firebird` são instalados automaticamente.
+> **Requisitos:** Windows 10 ou 11 · Firebird do PDV instalado **nesta máquina** (é ele que abre a cópia offline). O Node.js 18+ e o módulo `node-firebird` são instalados automaticamente.
 
 1. **Copie a pasta do sistema** para o computador (o do banco ou um terminal da rede).
 2. **Execute `instalar-na-inicializacao.bat`.** A janela da instalação mostra cada etapa: ela pede permissão de administrador, instala o que faltar, libera a porta **7735** no firewall, cria a inicialização automática e já inicia o servidor. Daí em diante, ao **ligar o computador ou entrar no Windows**, o sistema inicia **em silêncio** — nenhuma janela nem balão; apenas o ícone na bandeja.
@@ -134,7 +134,7 @@ Na primeira vez aparece **Preparando a cópia offline**, com barra de progresso,
 
 ### Banco em outra máquina (terminal)
 
-O sistema localiza o `SMALL.FDB` **sem conectar no banco**: `config.json` → pastas do Small Commerce → arquivos de configuração do Small → unidades de rede mapeadas → compartilhamentos → máquinas da rede com a porta 3050 aberta (só teste de porta).
+O sistema localiza o `SMALL.FDB` **sem conectar no banco**: `config.json` → pastas do PDV → arquivos de configuração do PDV → unidades de rede mapeadas → compartilhamentos → máquinas da rede com a porta 3050 aberta (só teste de porta).
 
 Num terminal com o banco numa unidade de rede (ex.: `H:\SMALL.FDB`), ele descobre de qual máquina vem a unidade (`net use`) e o `gbak` tenta o Firebird dela nos caminhos padrão do Small. O endereço que funcionar fica salvo (`fbHost`/`fdbPath`). Se nenhum funcionar, o último recurso é copiar o arquivo pela unidade de rede e converter aqui.
 
@@ -147,7 +147,7 @@ Atenção: no **Firebird 3 ou mais novo**, se ninguém estiver conectado no inst
 
 </details>
 
-**Onde ficam as cópias:** `C:\ProgramData\RelatoriosSmallSoftOffline\copias` (disco local; o Firebird não abre banco em pasta de rede). Ficam a cópia em uso e o último backup `.fbk`. O sistema só apaga arquivos com o nome que ele mesmo cria, dentro dessa pasta.
+**Onde ficam as cópias:** `C:\ProgramData\RelatoriosOffline\copias` (disco local; o Firebird não abre banco em pasta de rede). Ficam a cópia em uso e o último backup `.fbk`. O sistema só apaga arquivos com o nome que ele mesmo cria, dentro dessa pasta.
 
 ---
 
@@ -238,7 +238,7 @@ A maior parte é editada pela própria tela (**Configurações**), no computador
 <a id="seguranca"></a>
 ## 🔒 Somente leitura e segurança
 
-- **Nunca escreve no banco do Small Commerce:** nenhum `INSERT`, `UPDATE`, `DELETE` ou alteração de estrutura. Só passa SQL que começa com `SELECT` ou `WITH`, sempre em transação **somente leitura** do Firebird.
+- **Nunca escreve no banco do PDV:** nenhum `INSERT`, `UPDATE`, `DELETE` ou alteração de estrutura. Só passa SQL que começa com `SELECT` ou `WITH`, sempre em transação **somente leitura** do Firebird.
 - **Banco principal intocado:** só o `gbak` (em modo leitura) acessa o `SMALL.FDB`; relatório e estoque leem a cópia, restaurada como banco **somente leitura**.
 - **Senha do Firebird por variável de ambiente**, nunca pela linha de comando.
 - **Gravação atômica** do manifesto da cópia, do `config.json` e dos relatórios.
@@ -349,7 +349,7 @@ npm test
 
 ## 👤 Autor
 
-**Ruda Gabriel** — criador e único desenvolvedor do **Relatórios SmallSoft Offline**: concepção, arquitetura,
+**Ruda Gabriel** — criador e único desenvolvedor do **Relatórios Offline**: concepção, arquitetura,
 código, regras de negócio, testes e manutenção.
 
 [github.com/RudaGabriel](https://github.com/RudaGabriel)

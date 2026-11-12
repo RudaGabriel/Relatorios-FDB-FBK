@@ -142,15 +142,12 @@ timeout /t 5 >nul
 :ja_elevado
 
 :: =========================================================
-:: instalar-na-inicializacao.bat                       v1.15.1
+:: instalar-na-inicializacao.bat                       v1.15.2
 ::  Autor: Ruda Gabriel
 :: Configura o servidor para iniciar automaticamente no logon.
 ::
 :: (Historico completo das versoes: CHANGELOG.md no repositorio.)
-:: CHANGELOG 1.15.1 - 2026-11-05 - A instalacao volta a mostrar a janela
-::   (com as etapas e as pausas), como antes da 1.15.0. O silencio ficou onde
-::   deve: na partida automatica (logon / ligar o computador), que o
-::   bootstrap.vbs 1.3.0 abre com "/inicializacao" - nenhuma janela.
+:: CHANGELOG 1.15.2 - 2026-11-12 - Nome do sistema neutro ("Relatorios Offline"); sem citar o PDV de terceiros.
 ::
 :: =========================================================
 
@@ -285,7 +282,7 @@ echo Exemplos: Farmacia Central, Loja Silva, Mercado XYZ
 echo.
 set "NOVO_NOME="
 set /p NOVO_NOME=Nome do sistema: 
-if "!NOVO_NOME!"=="" set "NOVO_NOME=Relatorios SmallSoft Offline"
+if "!NOVO_NOME!"=="" set "NOVO_NOME=Relatorios Offline"
 
 :: NOVO_NOME e CFG vao ao PowerShell por VARIAVEL DE AMBIENTE (v1.13.1), e nao
 :: embutidos no texto do .ps1 temporario. Assim: (1) apostrofo no nome ("Bob's

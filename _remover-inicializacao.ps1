@@ -1,5 +1,5 @@
 # =============================================================================
-# _remover-inicializacao.ps1                                          v1.1.1
+# _remover-inicializacao.ps1                                          v1.1.2
 # Autor: Ruda Gabriel
 # -----------------------------------------------------------------------------
 # Auxiliar do remover-inicializacao.bat (nao precisa ser executado direto).
@@ -34,7 +34,7 @@
 # Codigo de saida: 0 = tudo removido/encerrado, 1 = sobrou algo (listado).
 #
 # (Historico completo das versoes: CHANGELOG.md no repositorio.)
-# CHANGELOG 1.1.1 - 2026-11-12 - Comentarios sem referencias a outros projetos.
+# CHANGELOG 1.1.2 - 2026-11-12 - Nome do sistema neutro ("Relatorios Offline"); sem citar o PDV de terceiros.
 # =============================================================================
 
 param(
@@ -99,7 +99,7 @@ if ($Escopo -eq 'Maquina') {
     # Pasta sem permissao de escrita (rede somente leitura): log em %TEMP%.
     try { Add-Content -Path $LOG_PATH -Value $null -ErrorAction Stop } catch { $LOG_PATH = Join-Path $env:TEMP 'relatorio-remover.log' }
 }
-if (-not $APP_NAME) { $APP_NAME = 'Relatorios SmallSoft Offline' }
+if (-not $APP_NAME) { $APP_NAME = 'Relatorios Offline' }
 
 # "launcher.vbs" e' nome generico (outro programa pode ter um): so' conta o
 # DESTA pasta. Os demais nomes sao exclusivos do sistema.

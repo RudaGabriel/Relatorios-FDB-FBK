@@ -3,12 +3,11 @@
 # Metodos: winget -> MSI silencioso -> MSI com log detalhado.
 # Auto-eleva para Administrador se necessario.
 #
-# @version 1.3.1
+# @version 1.3.2
 # @author Ruda Gabriel
 # @changelog
 #   (Historico completo das versoes: CHANGELOG.md no repositorio.)
-#   1.3.1 - 2026-11-05 - Sem janelas: a instancia elevada (quando necessaria) abre oculta e o
-#     MSI de reserva (com log) tambem roda sem interface (/qn) - instalacao silenciosa.
+#   1.3.2 - 2026-11-12 - Nome do sistema neutro ("Relatorios Offline"); sem citar o PDV de terceiros.
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -17,7 +16,7 @@ $ErrorActionPreference = 'Stop'
 # config.json ainda nao existe nesta etapa da instalacao) - titulo e' so'
 # cosmetico, nao pode impedir a instalacao do Node.js.
 try {
-    $__appName = "Relatorios SmallSoft Offline"
+    $__appName = "Relatorios Offline"
     $__cfgPath = Join-Path $PSScriptRoot "config.json"
     if (Test-Path $__cfgPath) {
         $__cfg = Get-Content $__cfgPath -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop

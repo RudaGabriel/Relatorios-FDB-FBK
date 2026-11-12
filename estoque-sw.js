@@ -1,8 +1,8 @@
 /**
  * estoque-sw.js
- * @version 1.1.0
+ * @version 1.1.1
  * @author Ruda Gabriel
- * @description Service worker do estoque (Relatórios SmallSoft Offline).
+ * @description Service worker do estoque (Relatórios Offline).
  *
  * Guarda NO APARELHO a página do estoque, as regras da busca e o leitor de código
  * de barras, para o estoque abrir mesmo com o servidor de relatórios fora do ar (os
@@ -17,10 +17,7 @@
  * localhost) — por http://IP:7735 o estoque continua funcionando enquanto a página
  * estiver aberta, mas não abre de novo sem o servidor.
  *
- * 1.1.0 — Servidor fora do ar (ou computador fora da rede): QUALQUER página do sistema abre
- *         direto o ESTOQUE guardado no aparelho (antes: página de aviso). Prazo inteligente:
- *         sem resposta em 8 s, confere /api/db-status (2 s); se também não responder, abre o
- *         estoque — não espera o "tempo esgotado" do navegador (1 min ou mais).
+ * 1.1.1 — Nome do sistema neutro ("Relatorios Offline"); sem citar o PDV de terceiros.
  * Histórico completo das versões: CHANGELOG.md no repositório.
  */
 "use strict";

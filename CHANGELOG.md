@@ -1,6 +1,20 @@
 # Changelog
 
-## Relatórios SmallSoft Offline 1.9.4 — 2026-11-12
+## Relatórios Offline 1.9.5 — 2026-11-12
+
+- **Nome neutro: "Relatórios Offline"**, sem citar o PDV de terceiros nas
+  telas, no README, no histórico e nos comentários — passa a ser chamado de "PDV" / "banco do PDV".
+- Continuam no código, só porque são necessários para o funcionamento: o nome do arquivo do banco (`SMALL.FDB`) e
+  as pastas de instalação onde o sistema procura o banco sozinho.
+- Instalações com o nome padrão passam a usar a pasta de cópias `C:\ProgramData\RelatoriosOffline\copias` (a cópia é
+  refeita sozinha) e a tarefa "Relatorios Offline - Relatorios". Quem usa um nome próprio (`appName`) não muda nada.
+- Versões: `servidor-relatorio.js` 3.7.10, `gerar-relatorio-html.js` 3.26.7, `offline-copia.js` 1.6.1,
+  `estoque-offline.js` 1.2.2, `estoque-busca.js` 1.0.1, `estoque-sw.js` 1.1.1, `https-local.js` 1.0.2,
+  `localizar-banco.js` 1.2.1, `iniciar-tray.ps1` 1.7.8, `api.ps1` 1.8.2, `_instalar-node.ps1` 1.3.2,
+  `_remover-inicializacao.ps1` 1.1.2, `bootstrap.vbs` 1.3.1, `instalar-na-inicializacao.bat` 1.15.2,
+  `remover-inicializacao.bat` 1.0.2, `node-firebird.bat` 1.1.2 e os três `gerar_relatorio_*.bat`.
+
+## Relatórios Offline 1.9.4 — 2026-11-12
 
 - **Projeto autônomo e neutro.** Retiradas as menções a outros projetos e as citações de terceiros dos comentários,
   das telas, do README e do histórico. Os avisos de licença exigidos pelos componentes de terceiros incluídos ficam só
@@ -9,21 +23,21 @@
   `author` e `license` no `package.json`.
 - `servidor-relatorio.js` 3.7.9, `gerar-relatorio-html.js` 3.26.6, `iniciar-tray.ps1` 1.7.7, `_remover-inicializacao.ps1` 1.1.1.
 
-## Relatórios SmallSoft Offline 1.9.3 — 2026-11-09
+## Relatórios Offline 1.9.3 — 2026-11-09
 
 - **X de limpar a busca fora do lugar.** No modo de desempenho **Leve**, a regra geral dos botões anulava a
   centralização do X dentro do campo de busca: ao passar o mouse ele descia até a borda de baixo (no modo Completo,
   ao clicar). Agora o X fica sempre centralizado, em qualquer modo e estado.
 - `gerar-relatorio-html.js` 3.26.5.
 
-## Relatórios SmallSoft Offline 1.9.2 — 2026-11-05
+## Relatórios Offline 1.9.2 — 2026-11-05
 
 - **Todos os avisos temporários com barrinha de tempo.** Uma barrinha no rodapé do aviso encolhe até ele sumir: no
   estoque (ex.: "Copiado: ...", agora 3 s), no **Aviso** enviado pela bandeja para as telas e nos avisos de correção de
   horário (os avisos do relatório já tinham). A duração segue a mesma de antes (configuração "Duração do toast").
 - `servidor-relatorio.js` 3.7.8.
 
-## Relatórios SmallSoft Offline 1.9.1 — 2026-11-05
+## Relatórios Offline 1.9.1 — 2026-11-05
 
 - **Remoção da inicialização com mensagens claras.** Sem administrador, a tarefa agendada (criada com permissão de
   administrador) aparecia como `[FALHA] ... Acesso negado` — duas vezes — embora fosse removida logo em seguida pelo
@@ -31,7 +45,7 @@
   vez só; `[FALHA]` fica para o que realmente não pôde ser removido.
 - `_remover-inicializacao.ps1` 1.1.0.
 
-## Relatórios SmallSoft Offline 1.9.0 — 2026-11-05
+## Relatórios Offline 1.9.0 — 2026-11-05
 
 - **Estoque sem o servidor mesmo sem a página aberta.** Abrindo o endereço do sistema com o servidor desligado (ou o
   computador fora da rede), em até ~10 s abre **direto o estoque guardado no aparelho**, já na cópia local — em vez de
@@ -47,7 +61,7 @@
   - A página do estoque não puxa mais o foco (teclado) quando está dentro de outra tela.
 - `servidor-relatorio.js` 3.7.7, `estoque-sw.js` 1.1.0.
 
-## Relatórios SmallSoft Offline 1.8.9 — 2026-11-05
+## Relatórios Offline 1.8.9 — 2026-11-05
 
 - **iPhone: "Abrir o estoque" (servidor fora do ar) não respondia.** O aparelho tinha os dados do estoque, mas não a
   cópia da página neste endereço; o botão então apontava para o endereço seguro (porta 7736), que também estava fora
@@ -61,7 +75,7 @@
     inteira vira o estoque.
 - `servidor-relatorio.js` 3.7.6.
 
-## Relatórios SmallSoft Offline 1.8.8 — 2026-11-05
+## Relatórios Offline 1.8.8 — 2026-11-05
 
 - **Cancelar a cópia offline em andamento.** No selo (*Cancelar a cópia*), na tela *Preparando a cópia* e na bandeja
   (*Cópia offline do banco → Cancelar a cópia em andamento*), com confirmação. O `gbak`/`gfix` (ou a cópia do arquivo)
@@ -73,7 +87,7 @@
   - Novo teste automático (49 no total).
 - `offline-copia.js` 1.6.0, `servidor-relatorio.js` 3.7.5, `iniciar-tray.ps1` 1.7.6.
 
-## Relatórios SmallSoft Offline 1.8.7 — 2026-11-05
+## Relatórios Offline 1.8.7 — 2026-11-05
 
 - **"Sair" da bandeja avisa por notificação**, sem a janela com o botão OK: a notificação do Windows "Servidor
   encerrado" informa que os relatórios abertos voltam automaticamente quando o servidor for iniciado e que, no celular, o
@@ -81,7 +95,7 @@
   clique em "Sair" durante o encerramento é ignorado.
 - `iniciar-tray.ps1` 1.7.5.
 
-## Relatórios SmallSoft Offline 1.8.6 — 2026-11-05
+## Relatórios Offline 1.8.6 — 2026-11-05
 
 - **A instalação volta a mostrar a janela** (etapas, pausas e o nome do sistema), como antes da 1.8.5.
 - **Partida automática totalmente silenciosa.** Ao ligar o computador ou entrar no Windows, o sistema inicia sem
@@ -94,7 +108,7 @@
   - **Para valer:** execute o `instalar-na-inicializacao.bat` uma vez (ele copia o `bootstrap.vbs` novo).
 - `instalar-na-inicializacao.bat` 1.15.1, `bootstrap.vbs` 1.3.0, `launcher.vbs` 1.1.0, `iniciar-tray.ps1` 1.7.4.
 
-## Relatórios SmallSoft Offline 1.8.5 — 2026-11-05
+## Relatórios Offline 1.8.5 — 2026-11-05
 
 - **Instalação na inicialização totalmente silenciosa.** Ao abrir o `instalar-na-inicializacao.bat`, nenhuma janela do
   Prompt de Comando ou do PowerShell permanece aberta: o instalador se relança oculto na hora, a parte que exige
@@ -106,7 +120,7 @@
   - Instalação do Node.js sem janelas: instância elevada oculta e MSI de reserva sem interface.
 - `instalar-na-inicializacao.bat` 1.15.0, `_instalar-node.ps1` 1.3.1.
 
-## Relatórios SmallSoft Offline 1.8.4 — 2026-11-05
+## Relatórios Offline 1.8.4 — 2026-11-05
 
 - **Textos em linguagem formal, em todo o sistema** (estoque, relatório, configurações, bandeja, cópia offline,
   leitor de código de barras, instalador e cliente da API). Exemplos:
@@ -122,7 +136,7 @@
   `https-local.js` 1.0.1, `estoque-sw.js` 1.0.3, `iniciar-tray.ps1` 1.7.3, `api.ps1` 1.8.1,
   `instalar-na-inicializacao.bat` 1.14.2, `remover-inicializacao.bat` 1.0.1, `_remover-inicializacao.ps1` 1.0.2.
 
-## Relatórios SmallSoft Offline 1.8.3 — 2026-11-05
+## Relatórios Offline 1.8.3 — 2026-11-05
 
 - **Celular, servidor encerrado: "Abrir o estoque" não fazia nada.** O botão da faixa vermelha preferia o endereço
   `/estoque` quando havia service worker; sem a página no cache, o celular caía de novo na tela "Servidor fora do ar",
@@ -133,7 +147,7 @@
     `/estoque`, abre direto; se o aparelho ainda não tiver a cópia, avisa para abrir o estoque uma vez com o servidor ligado.
 - `servidor-relatorio.js` 3.7.3, `estoque-sw.js` 1.0.2.
 
-## Relatórios SmallSoft Offline 1.8.2 — 2026-11-04
+## Relatórios Offline 1.8.2 — 2026-11-04
 
 - **Servidor de volta: botão para voltar ao ao vivo.** Com o estoque usando a cópia do aparelho, quando o servidor
   responde de novo aparece a faixa verde **"✓ Servidor de relatórios no ar de novo"** ("Você está vendo a cópia salva
@@ -147,7 +161,7 @@
   pequeno de **restaurar** (⤢); tocar na linha também abre de novo.
 - `servidor-relatorio.js` 3.7.2, `estoque-sw.js` 1.0.1.
 
-## Relatórios SmallSoft Offline 1.8.1 — 2026-11-04
+## Relatórios Offline 1.8.1 — 2026-11-04
 
 - **Não abria mais depois de "Sair" ("Iniciando servidor de relatórios..." e "Outra instância já está rodando" no
   log).** Ao sair, a bandeja mostrava a janela "servidor encerrado" ANTES de soltar a trava de instância única;
@@ -161,7 +175,7 @@
   certificado próprio o navegador não guarda a página).
 - `servidor-relatorio.js` 3.7.1, `iniciar-tray.ps1` 1.7.2.
 
-## Relatórios SmallSoft Offline 1.8.0 — 2026-11-04
+## Relatórios Offline 1.8.0 — 2026-11-04
 
 - **Estoque sem o servidor.** Cada aparelho que abre o estoque guarda uma cópia dele (IndexedDB), atualizada sozinha
   quando o estoque muda (só baixa de novo se mudou; compactada). Com o servidor de relatórios fora do ar:
@@ -178,7 +192,7 @@
     a data e o link para ele.
 - `estoque-offline.js` 1.2.0 (busca em `estoque-busca.js` 1.0.0, rota `/api/estoque/pacote`), `servidor-relatorio.js` 3.7.0.
 
-## Relatórios SmallSoft Offline 1.7.0 — 2026-11-04
+## Relatórios Offline 1.7.0 — 2026-11-04
 
 Melhorias:
 
@@ -198,7 +212,7 @@ Melhorias:
   (a recarga forçada continua mantendo o estado).
 - `servidor-relatorio.js` 3.6.4, `gerar-relatorio-html.js` 3.26.3.
 
-## Relatórios SmallSoft Offline 1.6.6 — 2026-10-30
+## Relatórios Offline 1.6.6 — 2026-10-30
 
 - **"Erro ao gerar relatório — Falha ao iniciar node: spawn ...\\node.exe ENOENT".** O gerador era sempre aberto
   pelo mesmo caminho do `node.exe` que iniciou o servidor; se o Node.js fosse atualizado ou reinstalado com o
@@ -208,7 +222,7 @@ Melhorias:
   que fazer (reiniciar pela bandeja ou rodar o instalador).
 - `servidor-relatorio.js` 3.6.3.
 
-## Relatórios SmallSoft Offline 1.6.5 — 2026-10-30
+## Relatórios Offline 1.6.5 — 2026-10-30
 
 - **Servidor reiniciando sozinho a cada minuto.** Com o banco principal numa unidade de rede (`H:\`, `\\servidor`)
   lenta ou fora do ar, o servidor lia os atributos do `SMALL.FDB` de forma síncrona e ficava **congelado** até o
@@ -224,7 +238,7 @@ Melhorias:
     registrada no log) antes de reiniciar.
   - Novo teste: rede que não responde não trava o servidor (47 testes).
 
-## Relatórios SmallSoft Offline 1.6.4 — 2026-10-30
+## Relatórios Offline 1.6.4 — 2026-10-30
 
 - **Bandeja: aviso "Não foi possível conectar ao banco!" enganoso.** O relatório nunca conecta no banco principal,
   mas a checagem de 20 s depois de abrir (herdada da versão anterior) perguntava se o banco que o relatório lê
@@ -235,7 +249,7 @@ Melhorias:
   - cópia pronta → nada (só avisa se a própria cópia não abrir).
 - `iniciar-tray.ps1` 1.6.3.
 
-## Relatórios SmallSoft Offline 1.6.3 — 2026-10-29
+## Relatórios Offline 1.6.3 — 2026-10-29
 
 - **Botões do mesmo tamanho** (o maior como referência):
   - *Minhas preferências → Proibidos*: **Importar do servidor** e **Juntar com os do servidor** ficam lado a lado,
@@ -245,7 +259,7 @@ Melhorias:
     (e se ajustam quando algum some).
 - `gerar-relatorio-html.js` 3.26.2.
 
-## Relatórios SmallSoft Offline 1.6.2 — 2026-10-29
+## Relatórios Offline 1.6.2 — 2026-10-29
 
 - Celular: o selo "Offline" volta para o **canto esquerdo** (à direita ficava em cima do botão "voltar ao topo"
   do relatório).
@@ -253,13 +267,13 @@ Melhorias:
   acompanha o dedo; um deslize curto volta ao lugar, e deslizar sobre o Estoque não abre a página.
 - `servidor-relatorio.js` 3.6.1.
 
-## Relatórios SmallSoft Offline 1.6.1 — 2026-10-29
+## Relatórios Offline 1.6.1 — 2026-10-29
 
 - Estoque: **botão "X" para limpar a busca**, visível em qualquer aparelho (o "X" nativo do campo de busca não
   aparece no iPhone nem em vários Android). Aparece só quando há texto; limpa, refaz a busca e devolve o foco
   ao campo.
 
-## Relatórios SmallSoft Offline 1.6.0 — 2026-10-29
+## Relatórios Offline 1.6.0 — 2026-10-29
 
 - **Leitor de código de barras AO VIVO no celular.** O navegador só libera a câmera ao vivo em página segura, e por
   `http://IP:7735` o celular só tirava foto. Novo `https-local.js` 1.0.0: a mesma aplicação também na porta **7736**
@@ -277,13 +291,13 @@ Melhorias:
   até 30 s. Também cria `%APPDATA%\npm` antes do `npm install`. O firewall libera a porta HTTPS também.
 - `servidor-relatorio.js` 3.6.0.
 
-## Relatórios SmallSoft Offline 1.5.6 — 2026-10-29
+## Relatórios Offline 1.5.6 — 2026-10-29
 
 - Celular: a bolinha do selo "Offline" (e o selo expandido com o botão Estoque) fica no **canto direito**, acima da
   barra de botões. No computador continua à esquerda.
 - `servidor-relatorio.js` 3.5.4.
 
-## Relatórios SmallSoft Offline 1.5.5 — 2026-10-29
+## Relatórios Offline 1.5.5 — 2026-10-29
 
 - **Celular: selo "Offline" e botão Estoque recolhidos.** No celular eles cobriam a lista e as janelas. Agora ficam
   num botão redondo pequeno, só com a bolinha de status (verde, amarela ou vermelha). Um toque expande
@@ -291,7 +305,7 @@ Melhorias:
   (espera o detalhe ser fechado). No computador nada muda.
 - `servidor-relatorio.js` 3.5.3.
 
-## Relatórios SmallSoft Offline 1.5.4 — 2026-10-29
+## Relatórios Offline 1.5.4 — 2026-10-29
 
 - **Microsoft Defender acusava o `bootstrap.vbs`** como `Trojan:Script/ObfusScript.A!ml` (falso positivo do
   modelo de aprendizado de máquina), no `.zip` baixado e na cópia feita pelo instalador, que então parava em
@@ -303,7 +317,7 @@ Melhorias:
     confere o bootstrap de novo 2 s depois da cópia e, se o antivírus o apagou, explica como restaurar; a
     alternativa sem tarefa agendada passa a ser um atalho `.lnk` (em vez de um `.vbs` gerado).
 
-## Relatórios SmallSoft Offline 1.5.3 — 2026-10-29
+## Relatórios Offline 1.5.3 — 2026-10-29
 
 - **Ícone da bandeja com bordas pretas**: o ícone era convertido com `Bitmap.GetHicon()`, que descarta a
   transparência suave e fazia o Windows pintar a borda de preto. Agora é montado como um `.ico` de verdade
@@ -311,14 +325,14 @@ Melhorias:
   Vale para o ícone padrão e para o `favicon.png` personalizado (que também mantém a proporção).
 - `iniciar-tray.ps1` 1.6.2.
 
-## Relatórios SmallSoft Offline 1.5.2 — 2026-10-29
+## Relatórios Offline 1.5.2 — 2026-10-29
 
 - **Configurações abertas pela bandeja voltam para a tela de origem**: com o estoque aberto, o botão da página de
   configurações agora é "Voltar para o estoque" e retorna com a mesma busca (antes sempre voltava ao relatório).
   Vale também para outras telas (período, carregamento). O endereço de volta só aceita caminhos deste servidor.
 - `servidor-relatorio.js` 3.5.2.
 
-## Relatórios SmallSoft Offline 1.5.1 — 2026-10-29
+## Relatórios Offline 1.5.1 — 2026-10-29
 
 - **Estoque: "Contém" desmarcado** agora traz só os itens que **começam** com o texto digitado (descrição, código,
   código de barras, referência, fornecedor...). Antes bastava o termo estar no começo de qualquer palavra, então
@@ -329,7 +343,7 @@ Melhorias:
   Telas do relatório sem o modal (e a tela de carregamento) também deixam de ignorar o comando.
 - `servidor-relatorio.js` 3.5.1, `estoque-offline.js` 1.1.0.
 
-## Relatórios SmallSoft Offline 1.5.0 — 2026-10-29
+## Relatórios Offline 1.5.0 — 2026-10-29
 
 - **Progresso visível durante a cópia**: barra com porcentagem, tempo decorrido e "faltam ~" no selo, na página de
   espera e na bandeja ("copiando N%"). O "1/7" que não mudava foi removido. A porcentagem vem do tamanho dos
@@ -342,13 +356,13 @@ Melhorias:
 - Estoque: o botão "Carregar mais (0 restantes)" não aparece mais quando não há mais itens.
 - `offline-copia.js` 1.4.0, `servidor-relatorio.js` 3.5.0.
 
-## Relatórios SmallSoft Offline 1.4.0 — 2026-10-29
+## Relatórios Offline 1.4.0 — 2026-10-29
 
 - **Cópias novas não chegavam num terminal** (banco em `H:\SMALL.FDB`, unidade de rede): o gbak tentava
   `127.0.0.1:C:\...\SMALL.FDB`, que não existe no terminal ("Error while trying to open file").
   - `localizar-banco.js` 1.1.0: descobre a máquina de origem da unidade (`net use`) e monta os endereços candidatos
-    no Firebird dela (caminhos padrão do Small; `\\SRV\C$\...` dá o caminho exato); nunca devolve 127.0.0.1 com
-    caminho inexistente; lê servidor e caminho em chaves separadas nos arquivos do Small.
+    no Firebird dela (caminhos padrão do PDV; `\\SRV\C$\...` dá o caminho exato); nunca devolve 127.0.0.1 com
+    caminho inexistente; lê servidor e caminho em chaves separadas nos arquivos do PDV.
   - `offline-copia.js` 1.3.0: o gbak tenta os candidatos em ordem e o que funcionar fica salvo no `config.json`;
     último recurso: cópia do arquivo pela unidade de rede. A verificação não para mais num caminho local
     inexistente quando há candidatos.
@@ -359,7 +373,7 @@ Melhorias:
 - Estoque: colunas numéricas centralizadas. Pasta `legado/` removida.
 - `servidor-relatorio.js` 3.4.0.
 
-## Relatórios SmallSoft Offline 1.3.0 — 2026-10-29
+## Relatórios Offline 1.3.0 — 2026-10-29
 
 - **Estoque: leitor de código de barras pela câmera** — leitor
   (`leitor/leitor.js` e `leitor/foco.js`, com câmera ao vivo, flash, troca de câmera, zoom, foco e foto do código).
@@ -370,7 +384,7 @@ Melhorias:
   opcional (`offlineMetodo: "auto"`/`"arquivo"`). Banco alcançável só por compartilhamento é copiado pelo arquivo.
 - `servidor-relatorio.js` 3.3.0, `offline-copia.js` 1.2.1; testes: 42.
 
-## Relatórios SmallSoft Offline 1.2.0 — 2026-10-29
+## Relatórios Offline 1.2.0 — 2026-10-29
 
 - **Cópia pelo ARQUIVO** (`offline-copia.js` 1.2.0): o `SMALL.FDB` é copiado para `copias\temp` (só leitura do
   arquivo, sem conectar), depois de alguns segundos sem gravação; a cópia só vale se tamanho e data do arquivo não
@@ -378,12 +392,12 @@ Melhorias:
   local; a cópia temporária é apagada. O gbak direto no banco principal virou **reserva** (método `auto`), usada só
   quando a cópia do arquivo não sai íntegra; `offlineMetodo: "arquivo"` nunca a usa; `"gbak"` usa só ela.
 - **Banco em rede** (`localizar-banco.js` 1.0.0, novo): procura o `SMALL.FDB` sem conectar no banco — config, pastas
-  do Small, arquivos de configuração do Small, unidades de rede, compartilhamentos (`net view`) e máquinas com a
+  do PDV, arquivos de configuração do PDV, unidades de rede, compartilhamentos (`net view`) e máquinas com a
   porta 3050 aberta. Copia pelo compartilhamento quando acessível. Novo `fdbArquivo` no `config.json`.
 - **Selecionar banco** aceita `\\servidor\pasta\SMALL.FDB` e `.fbk` (a tela recusava `.fbk` antes de enviar).
 - `servidor-relatorio.js` 3.2.0; testes: 41.
 
-## Relatórios SmallSoft Offline 1.1.0 — 2026-10-28
+## Relatórios Offline 1.1.0 — 2026-10-28
 
 - **Nenhuma conexão direta com o banco principal** (`offline-copia.js` 1.1.0, `servidor-relatorio.js` 3.1.0):
   o relatório e o estoque leem só a cópia; o único contato com o `SMALL.FDB` é o gbak, ao copiar.
@@ -398,7 +412,7 @@ Melhorias:
   desmarcada = só no começo das palavras). Vale para termos, frases, exclusões e destaque; salva por aparelho;
   parâmetro `contem=0` em `/api/estoque` e `/api/estoque/csv`.
 
-## Relatórios SmallSoft Offline 1.0.0 — 2026-10-28
+## Relatórios Offline 1.0.0 — 2026-10-28
 
 Primeira versão do sistema offline (a partir do servidor 2.22.0 / gerador 3.26.1), com:
 
@@ -417,7 +431,7 @@ Primeira versão do sistema offline (a partir do servidor 2.22.0 / gerador 3.26.
 - **`servidor-relatorio.js` 3.0.0:** lê a cópia offline (troca de leitura sem gravar no `config.json`),
   rotas `/api/offline*`, `/estoque` e `/api/estoque*`, selo "Offline" + atalho "Estoque" na tela, `.fbk` no
   seletor de banco, fast-poll espaçado enquanto lê a cópia, porta padrão 7735.
-- **Bandeja, instalador e removedor:** nome "Relatorios SmallSoft Offline", porta 7735, bootstrap em
+- **Bandeja, instalador e removedor:** nome "Relatorios Offline", porta 7735, bootstrap em
   `%LOCALAPPDATA%\RelatoriosOfflineBootstrap`, mutex próprio; o removedor só encerra processos **desta** pasta
   (convive com outros sistemas na mesma máquina). Bandeja: *Consultar estoque* e *Cópia offline do banco*.
 - **Testes:** `test/offline.test.js` e `test/estoque.test.js` (gbak e Firebird simulados).
@@ -688,7 +702,7 @@ Gerador do relatório.
   - README e CHANGELOG ("iPhone do Caixa", "Atendente Número 1", VENDEDOR A/B);
   - os testes (vendedores "VENDEDOR A…D", produtos genéricos no lugar de marcas);
   - comentários do servidor e do `bootstrap.vbs`.
-- Mantidos: a autoria (`@author`, "Desenvolvido por", `package.json`) e o nome do sistema de origem (Small Commerce/SmallSoft), usado nos caminhos de instalação para achar o banco.
+- Mantidos: a autoria (`@author`, "Desenvolvido por", `package.json`) e os caminhos de instalação do PDV, usados para achar o banco.
 
 ### 3.26.0 — 2026-10-28 22:00
 
@@ -908,7 +922,7 @@ Gerador do relatório.
 
 **Nomes com acento saem certos ("Atendente Número 1").**
 
-- O SmallSoft grava nomes em colunas sem charset (NONE) com bytes Windows-1252; pedidos como texto numa conexão UTF8, o "í" chegava como U+FFFD ("N�mero"). Vendedor, cliente, natureza, status, formas de pagamento e descrição dos itens (NFCE, ALTERACA, PAGAMENT, VENDAS, ITENS001) agora são lidos como bytes (CHARACTER SET OCTETS) e decodificados no Node: UTF-8 válido como está, senão Windows-1252 (latin1 se o Node não tiver ICU completo). Testado no Firebird 3 com node-firebird 1.1.9, 1.1.10, 2.0.0 e 2.18.2 e colunas NONE/UTF8/WIN1252.
+- O O PDV grava nomes em colunas sem charset (NONE) com bytes Windows-1252; pedidos como texto numa conexão UTF8, o "í" chegava como U+FFFD ("N�mero"). Vendedor, cliente, natureza, status, formas de pagamento e descrição dos itens (NFCE, ALTERACA, PAGAMENT, VENDAS, ITENS001) agora são lidos como bytes (CHARACTER SET OCTETS) e decodificados no Node: UTF-8 válido como está, senão Windows-1252 (latin1 se o Node não tiver ICU completo). Testado no Firebird 3 com node-firebird 1.1.9, 1.1.10, 2.0.0 e 2.18.2 e colunas NONE/UTF8/WIN1252.
 - Firebird que recusar a conversão: a consulta é refeita do jeito antigo (aviso "AVISO TEXTO" no log) — a geração nunca cai por causa disso.
 
 ### 3.8.4 — 2026-10-16 18:00

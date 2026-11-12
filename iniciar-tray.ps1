@@ -3,11 +3,11 @@
 # Instancia unica via mutex global.
 # Abrir Relatorio: se ja tem aba aberta (SSE), foca ela. Se nao, abre browser.
 #
-# @version 1.7.7
+# @version 1.7.8
 # @author Ruda Gabriel
 # @changelog
 #   (Historico completo das versoes: CHANGELOG.md no repositorio.)
-#   1.7.7 - 2026-11-12 - Comentarios sem referencias a outros projetos (projeto autonomo).
+#   1.7.8 - 2026-11-12 - Nome do sistema neutro ("Relatorios Offline"); sem citar o PDV de terceiros.
 
 param([switch]$Inicializacao)
 
@@ -158,7 +158,7 @@ Write-TrayLog "Mutex adquirido - nenhuma outra instancia ativa."
 # ---------------------------------------------------------------------------
 $cfgPath = Join-Path $DIR "config.json"
 
-$APP_NAME  = "Relatorios SmallSoft Offline"
+$APP_NAME  = "Relatorios Offline"
 $PORT      = 7735
 $MAQUINA_IP = $null
 # Credenciais do Firebird - ver bloco de leitura do config.json abaixo.
@@ -1411,7 +1411,7 @@ $menu.Items.Add((New-ItemMenu "Gerar por per\u00edodo..." "periodo" "#7C3AED" {
         try { Start-Process "$ADDR/periodo" } catch {}
     }
 })) | Out-Null
-# --- Estoque e copia offline (Relatorios SmallSoft Offline) ---
+# --- Estoque e copia offline (Relatorios Offline) ---
 $menu.Items.Add((New-ItemMenu "Consultar estoque" "estoque" "#0D9488" { try { Start-Process "$ADDR/estoque" } catch {} })) | Out-Null
 $subCopia = New-ItemMenu "C\u00f3pia offline do banco" "copia" "#0D9488"
 $subCopia.DropDownItems.Add((New-ItemMenu "Atualizar a c\u00f3pia agora" "atualizar" "#0D9488" {
