@@ -33,6 +33,12 @@
   (o PDV é "PDV"/"banco do PDV"); só ficam os caminhos/arquivos necessários ao funcionamento
   e os avisos de licença em `LICENCAS-TERCEIROS.txt`. Créditos do autor (Ruda Gabriel)
   sempre explícitos no README, nos cabeçalhos e no `package.json`.
+- **Ortografia e linguagem formal:** sempre revisar ortografia, acentuação, concordância e
+  pontuação de todo texto novo ou alterado — telas, avisos, bandeja, mensagens de log e de
+  erro, README, CHANGELOG, comentários, commits e PRs. Tudo em português do Brasil formal
+  (sem gírias nem informalidades como "de novo", "no ar", "sozinho", "pra", "dá"); o que
+  não estiver formal deve ser reescrito formalmente. Nos arquivos do Windows (100% ASCII),
+  os acentos continuam como `\uXXXX`.
 - **Exemplos neutros:** placeholders, exemplos, testes e documentação sem nomes de
   pessoas, clientes, lojas ou marcas (ex.: "Celular do Caixa 1", RAÇÃO GATO 1KG, FULANO).
 - **Arquivos do Windows:** `iniciar-tray.ps1`, `api.ps1` e os `.vbs` ficam 100% ASCII

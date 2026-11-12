@@ -1,11 +1,11 @@
 /**
  * gerar-relatorio-html.js
- * @version 3.26.8
+ * @version 3.26.9
  * @author Ruda Gabriel
  * @description Gerador de relatório HTML (subprocesso spawnado pelo servidor). SOMENTE LEITURA.
  * @changelog (único, exclusivo desta versão — sem acumular histórico de versões anteriores)
  *   (Histórico completo das versões: CHANGELOG.md no repositório.)
- *   3.26.8 - 2026-11-12 - Configurações abrem com "Nesta tela" recolhido; "Fora da loja" mostra o nome e o IP do Tailscale em dois campos.
+ *   3.26.9 - 2026-11-12 - Textos em linguagem formal (janela "Abrir no celular").
  */
 
 (function() {
@@ -13,7 +13,7 @@
     // Embutida no HTML gerado (comentário + atributo data-*) para rastreabilidade:
     // suporte técnico consegue identificar qual versão do script gerou um relatório
     // específico sem precisar abrir o gerar-relatorio-html.js.
-    const SCRIPT_VERSION = "3.26.8";
+    const SCRIPT_VERSION = "3.26.9";
     // Lista-mestra dos temas. id = valor de data-theme no HTML e de "fdb_theme" salvo no navegador;
     // ordem = ordem no menu e no "próximo tema". O CSS de cada id é o bloco [data-theme="id"] do <style>
     // (variáveis) mais, nos temas de estilo, as regras html[data-theme="id"] (forma: cantos, bordas,
@@ -7278,7 +7278,7 @@ var __abrirModalQr = function() {
         if (end) _img.src = "/qr.svg?" + (fora ? (dois && _qrSel === "ip" ? "externo=ip&" : "externo=1&") : "") + "t=" + Date.now();
         if (d) d.innerHTML = fora
             ? (end ? _DICA_FORA + (_qrDados.externoNome
-                ? (dois ? '<br><br>Toque num dos endereços para trocar o QR code. O <b>nome</b> é fixo (não muda); o <b>IP</b> também funciona.'
+                ? (dois ? '<br><br>Toque em um dos endereços para alterar o QR code. O <b>nome</b> é fixo; o <b>IP</b> também funciona.'
                        : '<br><br>Endereço <b>fixo</b> (nome do Tailscale). Também funciona pelo IP: <b>' + esc(String(_qrDados.externoIP || "")) + '</b>')
                 : '<br><br>Dica: ative o <b>MagicDNS</b> no painel do Tailscale para usar um nome fixo no lugar do IP.') : _DICA_SEM_TS)
             : _DICA_LOJA;
