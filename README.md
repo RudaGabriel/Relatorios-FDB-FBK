@@ -4,12 +4,12 @@
 
 ### Vendas do dia e consulta de estoque do PDV, lendo uma **cópia offline** do banco Firebird
 
-<img alt="versão: 1.9.7" src="https://img.shields.io/badge/vers%C3%A3o-1.9.7-2563EB?style=flat">
-<img alt="servidor: v3.7.12" src="https://img.shields.io/badge/servidor-v3.7.12-2563EB?style=flat">
-<img alt="cópia offline: v1.6.1" src="https://img.shields.io/badge/c%C3%B3pia%20offline-v1.6.1-0D9488?style=flat">
+<img alt="versão: 1.9.8" src="https://img.shields.io/badge/vers%C3%A3o-1.9.8-2563EB?style=flat">
+<img alt="servidor: v3.7.13" src="https://img.shields.io/badge/servidor-v3.7.13-2563EB?style=flat">
+<img alt="cópia offline: v1.6.2" src="https://img.shields.io/badge/c%C3%B3pia%20offline-v1.6.2-0D9488?style=flat">
 <img alt="estoque: v1.2.2" src="https://img.shields.io/badge/estoque-v1.2.2-0D9488?style=flat">
-<img alt="gerador: v3.26.8" src="https://img.shields.io/badge/gerador-v3.26.8-2563EB?style=flat">
-<img alt="bandeja: v1.7.8" src="https://img.shields.io/badge/bandeja-v1.7.8-2563EB?style=flat">
+<img alt="gerador: v3.26.9" src="https://img.shields.io/badge/gerador-v3.26.9-2563EB?style=flat">
+<img alt="bandeja: v1.7.9" src="https://img.shields.io/badge/bandeja-v1.7.9-2563EB?style=flat">
 <img alt="testes: 49 passando" src="https://img.shields.io/badge/testes-49%20passando-22C55E?style=flat">
 
 <img alt="plataforma: Windows 10 | 11" src="https://img.shields.io/badge/plataforma-Windows%2010%20%7C%2011-0078D4?style=flat&logo=windows&logoColor=white">
@@ -88,11 +88,11 @@ Na primeira vez aparece **Preparando a cópia offline**, com barra de progresso,
 | Consultar o estoque | Botão **Estoque** · bandeja → *Consultar estoque* · `http://IP:7735/estoque` |
 | Ler um código de barras | No estoque: botão **Ler código** (leitura em tempo real pela câmera, também no celular) ou leitor USB direto no campo de busca |
 | Abrir no celular | Botão **Celular** (QR code) · bandeja → *Abrir no celular (QR code)...* |
-| Abrir fora da loja (4G, outro Wi-Fi) | **Celular → Fora da loja**, com o Tailscale nos dois aparelhos. A janela mostra **dois campos**, cada um com o botão de copiar: o **nome fixo** da máquina no Tailscale (ex.: `http://pc-loja.tailxxxx.ts.net:7735/`) e o **IP** (`http://100.x.y.z:7735/`); tocar num deles troca o QR code. Trocar de endereço não perde o apelido nem as preferências do aparelho |
+| Abrir fora da loja (4G, outro Wi-Fi) | **Celular → Fora da loja**, com o Tailscale nos dois aparelhos. A janela mostra **dois campos**, cada um com o botão de copiar: o **nome fixo** da máquina no Tailscale (ex.: `http://pc-loja.tailxxxx.ts.net:7735/`) e o **IP** (`http://100.x.y.z:7735/`); tocar em um deles altera o QR code. Trocar de endereço não perde o apelido nem as preferências do aparelho |
 | Recarregar a cada venda | *Configurações → Nesta tela* (abre recolhido: toque no título) *→ Atualização*. Ligado: recarrega como um F5 (limpa busca, filtros e janelas). Desligado: as vendas entram sem recarregar |
 | Saber de quando são os dados | Selo **Offline** no canto da tela (no celular fica recolhido numa bolinha no canto esquerdo: toque para ver; recolhe automaticamente em 5 s ou ao deslizar para a esquerda/para baixo) · cabeçalho do menu da bandeja |
 | Atualizar a cópia agora | Clique no selo → *Atualizar cópia agora* · bandeja → *Cópia offline do banco → Atualizar a cópia agora* |
-| Cancelar uma cópia em andamento | Clique no selo → *Cancelar a cópia* (também na tela *Preparando a cópia*) · bandeja → *Cópia offline do banco → Cancelar a cópia em andamento*. Pede confirmação; a cópia em uso continua valendo e a próxima cópia automática fica para depois de 30 min (*Atualizar a cópia agora* faz uma nova quando quiser) |
+| Cancelar uma cópia em andamento | Clique no selo → *Cancelar a cópia* (também na tela *Preparando a cópia*) · bandeja → *Cópia offline do banco → Cancelar a cópia em andamento*. Pede confirmação; a cópia em uso continua valendo e a próxima cópia automática é adiada por 30 min (*Atualizar a cópia agora* gera uma nova a qualquer momento) |
 | Acompanhar uma cópia em andamento | Selo e página de espera mostram **porcentagem, tempo decorrido e quanto falta**; a bandeja mostra *copiando N%* |
 | Configurar | Botão **Configurações** · bandeja → *Configurações → Editar configurações...* (funciona com qualquer tela aberta, inclusive o estoque; o botão **Voltar** retorna à tela de onde você veio) |
 | Trocar o banco | Bandeja → *Configurações → Selecionar banco (FDB)...* |
@@ -185,9 +185,9 @@ Cada aparelho que abre o estoque **guarda uma cópia dele** (todos os itens, com
 - a busca continua funcionando **com as mesmas regras** (nome, código, código de barras, "Contém", filtros, ordem), inclusive pelo leitor de código de barras;
 - o detalhe do item mostra os campos principais (todas as colunas voltam com o servidor) e **Exportar** gera o CSV da cópia;
 - quando o servidor volta (a página confere a cada 15 s), aparece a faixa verde **"✓ O servidor de relatórios está disponível novamente"** com o botão **Retornar aos dados em tempo real** (dentro do relatório: **Retornar ao relatório em tempo real** ou **Continuar no estoque em tempo real**) — nada é trocado automaticamente no meio de uma consulta. As duas faixas podem ser minimizadas (botão **−** ou automaticamente após 8 s) e restauradas pelo botão ⤢;
-- no relatório (computador e celular), a faixa "servidor encerrado / sem conexão" avisa **"Somente o estoque está disponível"**, com a data, os itens e o tamanho, e o botão **Abrir o estoque**: ele abre em tela cheia a cópia da página do estoque guardada no aparelho — funciona em qualquer celular (inclusive iPhone), sem o servidor. Enquanto o servidor está no ar, o próprio relatório mantém essa cópia da página atualizada no aparelho que já usa o estoque; se ainda não houver cópia, a faixa explica como guardá-la.
+- no relatório (computador e celular), a faixa "servidor encerrado / sem conexão" avisa **"Somente o estoque está disponível"**, com a data, os itens e o tamanho, e o botão **Abrir o estoque**: ele abre em tela cheia a cópia da página do estoque guardada no aparelho — funciona em qualquer celular (inclusive iPhone), sem o servidor. Enquanto o servidor está em funcionamento, o próprio relatório mantém essa cópia da página atualizada no aparelho que já usa o estoque; se ainda não houver cópia, a faixa explica como guardá-la.
 
-**Abrir o estoque com o servidor já desligado** (a página não estava aberta, fechou o navegador ou reiniciou o aparelho): basta abrir o endereço do sistema normalmente — se o servidor não responder (desligado ou computador fora da rede), em até ~10 s abre **direto o estoque guardado no aparelho**. Isso funciona onde o navegador aceita guardar o site: no próprio computador (`localhost`) e pelo **endereço seguro do Tailscale** (HTTPS ligado no painel do Tailscale). Com o HTTPS do Tailscale ligado, o celular que abre pelo `http://…:7735` passa sozinho para o endereço seguro (`https://…ts.net:7736`) — guarde esse endereço nos favoritos ou na tela de início. No iPhone, use o **Safari** (ou o atalho na tela de início): o Chrome e outros navegadores do iPhone não guardam sites para abrir sem conexão. Pelo `http` ou com o certificado próprio do sistema (o que mostra aviso), o navegador não guarda o site: use o botão **Abrir o estoque** do relatório enquanto a página estiver aberta.
+**Abrir o estoque com o servidor já desligado** (a página não estava aberta, fechou o navegador ou reiniciou o aparelho): basta abrir o endereço do sistema normalmente — se o servidor não responder (desligado ou computador fora da rede), em até ~10 s abre **direto o estoque guardado no aparelho**. Isso funciona onde o navegador aceita guardar o site: no próprio computador (`localhost`) e pelo **endereço seguro do Tailscale** (HTTPS ligado no painel do Tailscale). Com o HTTPS do Tailscale ligado, o celular que abre pelo `http://…:7735` é redirecionado automaticamente para o endereço seguro (`https://…ts.net:7736`) — guarde esse endereço nos favoritos ou na tela de início. No iPhone, use o **Safari** (ou o atalho na tela de início): o Chrome e outros navegadores do iPhone não guardam sites para abrir sem conexão. Pelo `http` ou com o certificado próprio do sistema (o que mostra aviso), o navegador não guarda o site: use o botão **Abrir o estoque** do relatório enquanto a página estiver aberta.
 
 ---
 
@@ -287,9 +287,9 @@ As rotas gerais estão no `api.ps1` (menu interativo). Rotas da cópia offline e
 | Celular: "Ler código" só tira foto / não abre a leitura em tempo real | Execute o instalador novamente (ele libera a porta 7736 no firewall) e aceite o aviso de certificado na primeira vez. O log mostra `HTTPS (leitura em tempo real pela câmera do celular): porta 7736` |
 | Instalação nova: "Node.js não foi instalado corretamente" na 1ª vez | Corrigido na versão 1.6.0 (o instalador espera o Node terminar e relê o PATH). Se ainda ocorrer, execute o instalador novamente |
 | Bandeja avisa "Preparando a cópia offline do banco" | Normal na primeira vez (ou depois de apagar as cópias): o relatório será aberto automaticamente quando a cópia estiver pronta. O banco principal só é lido pelo gbak, em modo leitura |
-| Servidor reinicia sozinho a cada minuto | Corrigido na 1.6.5: com o banco numa unidade de rede lenta ou fora do ar, o servidor travava esperando a rede e a bandeja o reiniciava. Se continuar, veja no `relatorio.log` as linhas `[TRAY]` ("sem resposta na checagem", "forçando reinício" ou "processo não está mais ativo") |
+| Servidor reinicia automaticamente a cada minuto | Corrigido na 1.6.5: com o banco em uma unidade de rede lenta ou indisponível, o servidor travava esperando a rede e a bandeja o reiniciava. Se continuar, veja no `relatorio.log` as linhas `[TRAY]` ("sem resposta na checagem", "forçando reinício" ou "processo não está mais ativo") |
 | "Falha ao iniciar node: spawn ... node.exe ENOENT" | O Node.js foi atualizado ou reinstalado com o servidor ligado. Desde a 1.6.6 o servidor localiza o Node novamente de forma automática; se a mensagem continuar, use *Reiniciar servidor* na bandeja |
-| Fica em "Iniciando servidor de relatórios..." / log diz "Outra instância já está rodando" | Corrigido na 1.8.1: depois de **Sair**, a bandeja ficava presa esperando o OK de uma janela escondida. Agora ela termina de verdade, e uma bandeja presa é encerrada sozinha ao abrir de novo (~20 s). Na primeira vez depois de atualizar, se ainda acontecer, reinicie o computador |
+| Fica em "Iniciando servidor de relatórios..." / log diz "Outra instância já está rodando" | Corrigido na 1.8.1: depois de **Sair**, a bandeja ficava presa esperando o OK de uma janela escondida. Agora ela termina de verdade, e uma bandeja presa é encerrada automaticamente na abertura seguinte (~20 s). Na primeira vez depois de atualizar, se ainda acontecer, reinicie o computador |
 | Qualquer outro problema | `relatorio.log` (bandeja → *Ferramentas → Abrir o log*), categorias `[OFFLINE]` e `[ESTOQUE]` |
 
 ---

@@ -1,5 +1,14 @@
 # Changelog
 
+## Relatórios Offline 1.9.8 — 2026-11-12
+
+- **Revisão de ortografia e linguagem formal.** Confirmação e aviso de cancelamento da cópia ("a próxima cópia automática
+  será adiada"), janela "Abrir no celular" ("Toque em um dos endereços para alterar o QR code") e README ("em
+  funcionamento", "redirecionado automaticamente", "encerrada automaticamente na abertura seguinte").
+- `offline-copia.js`: cabeçalho só com a versão atual (as entradas antigas já estão neste CHANGELOG).
+- `CLAUDE.md`: regra "Ortografia e linguagem formal" (revisar e formalizar todo texto novo ou alterado).
+- `servidor-relatorio.js` 3.7.13, `gerar-relatorio-html.js` 3.26.9, `offline-copia.js` 1.6.2, `iniciar-tray.ps1` 1.7.9.
+
 ## Relatórios Offline 1.9.7 — 2026-11-12
 
 - **Configurações abrem com "Nesta tela" recolhido:** um toque no título (com a setinha) abre e fecha as

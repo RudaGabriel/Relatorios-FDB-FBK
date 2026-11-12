@@ -3,11 +3,11 @@
 # Instancia unica via mutex global.
 # Abrir Relatorio: se ja tem aba aberta (SSE), foca ela. Se nao, abre browser.
 #
-# @version 1.7.8
+# @version 1.7.9
 # @author Ruda Gabriel
 # @changelog
 #   (Historico completo das versoes: CHANGELOG.md no repositorio.)
-#   1.7.8 - 2026-11-12 - Nome do sistema neutro ("Relatorios Offline"); sem citar o PDV de terceiros.
+#   1.7.9 - 2026-11-12 - Textos em linguagem formal (cancelamento da copia).
 
 param([switch]$Inicializacao)
 
@@ -1426,7 +1426,7 @@ $subCopia.DropDownItems.Add((New-ItemMenu "Cancelar a c\u00f3pia em andamento" "
     if (-not $o.emAndamento) { Show-Balao "$APP_NAME" (L "N\u00e3o h\u00e1 c\u00f3pia em andamento para cancelar.") "Info"; return }
     if ($o.cancelando) { Show-Balao "$APP_NAME" (L "A c\u00f3pia j\u00e1 est\u00e1 sendo cancelada.") "Info"; return }
     $pct = if ($o.progresso -and $null -ne $o.progresso.pct) { " (" + [int]$o.progresso.pct + "%)" } else { "" }
-    $msg = (L "Cancelar a c\u00f3pia em andamento") + $pct + "?`n`n" + $(if ($o.copia) { L "O relat\u00f3rio continua com a c\u00f3pia atual." } else { L "Ainda n\u00e3o h\u00e1 c\u00f3pia: o relat\u00f3rio s\u00f3 abre depois que uma c\u00f3pia ficar pronta." }) + " " + (L "A pr\u00f3xima c\u00f3pia autom\u00e1tica fica para mais tarde.")
+    $msg = (L "Cancelar a c\u00f3pia em andamento") + $pct + "?`n`n" + $(if ($o.copia) { L "O relat\u00f3rio continua com a c\u00f3pia atual." } else { L "Ainda n\u00e3o h\u00e1 c\u00f3pia: o relat\u00f3rio s\u00f3 abre depois que uma c\u00f3pia ficar pronta." }) + " " + (L "A pr\u00f3xima c\u00f3pia autom\u00e1tica ser\u00e1 adiada.")
     $resp = [System.Windows.Forms.DialogResult]::No
     try { $resp = [System.Windows.Forms.MessageBox]::Show($msg, "$APP_NAME", [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Question, [System.Windows.Forms.MessageBoxDefaultButton]::Button2) } catch {}
     if ($resp -ne [System.Windows.Forms.DialogResult]::Yes) { return }

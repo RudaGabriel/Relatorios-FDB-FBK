@@ -2,26 +2,12 @@
 
 /**
  * offline-copia.js
- * @version 1.6.1
+ * @version 1.6.2
  * @author Ruda Gabriel
  * @description Cópia offline do banco do PDV (Relatórios Offline).
- * @changelog
- *   1.4.0 - 2026-10-29 - Progresso da cópia (status.progresso: pct, decorrido, restante) pelo
- *     tamanho dos arquivos que o gbak grava; sem o "1/7" (número do endereço tentado).
- *   1.3.0 - 2026-10-29 - Terminal com banco em unidade de rede: o gbak tenta os endereços
- *     candidatos (servidor da unidade + caminhos padrão do PDV) e avisa qual funcionou;
- *     último recurso: cópia pelo arquivo. Cópia periódica (a data de um .FDB aberto no
- *     Windows quase não muda). A verificação nunca para; cópia travada é liberada.
- *   1.2.1 - 2026-10-29 - Padrão volta a ser o gbak direto (seguro); cópia pelo arquivo opcional.
- *   1.2.0 - 2026-10-29 - Cópia do ARQUIVO para a pasta temporária (sem conectar), só aceita
- *     se o arquivo não mudou durante a cópia, validação com gfix e gbak sobre a cópia
- *     temporária; gbak direto só como reserva (offlineMetodo "auto"|"arquivo"|"gbak").
- *     Banco em rede: copia pela unidade de rede / compartilhamento.
- *   1.1.0 - 2026-10-28 - Sem nenhuma conexão direta com o banco principal: detecção de
- *     mudança pelo arquivo (tamanho/data), sem consulta de verificação; só modo "copia".
  *
  * O relatório não precisa ler o banco principal (SMALL.FDB) ao vivo: ele lê uma
- * CÓPIA local, que este módulo mantém atualizada sozinho. Assim o relatório
+ * CÓPIA local, que este módulo mantém atualizada automaticamente. Assim o relatório
  * continua abrindo quando o banco principal está sendo atualizado, em
  * manutenção, travado ou fora do ar — e o banco principal nunca é alterado.
  *
@@ -57,7 +43,7 @@
  *   - banco principal nesta máquina: a cada `verificarMs` lê só o TAMANHO e a
  *     DATA DE ALTERAÇÃO do arquivo (sem abrir o banco); mudou → nova cópia,
  *     respeitando o intervalo mínimo entre cópias (`intervaloMinMs`, que também
- *     cresce sozinho para 3× a duração da última cópia — nunca ocupa o banco do
+ *     cresce automaticamente para 3× a duração da última cópia — nunca ocupa o banco do
  *     caixa mais que 1/3 do tempo);
  *   - banco principal em outra máquina (não dá para olhar o arquivo): a cada
  *     3× o intervalo mínimo;
@@ -70,7 +56,7 @@
  * Este arquivo não depende de nada do servidor: tudo chega por `opcoes`
  * (o que também permite testá-lo isolado, com gbak e Firebird simulados).
  *
- * 1.6.1 — Nome do sistema neutro ("Relatorios Offline"); sem citar o PDV de terceiros.
+ * 1.6.2 — Textos em linguagem formal (cancelamento da cópia). Cabeçalho só com a versão atual.
  * Histórico completo das versões: CHANGELOG.md no repositório.
  */
 
@@ -81,7 +67,7 @@ const cp = require("child_process");
 const { pipeline } = require("stream");
 const net = require("net");
 
-const VERSAO = "1.6.1";
+const VERSAO = "1.6.2";
 const MANIFESTO = "copia-offline.json";
 const PREFIXO = "SMALL_OFFLINE_";
 // Únicos nomes que este módulo cria — e os ÚNICOS que ele apaga.
@@ -960,7 +946,7 @@ function criarCopiaOffline(opcoes) {
         /**
          * Cancela a cópia em andamento (1.6.0). Encerra o gbak/gfix (ou a cópia do
          * arquivo), apaga os temporários e mantém a cópia em uso. A próxima cópia
-         * automática fica para depois de offlineAdiarAposCancelarMin.
+         * automática é adiada por offlineAdiarAposCancelarMin.
          */
         cancelar(cb) {
             cb = typeof cb === "function" ? cb : () => {};
@@ -973,7 +959,7 @@ function criarCopiaOffline(opcoes) {
             st.etapa = "cancelando a cópia";
             if (filhoAtual) { filhoCancelado = filhoAtual; matarFilho(filhoAtual); }
             if (copiaStreams) copiaStreams.forEach(x => { try { x.destroy(new Error("cancelada")); } catch (_) {} });
-            cb({ ok: true, msg: "Cancelando a cópia em andamento. A cópia em uso continua valendo; a próxima cópia automática fica para mais tarde (\"Atualizar a cópia agora\" faz uma nova quando quiser)." });
+            cb({ ok: true, msg: "Cancelando a cópia em andamento. A cópia em uso continua valendo; a próxima cópia automática será adiada (\"Atualizar a cópia agora\" gera uma nova a qualquer momento)." });
         },
         /** Pede uma cópia já (ignora o intervalo mínimo). */
         atualizarAgora(cb) {

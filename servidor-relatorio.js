@@ -5,7 +5,7 @@ if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
 
 /**
  * servidor-relatorio.js — Relatórios Offline
- * @version 3.7.12
+ * @version 3.7.13
  * @author Ruda Gabriel
  * @description Servidor HTTP + Firebird de relatórios com SSE, fast-poll e
  *              geração em subprocesso. SOMENTE LEITURA no banco.
@@ -14,7 +14,7 @@ if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
  *              principal em atualização, manutenção ou fora do ar.
  * @changelog
  *   (Histórico completo das versões: CHANGELOG.md no repositório.)
- *   3.7.12 - 2026-11-12 - QR code também pelo IP do Tailscale (/qr.svg?externo=ip).
+ *   3.7.13 - 2026-11-12 - Textos em linguagem formal (cancelamento da cópia).
  */
 
 
@@ -22,7 +22,7 @@ if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
 // Registrada na linha de início do log para que se saiba, ao investigar
 // qualquer ocorrência, qual versão do servidor estava no ar naquele momento
 // (o gerar-relatorio-html.js já faz o mesmo via SCRIPT_VERSION).
-const SERVER_VERSION = "3.7.12";
+const SERVER_VERSION = "3.7.13";
 
 // ===== Logger Global seguro — flush debounced 300ms =====
 const _fs = require('fs');
@@ -4703,7 +4703,7 @@ var _offlineSeloCliente = function() {
             };
             var bCc = document.getElementById("__off_cc");
             if (bCc) bCc.onclick = function() {
-                if (!window.confirm("Cancelar a cópia em andamento?\n\n" + (s.copia ? "O relatório continua com a cópia atual (dados de " + quando(s.copia.dadosDe) + ")." : "Ainda não há cópia: o relatório só abre depois que uma cópia ficar pronta.") + " A próxima cópia automática fica para mais tarde.")) return;
+                if (!window.confirm("Cancelar a cópia em andamento?\n\n" + (s.copia ? "O relatório continua com a cópia atual (dados de " + quando(s.copia.dadosDe) + ")." : "Ainda não há cópia: o relatório só abre depois que uma cópia ficar pronta.") + " A próxima cópia automática será adiada.")) return;
                 bCc.disabled = true; bCc.textContent = "Cancelando...";
                 fetch("/api/offline/cancelar", { method: "POST", cache: "no-store" }).then(function(r) { return r.json().catch(function() { return {}; }); })
                     .then(function(r) { msgAcao = r && (r.msg || r.erro) || "Pedido enviado."; buscar(); })
