@@ -1,11 +1,11 @@
 /**
  * gerar-relatorio-html.js
- * @version 3.26.7
+ * @version 3.26.8
  * @author Ruda Gabriel
  * @description Gerador de relatório HTML (subprocesso spawnado pelo servidor). SOMENTE LEITURA.
  * @changelog (único, exclusivo desta versão — sem acumular histórico de versões anteriores)
  *   (Histórico completo das versões: CHANGELOG.md no repositório.)
- *   3.26.7 - 2026-11-12 - Nome do sistema neutro ("Relatorios Offline"); sem citar o PDV de terceiros.
+ *   3.26.8 - 2026-11-12 - Configurações abrem com "Nesta tela" recolhido; "Fora da loja" mostra o nome e o IP do Tailscale em dois campos.
  */
 
 (function() {
@@ -13,7 +13,7 @@
     // Embutida no HTML gerado (comentário + atributo data-*) para rastreabilidade:
     // suporte técnico consegue identificar qual versão do script gerou um relatório
     // específico sem precisar abrir o gerar-relatorio-html.js.
-    const SCRIPT_VERSION = "3.26.7";
+    const SCRIPT_VERSION = "3.26.8";
     // Lista-mestra dos temas. id = valor de data-theme no HTML e de "fdb_theme" salvo no navegador;
     // ordem = ordem no menu e no "próximo tema". O CSS de cada id é o bloco [data-theme="id"] do <style>
     // (variáveis) mais, nos temas de estilo, as regras html[data-theme="id"] (forma: cantos, bordas,
@@ -3302,6 +3302,16 @@ tbody tr:hover .tdItemDesc { color: var(--danger, #e55); border-color: var(--dan
 .qrCaixa { background: #fff; border-radius: 14px; padding: 10px; width: 260px; height: 260px; margin: 4px auto 0; box-shadow: var(--shadow-md); }
 .qrCaixa img { display: block; width: 100%; height: 100%; image-rendering: pixelated; }
 .qrUrl { font: 600 15px 'JetBrains Mono', Consolas, monospace; color: var(--text-main); background: var(--bg-app); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 10px 12px; text-align: center; word-break: break-all; }
+.qrCampos { display: flex; flex-direction: column; gap: 8px; }
+.qrCampo { display: flex; align-items: center; gap: 8px; width: 100%; box-sizing: border-box; background: var(--bg-app); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 8px 8px 8px 12px; cursor: pointer; color: var(--text-main); outline: none; }
+.qrCampo:hover, .qrCampo:focus-visible { border-color: var(--border-focus, var(--accent)); }
+.qrCampo[aria-checked="true"] { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-bg); }
+.qrCampoTx { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.qrCampoRot { font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted); }
+.qrCampo[aria-checked="true"] .qrCampoRot { color: var(--accent); }
+.qrCampoEnd { font: 600 13.5px 'JetBrains Mono', Consolas, monospace; word-break: break-all; }
+.qrCampoCp { flex: none; width: 38px; height: 38px; display: inline-flex; align-items: center; justify-content: center; border-radius: 10px; border: 1px solid var(--border); background: var(--bg-panel); color: var(--text-main); cursor: pointer; }
+.qrCampoCp:hover { background: var(--bg-hover); }
 .qrDica { font-size: 12.5px; color: var(--text-muted); text-align: center; line-height: 1.5; }
 .tmZoomOps .tmPerfOp { flex: 1 1 0; }
 /* Configurações (v3.24.0): layout alinhado. Cabeçalho com "Fechar" sempre à direita;
@@ -3349,9 +3359,13 @@ tbody tr:hover .tdItemDesc { color: var(--danger, #e55); border-color: var(--dan
 .prImpBtns .btn svg { flex: none; }
 @media (max-width: 400px) { .prImpExtra { display: none; } }
 #cfgTela { display: block; }
-#cfgTela > .k { margin-bottom: 2px; }
+#cfgTela .cfgTelaDet > summary.k { margin-bottom: 2px; cursor: pointer; list-style: none; display: flex; align-items: flex-start; gap: 8px; user-select: none; }
+#cfgTela .cfgTelaDet > summary.k::-webkit-details-marker { display: none; }
+#cfgTela .cfgTelaDet > summary.k::before { content: ""; flex: none; width: 7px; height: 7px; margin-top: 4px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(-45deg); transition: transform .15s; }
+#cfgTela .cfgTelaDet[open] > summary.k::before { transform: rotate(45deg); }
+#cfgTela .cfgTelaDet > summary.k:hover { color: var(--text-main); }
 #cfgTela .tmZoom { display: block; }
-#cfgTela > .k + .tmPerf { margin-top: 8px; border-top: 0; padding-top: 0; }
+#cfgTela .cfgTelaDet > summary.k + .tmPerf { margin-top: 8px; border-top: 0; padding-top: 0; }
 .tmRecLbl { display: flex; align-items: flex-start; gap: 10px; padding: 8px 2px 2px; font-size: 13px; font-weight: 600; line-height: 1.35; cursor: pointer; color: var(--text-main); }
 .tmRecLbl input { width: 18px; height: 18px; margin: 0; flex: none; accent-color: var(--accent); cursor: pointer; }
 .qrAbas { display: flex; gap: 6px; } .qrAbas .qrAba { flex: 1 1 0; }
@@ -7204,6 +7218,8 @@ var __abrirModalQr = function() {
             '</div>' +
             '<div class="qrCaixa"><img id="qrImg" alt="QR code do endereço do relatório" src="/qr.svg?t=' + Date.now() + '"></div>' +
             '<div class="qrUrl" id="qrUrl">…</div>' +
+            // Fora da loja com nome e IP do Tailscale: dois campos (toque troca o QR; cada um copia o seu).
+            '<div class="qrCampos" id="qrCampos" role="radiogroup" aria-label="Endereço para o celular" style="display:none"></div>' +
             '<button class="btn" id="qrCopiar" type="button" style="width:100%;justify-content:center;min-height:42px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copiar endereço</button>' +
             '<div class="qrDica" id="qrDica">O celular precisa estar no <b>mesmo Wi-Fi</b> desta máquina. Também é possível digitar o endereço no navegador do celular.</div>' +
           '</div>' +
@@ -7224,19 +7240,46 @@ var __abrirModalQr = function() {
     var _DICA_LOJA = 'O celular precisa estar no <b>mesmo Wi-Fi</b> desta máquina. Também é possível digitar o endereço no navegador do celular.';
     var _DICA_FORA = 'Funciona em qualquer lugar (4G, outro Wi-Fi) com o app <b>Tailscale</b> ligado no celular, na <b>mesma conta</b> desta máquina. Rede privada e criptografada — só os seus aparelhos entram.';
     var _DICA_SEM_TS = '<b>Para acessar fora da loja:</b><br>1. Instale o <b>Tailscale</b> nesta máquina (tailscale.com/download) e entre com uma conta.<br>2. Instale o app <b>Tailscale</b> no celular e entre com a <b>mesma conta</b>.<br>3. Abra esta janela novamente: o QR code para acesso de qualquer lugar será exibido.<br>Grátis, criptografado e sem abrir porta no roteador.';
-    var _abaQr = "loja";
+    var _abaQr = "loja", _qrSel = "nome";
+    var _SVG_COPIAR = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+    var _desenharCampos = function() {
+        var c = document.getElementById("qrCampos"); if (!c) return;
+        var itens = [{ k: "nome", rot: "Nome do Tailscale (fixo)", end: _qrDados.externo }, { k: "ip", rot: "IP do Tailscale", end: _qrDados.externoIP }];
+        c.innerHTML = itens.map(function(it) {
+            return '<div class="qrCampo" role="radio" tabindex="0" data-k="' + it.k + '" aria-checked="' + (it.k === _qrSel ? "true" : "false") + '">' +
+                '<span class="qrCampoTx"><span class="qrCampoRot">' + it.rot + '</span><span class="qrCampoEnd">' + esc(String(it.end || "")) + '</span></span>' +
+                '<button type="button" class="qrCampoCp" data-end="' + esc(String(it.end || "")) + '" aria-label="Copiar: ' + it.rot + '" title="Copiar">' + _SVG_COPIAR + '</button></div>';
+        }).join("");
+        c.querySelectorAll(".qrCampo").forEach(function(el) {
+            var escolher = function() { var k = el.getAttribute("data-k"); if (k === _qrSel) return; _qrSel = k; _mostrarAba("fora"); };
+            el.addEventListener("click", function(e) { if (e.target.closest && e.target.closest(".qrCampoCp")) return; escolher(); });
+            el.addEventListener("keydown", function(e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); escolher(); } });
+        });
+        c.querySelectorAll(".qrCampoCp").forEach(function(b) {
+            b.addEventListener("click", function(e) {
+                e.stopPropagation();
+                var t = b.getAttribute("data-end") || ""; if (!t) return;
+                copiarTexto(t); toast("Copiado", "Endereço do relatório: " + t);
+            });
+        });
+    };
     var _mostrarAba = function(aba) {
         _abaQr = aba;
         _bg.querySelectorAll(".qrAba").forEach(function(b) { b.setAttribute("aria-checked", b.getAttribute("data-aba") === aba ? "true" : "false"); });
         var u = document.getElementById("qrUrl"), d = document.getElementById("qrDica"), cx = _img.parentNode, cp = document.getElementById("qrCopiar");
         var fora = aba === "fora", end = fora ? _qrDados.externo : _qrDados.url;
+        // Nome E IP do Tailscale: dois campos no lugar do endereço único.
+        var dois = !!(fora && _qrDados.externoNome && _qrDados.externoIP && _qrDados.externoIP !== _qrDados.externo);
+        var cs = document.getElementById("qrCampos");
         if (cx) cx.style.display = end ? "" : "none";
-        if (u) { u.style.display = end ? "" : "none"; u.textContent = end || ""; }
-        if (cp) cp.style.display = end ? "" : "none";
-        if (end) _img.src = "/qr.svg?" + (fora ? "externo=1&" : "") + "t=" + Date.now();
+        if (u) { u.style.display = end && !dois ? "" : "none"; u.textContent = end || ""; }
+        if (cp) cp.style.display = end && !dois ? "" : "none";
+        if (cs) { cs.style.display = dois ? "" : "none"; if (dois) _desenharCampos(); else cs.innerHTML = ""; }
+        if (end) _img.src = "/qr.svg?" + (fora ? (dois && _qrSel === "ip" ? "externo=ip&" : "externo=1&") : "") + "t=" + Date.now();
         if (d) d.innerHTML = fora
             ? (end ? _DICA_FORA + (_qrDados.externoNome
-                ? '<br><br>Endereço <b>fixo</b> (nome do Tailscale — não se altera). Também funciona pelo IP: <b>' + esc(String(_qrDados.externoIP || "")) + '</b>'
+                ? (dois ? '<br><br>Toque num dos endereços para trocar o QR code. O <b>nome</b> é fixo (não muda); o <b>IP</b> também funciona.'
+                       : '<br><br>Endereço <b>fixo</b> (nome do Tailscale). Também funciona pelo IP: <b>' + esc(String(_qrDados.externoIP || "")) + '</b>')
                 : '<br><br>Dica: ative o <b>MagicDNS</b> no painel do Tailscale para usar um nome fixo no lugar do IP.') : _DICA_SEM_TS)
             : _DICA_LOJA;
     };
@@ -7247,6 +7290,7 @@ var __abrirModalQr = function() {
         _qrDados.externoNome = (r && r.externoNome) ? String(r.externoNome) : null;
         _qrDados.externoIP = (r && r.externoIP) ? String(r.externoIP) : null;
         var u = document.getElementById("qrUrl"); if (u && _abaQr === "loja") u.textContent = _qrDados.url;
+        if (_abaQr === "fora") _mostrarAba("fora");
     }).catch(function() { var u = document.getElementById("qrUrl"); if (u) u.textContent = location.origin + "/"; });
     document.getElementById("qrCopiar").addEventListener("click", function() {
         var u = document.getElementById("qrUrl"); if (!u || !u.textContent) return;
@@ -7331,8 +7375,10 @@ var __abrirModalConfig = function(opcoes) {
                 : '') +
               (_alvo ? '' :
               '<div class="kv" id="cfgTela" style="flex-direction:column;align-items:stretch;gap:0">' +
-                '<div class="k">Nesta tela <span style="font-weight:400;text-transform:none;letter-spacing:0">(só neste aparelho — vale na hora, sem salvar)</span></div>' +
+                // Recolhida ao abrir (clique no título para ver as preferências deste aparelho).
+                '<details class="cfgTelaDet"><summary class="k">Nesta tela <span style="font-weight:400;text-transform:none;letter-spacing:0">(só neste aparelho — vale na hora, sem salvar)</span></summary>' +
                 _htmlPrefsTela() +
+                '</details>' +
               '</div>') +
               '<div class="kv"' + _escondeSrv + '>' +
                 '<div class="k">Nome do sistema</div>' +

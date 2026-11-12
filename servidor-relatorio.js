@@ -5,7 +5,7 @@ if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
 
 /**
  * servidor-relatorio.js — Relatórios Offline
- * @version 3.7.11
+ * @version 3.7.12
  * @author Ruda Gabriel
  * @description Servidor HTTP + Firebird de relatórios com SSE, fast-poll e
  *              geração em subprocesso. SOMENTE LEITURA no banco.
@@ -14,7 +14,7 @@ if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
  *              principal em atualização, manutenção ou fora do ar.
  * @changelog
  *   (Histórico completo das versões: CHANGELOG.md no repositório.)
- *   3.7.11 - 2026-11-12 - Comentários atualizados com os textos atuais das telas.
+ *   3.7.12 - 2026-11-12 - QR code também pelo IP do Tailscale (/qr.svg?externo=ip).
  */
 
 
@@ -22,7 +22,7 @@ if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
 // Registrada na linha de início do log para que se saiba, ao investigar
 // qualquer ocorrência, qual versão do servidor estava no ar naquele momento
 // (o gerar-relatorio-html.js já faz o mesmo via SCRIPT_VERSION).
-const SERVER_VERSION = "3.7.11";
+const SERVER_VERSION = "3.7.12";
 
 // ===== Logger Global seguro — flush debounced 300ms =====
 const _fs = require('fs');
@@ -6953,8 +6953,11 @@ var server=http.createServer(function(req,res){
         var _qrExtIP = _ts.ip ? "http://" + _ts.ip + ":" + PORT + "/" : "";
         var _qrExt = _ts.nome ? "http://" + _ts.nome + ":" + PORT + "/" : _qrExtIP;
         if (rota === "/api/qr") { sendJson({ok:true, url:_qrUrl, externo:_qrExt || null, externoNome:_ts.nome || null, externoIP:_qrExtIP || null}); return; }
-        if (rota === "/qr.svg" && parsed.searchParams.get("externo") === "1") {
-            var _qrImgExt = _qrExt ? _qrSvg(_qrExt, 0) : "";
+        // "externo=ip": QR code pelo IP do Tailscale (a janela mostra nome e IP lado a lado).
+        var _qrExtQual = parsed.searchParams.get("externo");
+        if (rota === "/qr.svg" && (_qrExtQual === "1" || _qrExtQual === "ip")) {
+            var _qrAlvoExt = _qrExtQual === "ip" ? (_qrExtIP || _qrExt) : _qrExt;
+            var _qrImgExt = _qrAlvoExt ? _qrSvg(_qrAlvoExt, 0) : "";
             if (!_qrImgExt) { sendJson({ok:false, erro:"Tailscale não está conectado nesta máquina."}, 404); return; }
             res.writeHead(200, {"Content-Type":"image/svg+xml; charset=utf-8", "Cache-Control":"no-store"});
             res.end(_qrImgExt); return;

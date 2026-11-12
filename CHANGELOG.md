@@ -1,5 +1,13 @@
 # Changelog
 
+## Relatórios Offline 1.9.7 — 2026-11-12
+
+- **Configurações abrem com "Nesta tela" recolhido:** um toque no título (com a setinha) abre e fecha as
+  preferências deste aparelho.
+- **"Abrir no celular → Fora da loja" com dois campos:** o **nome do Tailscale (fixo)** e o **IP do Tailscale**, cada
+  um com o próprio botão de copiar; tocar num campo troca o QR code para aquele endereço (`/qr.svg?externo=ip` novo).
+- `gerar-relatorio-html.js` 3.26.8, `servidor-relatorio.js` 3.7.12.
+
 ## Relatórios Offline 1.9.6 — 2026-11-12
 
 - **Revisão de informações desatualizadas.** README: caminhos padrão "do PDV", texto do leitor pela câmera em
