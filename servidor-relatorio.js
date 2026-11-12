@@ -5,7 +5,7 @@ if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
 
 /**
  * servidor-relatorio.js — Relatórios Offline
- * @version 3.7.10
+ * @version 3.7.11
  * @author Ruda Gabriel
  * @description Servidor HTTP + Firebird de relatórios com SSE, fast-poll e
  *              geração em subprocesso. SOMENTE LEITURA no banco.
@@ -14,7 +14,7 @@ if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
  *              principal em atualização, manutenção ou fora do ar.
  * @changelog
  *   (Histórico completo das versões: CHANGELOG.md no repositório.)
- *   3.7.10 - 2026-11-12 - Nome do sistema neutro ("Relatorios Offline"); sem citar o PDV de terceiros.
+ *   3.7.11 - 2026-11-12 - Comentários atualizados com os textos atuais das telas.
  */
 
 
@@ -22,7 +22,7 @@ if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
 // Registrada na linha de início do log para que se saiba, ao investigar
 // qualquer ocorrência, qual versão do servidor estava no ar naquele momento
 // (o gerar-relatorio-html.js já faz o mesmo via SCRIPT_VERSION).
-const SERVER_VERSION = "3.7.10";
+const SERVER_VERSION = "3.7.11";
 
 // ===== Logger Global seguro — flush debounced 300ms =====
 const _fs = require('fs');
@@ -2547,7 +2547,7 @@ var gerarEmBackground=function(inicio,fim,chave,_pollTriggered){
             "document.body.appendChild(a);}catch(_){}};" +
             "var _recarregar=function(forcar){" +
             // v3.7.2: estoque guardado aberto por cima (servidor estava fora): nenhuma recarga
-            // automática — a pessoa volta ao ao vivo pelo botão "Voltar ao relatório ao vivo".
+            // automática — a pessoa volta pelo botão "Retornar ao relatório em tempo real".
             "try{var _feR=document.getElementById('__srv_estoque');if(_feR&&_feR.style.display!=='none')return;}catch(_){}" +
             // v2.22.0: desligada, a venda nova ENTRA do mesmo jeito — a página troca só os
             // dados no lugar (window.__atualizarSemRecarregar, gerador 3.26.0+). O aviso
@@ -2644,7 +2644,7 @@ var gerarEmBackground=function(inicio,fim,chave,_pollTriggered){
             // Servidor voltou depois de ter caído/encerrado: recarrega para
             // mostrar os dados atuais (e tirar o aviso).
             // v3.7.2: com o estoque guardado aberto por cima (servidor estava fora), não recarrega
-            // sozinho — o próprio estoque mostra "Servidor no ar de novo · Voltar ao relatório ao vivo".
+            // sozinho — o próprio estoque mostra "O servidor de relatórios está disponível novamente".
             "if(_srvFora){var _fe=document.getElementById('__srv_estoque');if(_fe&&_fe.style.display!=='none')return;_recarregar(true);return;}" +
             "if(d.correcoes&&d.correcoes.length){" +
             "var _deveReload=false;" +
@@ -5961,7 +5961,7 @@ var server=http.createServer(function(req,res){
     }
 
     // /api/offline — estado da cópia offline (v3.0.0)
-    // /api/https — endereço seguro para o leitor ao vivo no celular (v3.6.0).
+    // /api/https — endereço seguro (leitura em tempo real pela câmera e estoque sem o servidor).
     if(rota==="/api/https" && req.method==="GET"){
         var _hEnd = null;
         try { _hEnd = _httpsLocal ? _httpsLocal.enderecoPara(req.headers.host) : null; } catch (_) {}

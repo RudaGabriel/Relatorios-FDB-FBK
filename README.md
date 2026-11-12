@@ -4,8 +4,8 @@
 
 ### Vendas do dia e consulta de estoque do PDV, lendo uma **cópia offline** do banco Firebird
 
-<img alt="versão: 1.9.5" src="https://img.shields.io/badge/vers%C3%A3o-1.9.5-2563EB?style=flat">
-<img alt="servidor: v3.7.10" src="https://img.shields.io/badge/servidor-v3.7.10-2563EB?style=flat">
+<img alt="versão: 1.9.6" src="https://img.shields.io/badge/vers%C3%A3o-1.9.6-2563EB?style=flat">
+<img alt="servidor: v3.7.11" src="https://img.shields.io/badge/servidor-v3.7.11-2563EB?style=flat">
 <img alt="cópia offline: v1.6.1" src="https://img.shields.io/badge/c%C3%B3pia%20offline-v1.6.1-0D9488?style=flat">
 <img alt="estoque: v1.2.2" src="https://img.shields.io/badge/estoque-v1.2.2-0D9488?style=flat">
 <img alt="gerador: v3.26.7" src="https://img.shields.io/badge/gerador-v3.26.7-2563EB?style=flat">
@@ -136,7 +136,7 @@ Na primeira vez aparece **Preparando a cópia offline**, com barra de progresso,
 
 O sistema localiza o `SMALL.FDB` **sem conectar no banco**: `config.json` → pastas do PDV → arquivos de configuração do PDV → unidades de rede mapeadas → compartilhamentos → máquinas da rede com a porta 3050 aberta (só teste de porta).
 
-Num terminal com o banco numa unidade de rede (ex.: `H:\SMALL.FDB`), ele descobre de qual máquina vem a unidade (`net use`) e o `gbak` tenta o Firebird dela nos caminhos padrão do Small. O endereço que funcionar fica salvo (`fbHost`/`fdbPath`). Se nenhum funcionar, o último recurso é copiar o arquivo pela unidade de rede e converter aqui.
+Num terminal com o banco numa unidade de rede (ex.: `H:\SMALL.FDB`), ele descobre de qual máquina vem a unidade (`net use`) e o `gbak` tenta o Firebird dela nos caminhos padrão do PDV. O endereço que funcionar fica salvo (`fbHost`/`fdbPath`). Se nenhum funcionar, o último recurso é copiar o arquivo pela unidade de rede e converter aqui.
 
 <details>
 <summary><b>Opcional: cópia pelo arquivo (pasta temporária)</b></summary>
@@ -170,7 +170,7 @@ Todos os itens da tabela `ESTOQUE`, lidos da cópia offline (não pesa no caixa)
 - **Detalhe do item:** todas as colunas do cadastro, com botão de copiar código e código de barras.
 - **Totais** do resultado (estoque somado e valor de venda) e **Exportar** para CSV/Excel com todas as colunas.
 - **Contador fixo** que acompanha a rolagem (*mostrando 200 de 1.234 encontrados*) e botão **Topo**.
-- **Leitor de código de barras pela câmera**: EAN-13/8, UPC, Code 128/39/93, ITF, Codabar, QR e Data Matrix, com flash, troca de câmera, zoom e *Tirar foto do código*. As bibliotecas ficam na pasta `leitor/`, então **funciona sem internet**. O navegador só libera a câmera ao vivo em página segura (HTTPS). Por isso o sistema também abre na porta **7736** com HTTPS: no celular, ao tocar em **Ler código**, ele leva para esse endereço (mantendo a busca) e abre o leitor ao vivo sozinho.
+- **Leitor de código de barras pela câmera**: EAN-13/8, UPC, Code 128/39/93, ITF, Codabar, QR e Data Matrix, com flash, troca de câmera, zoom e *Tirar foto do código*. As bibliotecas ficam na pasta `leitor/`, então **funciona sem internet**. O navegador só libera a leitura em tempo real pela câmera em página segura (HTTPS). Por isso o sistema também abre na porta **7736** com HTTPS: no celular, ao tocar em **Ler código**, ele leva para esse endereço (mantendo a busca) e abre a leitura automaticamente.
   - **Primeira vez no celular:** aparece um aviso de certificado. Toque em *Avançado* / *Mostrar detalhes* e depois em *Continuar* / *Visitar site*. É o certificado do próprio sistema, gerado nesta máquina, válido só na sua rede. Depois disso não pergunta mais.
   - **Sem aviso nenhum:** com o Tailscale nesta máquina e *HTTPS Certificates* ligado em <https://login.tailscale.com/admin/dns>, o sistema usa o certificado oficial do Tailscale ao abrir pelo endereço do Tailscale.
   - Se preferir, *Cancelar* no aviso abre a **foto** pela câmera do celular, lida do mesmo jeito.
@@ -303,7 +303,7 @@ npm test
 
 | Arquivo | Cobre |
 |---|---|
-| `test/offline.test.js` (16) | Primeira cópia, falhas, troca atômica, limpeza, progresso, terminal com banco em rede, rede que não responde (servidor não trava), métodos `auto`/`arquivo`, `.fbk` |
+| `test/offline.test.js` (16) | Primeira cópia, falhas, troca atômica, limpeza, progresso, cancelamento pelo usuário, terminal com banco em rede, rede que não responde (servidor não trava), métodos `auto`/`arquivo`, `.fbk` |
 | `test/estoque.test.js` (5) | Busca, "Contém", filtros, ordem, situação ativo/inativo, detalhe, CSV, leitor, comandos da bandeja, cópia no aparelho (mesmas respostas do servidor) |
 | `test/relatorio.test.js` (28) | Somente leitura, XSS, rotas, tempo real e geração do relatório |
 
@@ -321,6 +321,7 @@ npm test
 | **SSE (Server-Sent Events)** | Atualização em tempo real e comandos da bandeja para as telas |
 | **PowerShell 5.1 + WinForms** | Ícone e menu da bandeja, instalação e cliente da API (`api.ps1`) |
 | **ZXing (zxing-wasm 3.1.3, @zxing/library 0.23.0) + barcode-detector 3.2.2** | Leitura de código de barras pela câmera, em WebAssembly, servida localmente |
+| **Service Worker + IndexedDB** | Estoque guardado no aparelho: abre e pesquisa mesmo com o servidor desligado |
 | **node:test** | Testes nativos, com Firebird e gbak simulados |
 
 ---

@@ -23,6 +23,16 @@
   rota, arquivo, dependência, versão, quantidade de testes) atualiza o `README.md` no
   mesmo PR — badges de versão/testes, "Tecnologias e bibliotecas", "Uso no dia a dia",
   rotas da API e solução de problemas. Tudo claro para quem não é técnico.
+- **Nada desatualizado:** a cada mudança, procurar e corrigir no mesmo PR tudo o que ficou
+  antigo — README (textos, badges de versão/testes, rotas, chaves, tabelas de arquivos e
+  testes, "Tecnologias"), cabeçalhos dos arquivos, textos das telas e da bandeja, comentários
+  que citam rótulos/comportamentos antigos e código morto (ex.: dica que não aparece mais).
+  Antes de entregar, conferir: versões dos badges = `@version` dos arquivos; contagem de
+  testes = `test(` de cada arquivo; textos citados no README = textos reais das telas.
+- **Projeto autônomo e neutro:** sem citar outros projetos, programas ou marcas de terceiros
+  (o PDV é "PDV"/"banco do PDV"); só ficam os caminhos/arquivos necessários ao funcionamento
+  e os avisos de licença em `LICENCAS-TERCEIROS.txt`. Créditos do autor (Ruda Gabriel)
+  sempre explícitos no README, nos cabeçalhos e no `package.json`.
 - **Exemplos neutros:** placeholders, exemplos, testes e documentação sem nomes de
   pessoas, clientes, lojas ou marcas (ex.: "Celular do Caixa 1", RAÇÃO GATO 1KG, FULANO).
 - **Arquivos do Windows:** `iniciar-tray.ps1`, `api.ps1` e os `.vbs` ficam 100% ASCII

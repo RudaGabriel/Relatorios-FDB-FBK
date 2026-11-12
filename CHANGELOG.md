@@ -1,5 +1,15 @@
 # Changelog
 
+## Relatórios Offline 1.9.6 — 2026-11-12
+
+- **Revisão de informações desatualizadas.** README: caminhos padrão "do PDV", texto do leitor pela câmera em
+  linguagem atual, testes do cancelamento listados, "Service Worker + IndexedDB" em *Tecnologias*. Estoque: removida
+  a dica antiga "acesse uma vez pelo endereço seguro" (oculta desde a 1.9.0, substituída pela passagem automática).
+  Comentários com os rótulos atuais das telas.
+- `CLAUDE.md`: regras "Nada desatualizado" (conferir README, badges, testes, textos e código morto a cada mudança) e
+  "Projeto autônomo e neutro".
+- `servidor-relatorio.js` 3.7.11, `estoque-sw.js` 1.1.2.
+
 ## Relatórios Offline 1.9.5 — 2026-11-12
 
 - **Nome neutro: "Relatórios Offline"**, sem citar o PDV de terceiros nas

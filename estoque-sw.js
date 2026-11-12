@@ -1,6 +1,6 @@
 /**
  * estoque-sw.js
- * @version 1.1.1
+ * @version 1.1.2
  * @author Ruda Gabriel
  * @description Service worker do estoque (Relatórios Offline).
  *
@@ -17,7 +17,7 @@
  * localhost) — por http://IP:7735 o estoque continua funcionando enquanto a página
  * estiver aberta, mas não abre de novo sem o servidor.
  *
- * 1.1.1 — Nome do sistema neutro ("Relatorios Offline"); sem citar o PDV de terceiros.
+ * 1.1.2 — Comentários atualizados com os textos atuais das telas.
  * Histórico completo das versões: CHANGELOG.md no repositório.
  */
 "use strict";
@@ -106,7 +106,7 @@ var paginaSemServidor = function () {
         'document.getElementById("info").textContent="Este aparelho ainda não possui a cópia do estoque: abra o estoque uma vez com o servidor ligado.";};' +
         // Já em /estoque (página do estoque sem cache): abre a cópia direto, sem precisar tocar.
         'if(location.pathname==="/estoque")abrirKit();' +
-        // Servidor de volta: botão para voltar ao ao vivo (confere a cada 10 s).
+        // Servidor de volta: botão "Retornar ao relatório em tempo real" (confere a cada 10 s).
         'var conf=function(){fetch("/api/db-status",{cache:"no-store"}).then(function(r){if(!r.ok)throw 0;var v=document.getElementById("volta");' +
         'v.innerHTML="<b style=\\"color:#86efac\\">✓ O servidor de relatórios está disponível novamente.</b><br><a href=\\"\\" id=\\"aoVivo\\" style=\\"background:#16a34a\\">Retornar ao relatório em tempo real</a>";' +
         'document.getElementById("aoVivo").onclick=function(e){e.preventDefault();location.reload();};}).catch(function(){setTimeout(conf,10000);});};setTimeout(conf,10000);' +
