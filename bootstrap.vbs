@@ -1,5 +1,5 @@
 ' =============================================================================
-' bootstrap.vbs                                                        v1.3.1
+' bootstrap.vbs                                                        v1.3.2
 ' Autor: Ruda Gabriel
 ' -----------------------------------------------------------------------------
 ' Inicializacao automatica do Relatorios Offline.
@@ -7,14 +7,15 @@
 ' A tarefa agendada (criada por instalar-na-inicializacao.bat) roda este
 ' arquivo no logon. Ele le em "launcher.path" (mesma pasta) o caminho do
 ' launcher.vbs do sistema e o abre. Se a pasta do sistema estiver na rede e
-' ainda nao estiver disponivel, tenta de novo a cada 15 segundos por ate
+' ainda nao estiver disponivel, tenta novamente a cada 15 segundos por ate
 ' 30 minutos.
 '
 ' Codigos de saida: 0 = launcher aberto, 2 = launcher.path nao existe,
 ' 3 = launcher.path vazio, 5 = launcher nao apareceu em 30 minutos.
 '
 ' (Historico completo das versoes: CHANGELOG.md no repositorio.)
-' CHANGELOG 1.3.1 - 2026-11-12 - Nome do sistema neutro ("Relatorios Offline"); sem citar o PDV de terceiros.
+' CHANGELOG 1.3.2 - 2026-11-13 - Abre o launcher com a janela normal do wscript (que nao tem
+'   janela): "executar oculto" fazia o antivirus acusar o arquivo. Nada aparece na tela.
 ' =============================================================================
 
 Option Explicit
@@ -44,7 +45,7 @@ End If
 
 For tentativa = 1 To TENTATIVAS
     If arquivos.FileExists(caminhoDoLauncher) Then
-        shell.Run "wscript.exe """ & caminhoDoLauncher & """ /inicializacao", 0, False
+        shell.Run "wscript.exe """ & caminhoDoLauncher & """ /inicializacao", 1, False
         WScript.Quit 0
     End If
     WScript.Sleep ESPERA_MS
