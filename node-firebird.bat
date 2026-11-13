@@ -4,7 +4,7 @@ cd /d "%~dp0"
 chcp 65001 >nul 2>&1
 
 :: =========================================================
-::  node-firebird.bat                                  v1.1.2
+::  node-firebird.bat                                  v1.1.3
 ::  Autor: Ruda Gabriel
 ::  - Verifica / instala Node.js automaticamente
 ::  - Instala o modulo node-firebird via npm
@@ -12,10 +12,10 @@ chcp 65001 >nul 2>&1
 ::  - Tratamento robusto de erros e atualizacao de PATH
 ::
 ::  (Historico completo das versoes: CHANGELOG.md no repositorio.)
-::  CHANGELOG 1.1.2 - 2026-11-12 - Nome do sistema neutro ("Relatorios Offline"); sem citar o PDV de terceiros.
+::  CHANGELOG 1.1.3 - 2026-11-13 - Nome do sistema: "Gestao de Vendas Offline".
 
-set "APP_TITULO=Relatorios Offline"
-for /f "usebackq delims=" %%N in (`powershell -NoProfile -Command "try{$n=(Get-Content '%~dp0config.json' -Raw -Encoding UTF8 | ConvertFrom-Json).appName; if($n){$n}else{'Relatorios Offline'}}catch{'Relatorios Offline'}" 2^>nul`) do set "APP_TITULO=%%N"
+set "APP_TITULO=Gestao de Vendas Offline"
+for /f "usebackq delims=" %%N in (`powershell -NoProfile -Command "try{$n=(Get-Content '%~dp0config.json' -Raw -Encoding UTF8 | ConvertFrom-Json).appName; if($n){$n}else{'Gestao de Vendas Offline'}}catch{'Gestao de Vendas Offline'}" 2^>nul`) do set "APP_TITULO=%%N"
 title !APP_TITULO! - Instalador Node-Firebird
 
 echo.

@@ -1,8 +1,8 @@
 ' =============================================================================
-' bootstrap.vbs                                                        v2.0.0
+' bootstrap.vbs                                                        v2.0.1
 ' Autor: Ruda Gabriel
 ' -----------------------------------------------------------------------------
-' Inicializacao automatica do Relatorios Offline.
+' Inicializacao automatica do Gestao de Vendas Offline.
 '
 ' A tarefa agendada (criada por instalar-na-inicializacao.bat) roda esta copia
 ' LOCAL no logon, com o caminho do launcher.vbs do sistema como argumento:
@@ -16,8 +16,7 @@
 ' 5 = launcher nao encontrado (pasta de rede ainda indisponivel).
 '
 ' (Historico completo das versoes: CHANGELOG.md no repositorio.)
-' CHANGELOG 2.0.0 - 2026-11-13 - Codigo minimo, sem espera em laco e sem ler o caminho
-'   de um arquivo a parte (o antivirus do Windows acusava esse padrao).
+' CHANGELOG 2.0.1 - 2026-11-13 - Nome do sistema: "Gestao de Vendas Offline".
 ' =============================================================================
 
 Option Explicit

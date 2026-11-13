@@ -8,7 +8,7 @@ cd /d "%~dp0"
 chcp 65001 >nul 2>&1
 
 :: =========================================================
-::  Relatorio do Dia                                 v1.4.3
+::  Relatorio do Dia                                 v1.4.4
 ::  Autor: Ruda Gabriel
 ::  - Verifica / instala Node.js automaticamente
 ::  - Verifica / instala modulo node-firebird automaticamente
@@ -16,7 +16,7 @@ chcp 65001 >nul 2>&1
 ::  - Abre relatorio de hoje no navegador
 ::
 ::  (Historico completo das versoes: CHANGELOG.md no repositorio.)
-::  CHANGELOG 1.4.3 - 2026-11-12 - Nome do sistema neutro ("Relatorios Offline"); sem citar o PDV de terceiros.
+::  CHANGELOG 1.4.4 - 2026-11-13 - Nome do sistema: "Gestao de Vendas Offline".
 
 call :verificar_node
 if %errorlevel% neq 0 exit /b 1
@@ -59,7 +59,7 @@ exit /b 0
 
 :: -------------------------------------------------------
 :: Le porta e nome do app/loja de config.json (campos "porta" e "appName").
-:: Fallback silencioso para 7735 / "Relatorios Offline" se o arquivo nao existir,
+:: Fallback silencioso para 7735 / "Gestao de Vendas Offline" se o arquivo nao existir,
 :: estiver corrompido ou os campos nao estiverem definidos. Uma unica
 :: chamada powershell busca os dois valores (evita abrir dois processos so'
 :: para isso). !APP_TITULO! (expansao adiada, nao %APP_TITULO%) no "title"
@@ -80,8 +80,8 @@ exit /b 0
 :: mesma tecnica). Custa um processo powershell a mais, mas reduz risco.
 set "PORTA=7735"
 for /f "usebackq delims=" %%P in (`powershell -NoProfile -Command "try{$p=(Get-Content '%~dp0config.json' -Raw -Encoding UTF8 | ConvertFrom-Json).porta; if($p -gt 0){[int]$p}else{7735}}catch{7735}" 2^>nul`) do set "PORTA=%%P"
-set "APP_TITULO=Relatorios Offline"
-for /f "usebackq delims=" %%N in (`powershell -NoProfile -Command "try{$n=(Get-Content '%~dp0config.json' -Raw -Encoding UTF8 | ConvertFrom-Json).appName; if($n){$n}else{'Relatorios Offline'}}catch{'Relatorios Offline'}" 2^>nul`) do set "APP_TITULO=%%N"
+set "APP_TITULO=Gestao de Vendas Offline"
+for /f "usebackq delims=" %%N in (`powershell -NoProfile -Command "try{$n=(Get-Content '%~dp0config.json' -Raw -Encoding UTF8 | ConvertFrom-Json).appName; if($n){$n}else{'Gestao de Vendas Offline'}}catch{'Gestao de Vendas Offline'}" 2^>nul`) do set "APP_TITULO=%%N"
 title !APP_TITULO! - Relatorio do Dia
 exit /b 0
 

@@ -1,7 +1,7 @@
 @echo off
 setlocal enabledelayedexpansion
 :: =========================================================
-::  remover-inicializacao.bat                          v1.0.2
+::  remover-inicializacao.bat                          v1.0.3
 ::  Autor: Ruda Gabriel
 ::  Desfaz o instalar-na-inicializacao.bat: remove TUDO o que
 ::  faz o relatorio iniciar sozinho no logon (tarefa agendada,
@@ -18,11 +18,11 @@ setlocal enabledelayedexpansion
 ::  Codigo de saida: 0 = tudo removido, 1 = sobrou pendencia.
 ::
 ::  (Historico completo das versoes: CHANGELOG.md no repositorio.)
-::  CHANGELOG 1.0.2 - 2026-11-12 - Nome do sistema neutro ("Relatorios Offline"); sem citar o PDV de terceiros.
+::  CHANGELOG 1.0.3 - 2026-11-13 - Nome do sistema: "Gestao de Vendas Offline".
 :: =========================================================
 
 chcp 65001 >nul 2>&1
-title Relatorios Offline - Remover inicializacao automatica
+title Gestao de Vendas Offline - Remover inicializacao automatica
 
 :: pushd aceita pasta de rede (UNC), cd /d nao.
 pushd "%~dp0" 2>nul

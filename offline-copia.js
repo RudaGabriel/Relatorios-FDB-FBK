@@ -2,9 +2,9 @@
 
 /**
  * offline-copia.js
- * @version 1.6.2
+ * @version 1.6.3
  * @author Ruda Gabriel
- * @description Cópia offline do banco do PDV (Relatórios Offline).
+ * @description Cópia offline do banco do PDV (Gestão de Vendas Offline).
  *
  * O relatório não precisa ler o banco principal (SMALL.FDB) ao vivo: ele lê uma
  * CÓPIA local, que este módulo mantém atualizada automaticamente. Assim o relatório
@@ -56,7 +56,7 @@
  * Este arquivo não depende de nada do servidor: tudo chega por `opcoes`
  * (o que também permite testá-lo isolado, com gbak e Firebird simulados).
  *
- * 1.6.2 — Textos em linguagem formal (cancelamento da cópia). Cabeçalho só com a versão atual.
+ * 1.6.3 — Nome do sistema: "Gestão de Vendas Offline".
  * Histórico completo das versões: CHANGELOG.md no repositório.
  */
 
@@ -67,7 +67,7 @@ const cp = require("child_process");
 const { pipeline } = require("stream");
 const net = require("net");
 
-const VERSAO = "1.6.2";
+const VERSAO = "1.6.3";
 const MANIFESTO = "copia-offline.json";
 const PREFIXO = "SMALL_OFFLINE_";
 // Únicos nomes que este módulo cria — e os ÚNICOS que ele apaga.
@@ -154,7 +154,7 @@ function pastaPadrao(appName) {
     const base = process.platform === "win32"
         ? (process.env.ProgramData || "C:\\ProgramData")
         : path.join(os.homedir(), ".local", "share");
-    const nome = String(appName || "Relatorios Offline").replace(/[^A-Za-z0-9 _-]+/g, "").trim() || "Relatorios Offline";
+    const nome = String(appName || "Gestao de Vendas Offline").replace(/[^A-Za-z0-9 _-]+/g, "").trim() || "Gestao de Vendas Offline";
     return path.join(base, nome.replace(/\s+/g, ""), "copias");
 }
 

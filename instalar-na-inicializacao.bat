@@ -142,13 +142,12 @@ timeout /t 5 >nul
 :ja_elevado
 
 :: =========================================================
-:: instalar-na-inicializacao.bat                       v1.16.0
+:: instalar-na-inicializacao.bat                       v1.16.1
 ::  Autor: Ruda Gabriel
 :: Configura o servidor para iniciar automaticamente no logon.
 ::
 :: (Historico completo das versoes: CHANGELOG.md no repositorio.)
-:: CHANGELOG 1.16.0 - 2026-11-13 - O caminho do launcher vai como argumento do
-::   bootstrap.vbs (tarefa, schtasks e atalho); launcher.path deixa de existir.
+:: CHANGELOG 1.16.1 - 2026-11-13 - Nome do sistema: "Gestao de Vendas Offline".
 ::
 :: =========================================================
 
@@ -283,7 +282,7 @@ echo Exemplos: Farmacia Central, Loja Silva, Mercado XYZ
 echo.
 set "NOVO_NOME="
 set /p NOVO_NOME=Nome do sistema: 
-if "!NOVO_NOME!"=="" set "NOVO_NOME=Relatorios Offline"
+if "!NOVO_NOME!"=="" set "NOVO_NOME=Gestao de Vendas Offline"
 
 :: NOVO_NOME e CFG vao ao PowerShell por VARIAVEL DE AMBIENTE (v1.13.1), e nao
 :: embutidos no texto do .ps1 temporario. Assim: (1) apostrofo no nome ("Bob's
