@@ -1,8 +1,8 @@
 {
-  "name": "relatorios-offline",
-  "version": "1.9.10",
+  "name": "gestao-vendas-offline",
+  "version": "1.9.11",
   "private": true,
-  "description": "Relatórios Offline: painel de vendas e consulta de estoque do PDV lendo uma cópia offline do banco Firebird",
+  "description": "Gestão de Vendas Offline: painel de vendas e consulta de estoque do PDV lendo uma cópia offline do banco Firebird",
   "author": "Ruda Gabriel (https://github.com/RudaGabriel)",
   "license": "UNLICENSED",
   "scripts": {

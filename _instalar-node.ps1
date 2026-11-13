@@ -3,11 +3,11 @@
 # Metodos: winget -> MSI silencioso -> MSI com log detalhado.
 # Auto-eleva para Administrador se necessario.
 #
-# @version 1.3.2
+# @version 1.3.3
 # @author Ruda Gabriel
 # @changelog
 #   (Historico completo das versoes: CHANGELOG.md no repositorio.)
-#   1.3.2 - 2026-11-12 - Nome do sistema neutro ("Relatorios Offline"); sem citar o PDV de terceiros.
+#   1.3.3 - 2026-11-13 - Nome do sistema: "Gestao de Vendas Offline".
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -16,7 +16,7 @@ $ErrorActionPreference = 'Stop'
 # config.json ainda nao existe nesta etapa da instalacao) - titulo e' so'
 # cosmetico, nao pode impedir a instalacao do Node.js.
 try {
-    $__appName = "Relatorios Offline"
+    $__appName = "Gestao de Vendas Offline"
     $__cfgPath = Join-Path $PSScriptRoot "config.json"
     if (Test-Path $__cfgPath) {
         $__cfg = Get-Content $__cfgPath -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop

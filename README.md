@@ -1,15 +1,15 @@
 <div align="center">
 
-# 📦 Relatórios Offline
+# 📦 Gestão de Vendas Offline
 
 ### Vendas do dia e consulta de estoque do PDV, lendo uma **cópia offline** do banco Firebird
 
-<img alt="versão: 1.9.10" src="https://img.shields.io/badge/vers%C3%A3o-1.9.10-2563EB?style=flat">
-<img alt="servidor: v3.7.13" src="https://img.shields.io/badge/servidor-v3.7.13-2563EB?style=flat">
-<img alt="cópia offline: v1.6.2" src="https://img.shields.io/badge/c%C3%B3pia%20offline-v1.6.2-0D9488?style=flat">
-<img alt="estoque: v1.2.2" src="https://img.shields.io/badge/estoque-v1.2.2-0D9488?style=flat">
-<img alt="gerador: v3.26.9" src="https://img.shields.io/badge/gerador-v3.26.9-2563EB?style=flat">
-<img alt="bandeja: v1.7.9" src="https://img.shields.io/badge/bandeja-v1.7.9-2563EB?style=flat">
+<img alt="versão: 1.9.11" src="https://img.shields.io/badge/vers%C3%A3o-1.9.11-2563EB?style=flat">
+<img alt="servidor: v3.7.14" src="https://img.shields.io/badge/servidor-v3.7.14-2563EB?style=flat">
+<img alt="cópia offline: v1.6.3" src="https://img.shields.io/badge/c%C3%B3pia%20offline-v1.6.3-0D9488?style=flat">
+<img alt="estoque: v1.2.3" src="https://img.shields.io/badge/estoque-v1.2.3-0D9488?style=flat">
+<img alt="gerador: v3.26.10" src="https://img.shields.io/badge/gerador-v3.26.10-2563EB?style=flat">
+<img alt="bandeja: v1.7.10" src="https://img.shields.io/badge/bandeja-v1.7.10-2563EB?style=flat">
 <img alt="testes: 49 passando" src="https://img.shields.io/badge/testes-49%20passando-22C55E?style=flat">
 
 <img alt="plataforma: Windows 10 | 11" src="https://img.shields.io/badge/plataforma-Windows%2010%20%7C%2011-0078D4?style=flat&logo=windows&logoColor=white">
@@ -45,7 +45,7 @@
 <a id="visao"></a>
 ## 🧭 Visão geral
 
-O **Relatórios Offline** é um servidor local para Windows que mostra as **vendas do dia** e a **consulta completa de estoque** do PDV no navegador do computador ou do celular, **sem consultar o banco principal**.
+O **Gestão de Vendas Offline** é um servidor local para Windows que mostra as **vendas do dia** e a **consulta completa de estoque** do PDV no navegador do computador ou do celular, **sem consultar o banco principal**.
 
 Ele mantém automaticamente uma **cópia offline** do `SMALL.FDB`, feita com as ferramentas oficiais do Firebird, e todas as telas leem **só essa cópia**. Com isso, o relatório continua abrindo quando o banco principal está em atualização, em manutenção, travado ou desligado, e o caixa nunca é atrapalhado.
 
@@ -147,7 +147,7 @@ Atenção: no **Firebird 3 ou mais novo**, se ninguém estiver conectado no inst
 
 </details>
 
-**Onde ficam as cópias:** `C:\ProgramData\RelatoriosOffline\copias` (disco local; o Firebird não abre banco em pasta de rede). Ficam a cópia em uso e o último backup `.fbk`. O sistema só apaga arquivos com o nome que ele mesmo cria, dentro dessa pasta.
+**Onde ficam as cópias:** `C:\ProgramData\GestaodeVendasOffline\copias` (disco local; o Firebird não abre banco em pasta de rede). Ficam a cópia em uso e o último backup `.fbk`. O sistema só apaga arquivos com o nome que ele mesmo cria, dentro dessa pasta.
 
 ---
 
@@ -352,7 +352,7 @@ npm test
 
 ## 👤 Autor
 
-**Ruda Gabriel** — criador e único desenvolvedor do **Relatórios Offline**: concepção, arquitetura,
+**Ruda Gabriel** — criador e único desenvolvedor do **Gestão de Vendas Offline**: concepção, arquitetura,
 código, regras de negócio, testes e manutenção.
 
 [github.com/RudaGabriel](https://github.com/RudaGabriel)

@@ -2,10 +2,10 @@
 
 /**
  * localizar-banco.js
- * @version 1.2.1
+ * @version 1.2.2
  * @author Ruda Gabriel
  * @description Acha o SMALL.FDB do PDV — nesta máquina ou na rede —
- *              SEM CONECTAR NO BANCO (Relatórios Offline).
+ *              SEM CONECTAR NO BANCO (Gestão de Vendas Offline).
  *
  * Procura, nesta ordem, e para no primeiro ARQUIVO que existir:
  *   1. o que está no config.json (fdbArquivo, fdbPath);
@@ -24,7 +24,7 @@
  *             direto (reserva da cópia offline); "" se não se sabe.
  * Nada aqui abre o banco: só verifica se o arquivo existe (atributos).
  *
- * 1.2.1 - 2026-11-12 - Nome do sistema neutro ("Relatorios Offline"); sem citar o PDV de terceiros.
+ * 1.2.2 - 2026-11-13 - Nome do sistema: "Gestão de Vendas Offline".
  * Histórico completo das versões: CHANGELOG.md no repositório.
  */
 
@@ -34,7 +34,7 @@ const os = require("os");
 const net = require("net");
 const cp = require("child_process");
 
-const VERSAO = "1.2.1";
+const VERSAO = "1.2.2";
 const WIN = process.platform === "win32";
 // Onde o SMALL.FDB costuma ficar dentro de uma unidade ou compartilhamento.
 const SUBCAMINHOS = [

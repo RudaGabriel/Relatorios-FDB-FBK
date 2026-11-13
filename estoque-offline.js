@@ -2,9 +2,9 @@
 
 /**
  * estoque-offline.js
- * @version 1.2.2
+ * @version 1.2.3
  * @author Ruda Gabriel
- * @description Consulta de estoque completa (Relatórios Offline).
+ * @description Consulta de estoque completa (Gestão de Vendas Offline).
  *
  * Lê TODOS os itens da tabela de produtos do PDV (ESTOQUE) — de
  * preferência da cópia offline, que não pesa no banco do caixa — e guarda em
@@ -19,11 +19,11 @@
  *
  * SOMENTE LEITURA: só SELECT, sempre pelo Firebird blindado do servidor.
  *
- * 1.2.2 — Nome do sistema neutro ("Relatorios Offline"); sem citar o PDV de terceiros.
+ * 1.2.3 — Nome do sistema: "Gestão de Vendas Offline".
  * Histórico completo das versões: CHANGELOG.md no repositório.
  */
 
-const VERSAO = "1.2.2";
+const VERSAO = "1.2.3";
 const Busca = require("./estoque-busca.js");
 const TABELAS = ["ESTOQUE", "PRODUTOS", "PRODUTO", "CADPRO", "MERCADORIAS"];
 

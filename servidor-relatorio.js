@@ -4,8 +4,8 @@
 if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
 
 /**
- * servidor-relatorio.js — Relatórios Offline
- * @version 3.7.13
+ * servidor-relatorio.js — Gestão de Vendas Offline
+ * @version 3.7.14
  * @author Ruda Gabriel
  * @description Servidor HTTP + Firebird de relatórios com SSE, fast-poll e
  *              geração em subprocesso. SOMENTE LEITURA no banco.
@@ -14,7 +14,7 @@ if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
  *              principal em atualização, manutenção ou fora do ar.
  * @changelog
  *   (Histórico completo das versões: CHANGELOG.md no repositório.)
- *   3.7.13 - 2026-11-12 - Textos em linguagem formal (cancelamento da cópia).
+ *   3.7.14 - 2026-11-13 - Nome do sistema: "Gestão de Vendas Offline".
  */
 
 
@@ -22,7 +22,7 @@ if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = "16";
 // Registrada na linha de início do log para que se saiba, ao investigar
 // qualquer ocorrência, qual versão do servidor estava no ar naquele momento
 // (o gerar-relatorio-html.js já faz o mesmo via SCRIPT_VERSION).
-const SERVER_VERSION = "3.7.13";
+const SERVER_VERSION = "3.7.14";
 
 // ===== Logger Global seguro — flush debounced 300ms =====
 const _fs = require('fs');
@@ -613,7 +613,7 @@ var updateConfigKey = function(key, value) {
 var _config       = loadConfig();
 // Alias de compatibilidade — mantido para não alterar referências espalhadas no arquivo.
 var appCfg        = _config;
-var APP_NAME      = (appCfg.appName&&appCfg.appName.trim()) ? appCfg.appName.trim() : "Relatorios Offline";
+var APP_NAME      = (appCfg.appName&&appCfg.appName.trim()) ? appCfg.appName.trim() : "Gestao de Vendas Offline";
 // BUG FIX (v2.5.0): FAVICON nunca era inicializado a partir de config.json no
 // boot — só era atualizado em memória pelas rotas /api/config e
 // /api/upload-favicon durante a sessão. Resultado: um favicon customizado
@@ -1094,7 +1094,7 @@ if (fdbArg) {
 var FDB = FDB_HOST+":"+FDB_PATH;
 
 // ---------------------------------------------------------------------------
-// CÓPIA OFFLINE (v3.0.0 — Relatórios Offline)
+// CÓPIA OFFLINE (v3.0.0 — Gestão de Vendas Offline)
 // FONTE_* = banco principal do PDV (só o gbak encosta nele, para
 // copiar). FDB_* = o que o relatório lê: SEMPRE a cópia offline. Sem cópia
 // pronta, FDB_PATH fica vazio e o relatório espera ("Preparando a cópia

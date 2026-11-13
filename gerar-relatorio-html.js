@@ -1,11 +1,11 @@
 /**
  * gerar-relatorio-html.js
- * @version 3.26.9
+ * @version 3.26.10
  * @author Ruda Gabriel
  * @description Gerador de relatório HTML (subprocesso spawnado pelo servidor). SOMENTE LEITURA.
  * @changelog (único, exclusivo desta versão — sem acumular histórico de versões anteriores)
  *   (Histórico completo das versões: CHANGELOG.md no repositório.)
- *   3.26.9 - 2026-11-12 - Textos em linguagem formal (janela "Abrir no celular").
+ *   3.26.10 - 2026-11-13 - Nome do sistema: "Gestão de Vendas Offline".
  */
 
 (function() {
@@ -13,7 +13,7 @@
     // Embutida no HTML gerado (comentário + atributo data-*) para rastreabilidade:
     // suporte técnico consegue identificar qual versão do script gerou um relatório
     // específico sem precisar abrir o gerar-relatorio-html.js.
-    const SCRIPT_VERSION = "3.26.9";
+    const SCRIPT_VERSION = "3.26.10";
     // Lista-mestra dos temas. id = valor de data-theme no HTML e de "fdb_theme" salvo no navegador;
     // ordem = ordem no menu e no "próximo tema". O CSS de cada id é o bloco [data-theme="id"] do <style>
     // (variáveis) mais, nos temas de estilo, as regras html[data-theme="id"] (forma: cantos, bordas,
@@ -210,7 +210,7 @@
     // === LÊ CONFIG (proibidos + appName) ===
     const pathConfig = require("node:path").join(__dirname, "config.json");
     let cfgProibidos             = [];
-    let cfgAppName               = "Relatorios Offline"; // default igual ao servidor — evita título "Relatório  YYYY-MM-DD" (espaço duplo) quando config.json não tem appName
+    let cfgAppName               = "Gestao de Vendas Offline"; // default igual ao servidor — evita título "Relatório  YYYY-MM-DD" (espaço duplo) quando config.json não tem appName
     let cfgToastDuracao          = 5000;
     // Janela de correção de horário (min) — mesma chave e mesmos limites de
     // servidor-relatorio.js ("janelaCorrecaoHoraMin"); padrão 180 (3 horas).

@@ -1,8 +1,8 @@
 /**
  * estoque-sw.js
- * @version 1.1.2
+ * @version 1.1.3
  * @author Ruda Gabriel
- * @description Service worker do estoque (Relatórios Offline).
+ * @description Service worker do estoque (Gestão de Vendas Offline).
  *
  * Guarda NO APARELHO a página do estoque, as regras da busca e o leitor de código
  * de barras, para o estoque abrir mesmo com o servidor de relatórios fora do ar (os
@@ -17,7 +17,7 @@
  * localhost) — por http://IP:7735 o estoque continua funcionando enquanto a página
  * estiver aberta, mas não abre de novo sem o servidor.
  *
- * 1.1.2 — Comentários atualizados com os textos atuais das telas.
+ * 1.1.3 — Nome do sistema: "Gestão de Vendas Offline".
  * Histórico completo das versões: CHANGELOG.md no repositório.
  */
 "use strict";
