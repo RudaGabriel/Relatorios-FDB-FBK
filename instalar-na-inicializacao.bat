@@ -142,12 +142,13 @@ timeout /t 5 >nul
 :ja_elevado
 
 :: =========================================================
-:: instalar-na-inicializacao.bat                       v1.15.2
+:: instalar-na-inicializacao.bat                       v1.16.0
 ::  Autor: Ruda Gabriel
 :: Configura o servidor para iniciar automaticamente no logon.
 ::
 :: (Historico completo das versoes: CHANGELOG.md no repositorio.)
-:: CHANGELOG 1.15.2 - 2026-11-12 - Nome do sistema neutro ("Relatorios Offline"); sem citar o PDV de terceiros.
+:: CHANGELOG 1.16.0 - 2026-11-13 - O caminho do launcher vai como argumento do
+::   bootstrap.vbs (tarefa, schtasks e atalho); launcher.path deixa de existir.
 ::
 :: =========================================================
 
@@ -157,8 +158,8 @@ echo   Configurar Inicializacao Automatica
 echo =======================================================
 echo.
 echo Configura o servidor para iniciar automaticamente ao fazer login.
-echo O bootstrap fica LOCAL na maquina e aguarda ate 30 min pelo
-echo servidor na rede antes de lanca-lo.
+echo O bootstrap fica LOCAL na maquina; se a pasta do sistema estiver na
+echo rede e ainda nao conectada, a tarefa tenta novamente em 2, 10 e 30 min.
 echo.
 
 :: ---------------------------------------------------------------------------
@@ -405,8 +406,8 @@ echo.
 :: producao: bloco fechando cedo (arquivo pela metade), BOM que o wscript
 :: recusa (800A0408) e escapes vazando (erro de sintaxe na linha 6,
 :: 800A03EA). Copiar nao tem escape, nem expansao, nem encoding a definir.
-:: O caminho do launcher vai num arquivo texto de uma linha ao lado --
-:: unico dado dinamico, gravado com um echo simples e sem escape.
+:: v1.16.0: o caminho do launcher vai como ARGUMENTO do bootstrap (na tarefa
+:: agendada, no schtasks e no atalho) - sem arquivo launcher.path.
 :: ---------------------------------------------------------------------------
 if not exist "%~dp0bootstrap.vbs" (
     echo.
@@ -423,18 +424,10 @@ copy /y "%~dp0bootstrap.vbs" "!BOOTSTRAP_FILE!" >nul 2>&1
 timeout /t 2 /nobreak >nul
 if not exist "!BOOTSTRAP_FILE!" goto :bootstrap_falhou
 
-:: Grava o caminho do launcher (unica informacao dinamica do bootstrap) em
-:: UTF-16, que o bootstrap.vbs le direto. O caminho vai por variavel de
-:: ambiente (Unicode, sem escape). Sem PowerShell: echo simples (ANSI), que o
-:: bootstrap tambem le.
-set "_LP_ARQ=!BOOTSTRAP_DIR!\launcher.path"
-powershell -NoProfile -Command "[System.IO.File]::WriteAllText($env:_LP_ARQ, $env:LAUNCHER_PATH, [System.Text.Encoding]::Unicode)" >nul 2>&1
-if not exist "!_LP_ARQ!" >"!_LP_ARQ!" echo !LAUNCHER_PATH!
-if not exist "!_LP_ARQ!" goto :bootstrap_falhou
 
 set "_LT=%TIME: =0%"
 set "_LT=!_LT:~0,8!"
->>"%LOGF%" echo [!_LD!] [!_LT!] [INSTALL] Bootstrap copiado e launcher.path gravado.
+>>"%LOGF%" echo [!_LD!] [!_LT!] [INSTALL] Bootstrap copiado.
 echo Bootstrap criado com sucesso.
 goto :bootstrap_ok
 
@@ -451,7 +444,7 @@ echo Outra causa possivel: sem permissao de escrita nessa pasta.
 echo.
 set "_LT=%TIME: =0%"
 set "_LT=!_LT:~0,8!"
->>"%LOGF%" echo [!_LD!] [!_LT!] [INSTALL] ERRO: falha ao criar bootstrap/launcher.path.
+>>"%LOGF%" echo [!_LD!] [!_LT!] [INSTALL] ERRO: falha ao criar o bootstrap.
 pause
 exit /b 1
 
@@ -477,18 +470,18 @@ if defined APP_NAME_LEGADO if not "!APP_NAME_LEGADO!"=="!APP_NAME!" schtasks /de
 set "TAREFA_OK="
 if not exist "%~dp0_criar-tarefa.ps1" goto :tarefa_schtasks
 echo Criando tarefa agendada...
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0_criar-tarefa.ps1" -Nome "!TASK_NAME!" -Bootstrap "!BOOTSTRAP_FILE!"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0_criar-tarefa.ps1" -Nome "!TASK_NAME!" -Bootstrap "!BOOTSTRAP_FILE!" -Launcher "!LAUNCHER_PATH!"
 if errorlevel 1 goto :tarefa_schtasks
 set "TAREFA_OK=completa"
 set "_LT=%TIME: =0%"
 set "_LT=!_LT:~0,8!"
->>"%LOGF%" echo [!_LD!] [!_LT!] [INSTALL] Tarefa criada: logon de qualquer usuario + inicializacao, sem condicoes, reinicio 1 min x99, sem limite.
+>>"%LOGF%" echo [!_LD!] [!_LT!] [INSTALL] Tarefa criada: logon de qualquer usuario (+2, 10 e 30 min) e inicializacao, sem condicoes, reinicio 1 min x99, sem limite.
 goto :tarefa_criada
 
 :tarefa_schtasks
 echo   Criando tarefa basica pelo schtasks ^(somente no logon^)...
 schtasks /create /tn "!TASK_NAME!" ^
-    /tr "wscript.exe \"!BOOTSTRAP_FILE!\"" ^
+    /tr "wscript.exe \"!BOOTSTRAP_FILE!\" \"!LAUNCHER_PATH!\"" ^
     /sc ONLOGON /ru "%USERNAME%" /rl LIMITED /f >nul 2>&1
 if errorlevel 1 goto :tarefa_falhou
 call :ajustar_tarefa
@@ -506,7 +499,8 @@ if "!TAREFA_OK!"=="completa" (
 ) else (
     echo     1. Tarefa agendada no logon ^(imediata, sem atraso^)
 )
-echo     2. bootstrap.vbs LOCAL aguarda ate 30 min pelo launcher.vbs na rede
+echo     2. bootstrap.vbs LOCAL abre o launcher.vbs ^(pasta de rede ainda nao
+echo        conectada: a tarefa tenta novamente em 2, 10 e 30 min^)
 echo     3. launcher.vbs lanca iniciar-tray.ps1 ^(oculto, sem nenhuma janela^)
 echo     4. iniciar-tray.ps1 aguarda ate 30 min pelo servidor-relatorio.js
 echo     5. servidor-relatorio.js aguarda ate 30 min pelo banco Firebird
@@ -514,7 +508,7 @@ echo.
 echo   Bootstrap local ^(tarefa aponta aqui^):
 echo     !BOOTSTRAP_FILE!
 echo.
-echo   Launcher na rede ^(bootstrap espera este^):
+echo   Launcher do sistema ^(aberto pelo bootstrap^):
 echo     !LAUNCHER_PATH!
 echo.
 echo   Para remover: execute remover-inicializacao.bat
@@ -536,7 +530,7 @@ if exist "!SHORTCUT!" del /f /q "!SHORTCUT!" >nul 2>&1
 if exist "!STARTUP!\!APP_NAME! Relatorios.vbs" del /f /q "!STARTUP!\!APP_NAME! Relatorios.vbs" >nul 2>&1
 if defined APP_NAME_LEGADO if not "!APP_NAME_LEGADO!"=="!APP_NAME!" del /f /q "!STARTUP!\!APP_NAME_LEGADO! Relatorios.vbs" "!STARTUP!\!APP_NAME_LEGADO! Relatorios.lnk" >nul 2>&1
 
-powershell -NoProfile -Command "try{$s=(New-Object -ComObject WScript.Shell).CreateShortcut($env:SHORTCUT);$s.TargetPath=(Join-Path $env:SystemRoot 'System32\wscript.exe');$s.Arguments=[char]34+$env:BOOTSTRAP_FILE+[char]34;$s.WorkingDirectory=$env:BOOTSTRAP_DIR;$s.Save();exit 0}catch{exit 1}" >nul 2>&1
+powershell -NoProfile -Command "try{$s=(New-Object -ComObject WScript.Shell).CreateShortcut($env:SHORTCUT);$s.TargetPath=(Join-Path $env:SystemRoot 'System32\wscript.exe');$s.Arguments=[char]34+$env:BOOTSTRAP_FILE+[char]34+' '+[char]34+$env:LAUNCHER_PATH+[char]34;$s.WorkingDirectory=$env:BOOTSTRAP_DIR;$s.Save();exit 0}catch{exit 1}" >nul 2>&1
 
 if exist "!SHORTCUT!" (
     echo   Atalho criado em:

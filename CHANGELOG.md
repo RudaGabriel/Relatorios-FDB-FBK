@@ -1,5 +1,19 @@
 # Changelog
 
+## Relatórios Offline 1.9.10 — 2026-11-13
+
+- **`bootstrap.vbs` ainda acusado pelo antivírus** (`Program:Script/Wacapew.A!ml`, detector automático). O que o
+  detector associa a programas maliciosos era o funcionamento do script: ler o caminho de um arquivo à parte
+  (`launcher.path`) e esperar em laço (até 30 min) antes de executá-lo. O `bootstrap.vbs` 2.0.0 foi reescrito com o
+  mínimo: recebe o caminho do `launcher.vbs` como argumento da tarefa agendada e o abre se existir; sem laço e sem
+  arquivo à parte.
+- A espera pela pasta do sistema na rede passou para a tarefa agendada: além do logon e da inicialização, ela roda
+  novamente **2, 10 e 30 minutos depois do logon** (`_criar-tarefa.ps1` 1.1.0). Com a bandeja já aberta, essas
+  tentativas terminam sem fazer nada.
+- `instalar-na-inicializacao.bat` 1.16.0: passa o caminho do launcher para a tarefa, o `schtasks` e o atalho da pasta
+  Inicializar; deixa de gravar o `launcher.path` (o removedor continua apagando o de versões anteriores).
+- **Para valer:** execute o `instalar-na-inicializacao.bat` uma vez.
+
 ## Relatórios Offline 1.9.9 — 2026-11-13
 
 - **Download do `.zip` acusado como vírus.** O `bootstrap.vbs` 1.3.0 passou a abrir o `launcher.vbs` com a opção
