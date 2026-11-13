@@ -26,12 +26,15 @@
 # Codigo de saida: 0 = criada e conferida, 1 = falhou (o .bat cai no schtasks).
 #
 # (Historico completo das versoes: CHANGELOG.md no repositorio.)
-# CHANGELOG 1.0.0 - 2026-10-07 10:00 - Primeira versao.
+# CHANGELOG 1.1.0 - 2026-11-13 - O caminho do launcher vai como argumento do bootstrap
+#   (-Launcher); disparos extras 2, 10 e 30 min depois do logon cobrem a pasta de
+#   rede que demora a conectar (o bootstrap nao espera mais em laco).
 # =============================================================================
 
 param(
     [Parameter(Mandatory = $true)][string]$Nome,
     [Parameter(Mandatory = $true)][string]$Bootstrap,
+    [Parameter(Mandatory = $true)][string]$Launcher,
     [string]$Usuario = ''
 )
 
@@ -46,13 +49,20 @@ try {
         $Usuario = if ($env:USERDOMAIN) { "$env:USERDOMAIN\$env:USERNAME" } else { $env:USERNAME }
     }
 
-    $acao = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument ('"' + $Bootstrap + '"')
+    $acao = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument ('"' + $Bootstrap + '" "' + $Launcher + '"')
 
     # -AtLogOn sem -User = "Quando qualquer usuario fizer logon".
     $gatilhos = @(
         (New-ScheduledTaskTrigger -AtLogOn),
         (New-ScheduledTaskTrigger -AtStartup)
     )
+    # Pasta do sistema na rede ainda nao conectada no logon: novas tentativas 2, 10 e
+    # 30 min depois. Com a bandeja ja aberta, a tentativa extra termina sem fazer nada.
+    foreach ($atraso in @('PT2M', 'PT10M', 'PT30M')) {
+        $g = New-ScheduledTaskTrigger -AtLogOn
+        $g.Delay = $atraso
+        $gatilhos += $g
+    }
 
     $principal = New-ScheduledTaskPrincipal -UserId $Usuario -LogonType Interactive -RunLevel Limited
 
