@@ -1,5 +1,13 @@
 # Changelog
 
+## Relatórios Offline 1.9.9 — 2026-11-13
+
+- **Download do `.zip` acusado como vírus.** O `bootstrap.vbs` 1.3.0 passou a abrir o `launcher.vbs` com a opção
+  "oculto" — um script que espera um arquivo aparecer e o executa de forma oculta é o padrão que o antivírus do
+  Windows associa a programas maliciosos. Agora o launcher é aberto com a janela normal do `wscript` (que não exibe
+  janela), como na versão aceita pelo antivírus; a partida automática continua sem nenhuma janela.
+- `bootstrap.vbs` 1.3.2. Para valer na inicialização automática, execute o `instalar-na-inicializacao.bat` uma vez.
+
 ## Relatórios Offline 1.9.8 — 2026-11-12
 
 - **Revisão de ortografia e linguagem formal.** Confirmação e aviso de cancelamento da cópia ("a próxima cópia automática

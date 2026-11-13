@@ -4,7 +4,7 @@
 
 ### Vendas do dia e consulta de estoque do PDV, lendo uma **cópia offline** do banco Firebird
 
-<img alt="versão: 1.9.8" src="https://img.shields.io/badge/vers%C3%A3o-1.9.8-2563EB?style=flat">
+<img alt="versão: 1.9.9" src="https://img.shields.io/badge/vers%C3%A3o-1.9.9-2563EB?style=flat">
 <img alt="servidor: v3.7.13" src="https://img.shields.io/badge/servidor-v3.7.13-2563EB?style=flat">
 <img alt="cópia offline: v1.6.2" src="https://img.shields.io/badge/c%C3%B3pia%20offline-v1.6.2-0D9488?style=flat">
 <img alt="estoque: v1.2.2" src="https://img.shields.io/badge/estoque-v1.2.2-0D9488?style=flat">
@@ -283,6 +283,7 @@ As rotas gerais estão no `api.ps1` (menu interativo). Rotas da cópia offline e
 | "não permite criar a cópia nesta pasta" | No `firebird.conf`, `DatabaseAccess` está restrito: libere a pasta das cópias ou mude `offlinePasta` |
 | Cópia demora muito | Aumente `offlineIntervaloMin` (e `offlineTimeoutMin` se der tempo esgotado). A barra de progresso mostra quanto falta |
 | Estoque: ativos e inativos trocados | O log mostra a linha *Estoque: coluna de situação …* com a coluna e a interpretação usada; envie essa linha ao suporte |
+| Ao baixar o `.zip` do GitHub, o navegador mostra "Falha - Vírus detectado" | Falso positivo do antivírus do Windows num dos scripts de inicialização. Corrigido na 1.9.9 (o `bootstrap.vbs` deixou de abrir o launcher como "oculto"). Se ainda acontecer, veja em *Segurança do Windows → Proteção contra vírus e ameaças → Histórico de proteção* o nome do arquivo acusado e informe-o ao suporte; para baixar mesmo assim, escolha *Permitir no dispositivo* |
 | Instalador: "falha ao criar o bootstrap" / antivírus acusa `bootstrap.vbs` | Falso positivo. Em *Segurança do Windows → Proteção contra vírus e ameaças → Histórico de proteção*, escolha *Permitir no dispositivo* e execute o instalador novamente |
 | Celular: "Ler código" só tira foto / não abre a leitura em tempo real | Execute o instalador novamente (ele libera a porta 7736 no firewall) e aceite o aviso de certificado na primeira vez. O log mostra `HTTPS (leitura em tempo real pela câmera do celular): porta 7736` |
 | Instalação nova: "Node.js não foi instalado corretamente" na 1ª vez | Corrigido na versão 1.6.0 (o instalador espera o Node terminar e relê o PATH). Se ainda ocorrer, execute o instalador novamente |
